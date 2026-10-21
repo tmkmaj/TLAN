@@ -1,0 +1,33 @@
+# TLAN 独立 FRPS 示例配置。安装脚本不会覆盖已有的 /etc/tlan-frp/frps.toml。
+bindAddr = "0.0.0.0"
+bindPort = 7000
+kcpBindPort = 7002
+quicBindPort = 7003
+proxyBindAddr = "0.0.0.0"
+
+vhostHTTPPort = 18080
+vhostHTTPSPort = 18443
+tcpmuxHTTPConnectPort = 18081
+subDomainHost = "frp.8-163-21-82.nip.io"
+
+auth.method = "token"
+auth.tokenSource.type = "file"
+auth.tokenSource.file.path = "/etc/tlan-frp/token"
+
+# Main FRPS is TLS-only. The separate loopback WSS instance is frps-wss.toml.
+transport.tls.force = true
+transport.heartbeatTimeout = 8
+transport.tls.certFile = "/etc/tlan-frp/server.crt"
+transport.tls.keyFile = "/etc/tlan-frp/server.key"
+
+allowPorts = [{ start = 30000, end = 30999 }]
+maxPortsPerClient = 16
+
+log.to = "console"
+log.level = "info"
+
+[[httpPlugins]]
+name = "tlan-managed-auth"
+addr = "127.0.0.1:9093"
+path = "/api/v1/frp/plugin"
+ops = ["Login", "NewProxy", "Ping", "NewUserConn"]

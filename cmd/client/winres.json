@@ -1,0 +1,33 @@
+{
+  "RT_MANIFEST": {"#1": {"0409": "TmkNetworkLAN.exe.manifest"}},
+  "RT_GROUP_ICON": {"APP": {"0000": "../../assets/branding/tmknetworklan-icon.png"}},
+  "RT_VERSION": {
+    "#1": {
+      "0000": {
+        "fixed": {"file_version": "0.5.0.0", "product_version": "0.5.0.0"},
+        "info": {
+          "0409": {
+            "CompanyName": "TmkNetwork",
+            "FileDescription": "TmkNetworkLAN private LAN client",
+            "FileVersion": "0.5.0.0",
+            "InternalName": "TmkNetworkLAN",
+            "OriginalFilename": "TmkNetworkLAN.exe",
+            "ProductName": "TmkNetworkLAN",
+            "ProductVersion": "0.5.0"
+          },
+          "0804": {
+            "CompanyName": "TmkNetwork",
+            "FileDescription": "TmkNetworkLAN 私人局域网客户端",
+            "FileVersion": "0.5.0.0",
+            "InternalName": "TmkNetworkLAN",
+            "OriginalFilename": "TmkNetworkLAN.exe",
+            "ProductName": "TmkNetworkLAN",
+            "ProductVersion": "0.5.0"
+          }
+        }
+      }
+    }
+  }
+}
+
+

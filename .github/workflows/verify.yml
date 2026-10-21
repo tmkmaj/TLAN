@@ -1,0 +1,44 @@
+name: verify
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Verify Windows baseline
+        shell: pwsh
+        run: ./scripts/verify-build-baseline.ps1
+
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Test
+        env:
+          CGO_ENABLED: '0'
+        run: go test -mod=vendor ./... -count=1 -timeout 180s
+      - name: Vet
+        env:
+          CGO_ENABLED: '0'
+        run: go vet -mod=vendor ./...
+      - name: Build Linux executables
+        env:
+          CGO_ENABLED: '0'
+        run: |
+          go build -mod=vendor -trimpath -o .tmp-build/tmknetworklan-server ./cmd/server
+          go build -mod=vendor -trimpath -o .tmp-build/tmknetworklan-install-helper ./cmd/install-helper

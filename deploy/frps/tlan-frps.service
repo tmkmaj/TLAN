@@ -1,0 +1,21 @@
+[Unit]
+Description=TLAN independent FRP server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=tlan-frp
+Group=tlan-frp
+ExecStart=/opt/tlan-frp/0.71.1/frps -c /etc/tlan-frp/frps.toml
+Restart=on-failure
+RestartSec=3
+LimitNOFILE=65536
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+RestrictAddressFamilies=AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,32 @@
+{
+	# IP clients omit SNI; the server's local IP may be private behind cloud NAT.
+	default_sni 8.163.21.82
+}
+
+# Validated with Caddy 2.11.7. TCP 80 must reach Caddy for HTTP-01 renewal.
+https://8.163.21.82:8443 {
+	tls {
+		issuer acme {
+			dir https://acme-v02.api.letsencrypt.org/directory
+			profile shortlived
+			disable_tlsalpn_challenge
+		}
+	}
+	reverse_proxy 127.0.0.1:8080
+}
+
+# Dedicated WSS endpoint for FRP. Keep the existing 8443 control gateway unchanged.
+https://8.163.21.82:8444 {
+	log
+	tls {
+		issuer acme {
+			dir https://acme-v02.api.letsencrypt.org/directory
+			profile shortlived
+			disable_tlsalpn_challenge
+		}
+	}
+	# Caddy terminates client TLS; FRPS accepts the loopback WebSocket hop.
+	reverse_proxy 127.0.0.1:7001 {
+		flush_interval -1
+	}
+}

@@ -1,0 +1,31 @@
+# TLAN WSS FRPS loopback instance. Caddy terminates public TLS on 8444 and
+# forwards plaintext WebSocket to this 127.0.0.1-only listener.
+bindAddr = "127.0.0.1"
+bindPort = 7001
+proxyBindAddr = "0.0.0.0"
+
+vhostHTTPPort = 18082
+vhostHTTPSPort = 18444
+tcpmuxHTTPConnectPort = 18083
+subDomainHost = "frp.8-163-21-82.nip.io"
+
+auth.method = "token"
+auth.tokenSource.type = "file"
+auth.tokenSource.file.path = "/etc/tlan-frp/token"
+
+transport.tls.force = false
+transport.heartbeatTimeout = 8
+transport.tls.certFile = "/etc/tlan-frp/server.crt"
+transport.tls.keyFile = "/etc/tlan-frp/server.key"
+
+allowPorts = [{ start = 30000, end = 30999 }]
+maxPortsPerClient = 16
+
+log.to = "console"
+log.level = "info"
+
+[[httpPlugins]]
+name = "tlan-managed-auth"
+addr = "127.0.0.1:9093"
+path = "/api/v1/frp/plugin"
+ops = ["Login", "NewProxy", "Ping", "NewUserConn"]

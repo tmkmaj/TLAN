@@ -1,0 +1,11 @@
+{
+  "version": "0.71.1",
+  "tag": "v0.71.1",
+  "tagObject": "72d643d661dcb686087e342142a70f8f4698e29f",
+  "commit": "d8cf1800dc1abd7fda1828cab105d7a6b5a50eb1",
+  "platform": "linux-amd64",
+  "sha256": "2FB8DA8392CF2B332BFCC540F075E928A82D1A106DF0B8FCFCF13497149F8C48",
+  "source": "https://github.com/fatedier/frp",
+  "license": "Apache-2.0",
+  "buildTags": ["frps", "noweb"]
+}
