@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"log"
 	"net/http"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/private-radminlan/lanmesh/core"
+	"github.com/private-radminlan/lanmesh/internal/diagreport"
 	"github.com/private-radminlan/lanmesh/internal/frpauth"
 	"github.com/private-radminlan/lanmesh/internal/network"
 	"github.com/private-radminlan/lanmesh/internal/storage"
@@ -376,6 +378,7 @@ func (s *Server) networkDevice(w http.ResponseWriter, r *http.Request, networkID
 			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		}
 	case "diagnostics":
+		w.Header().Set("Cache-Control", "no-store")
 		switch r.Method {
 		case http.MethodGet:
 			reports, err := s.Store.ListDiagnostics(nid, did)
@@ -386,12 +389,13 @@ func (s *Server) networkDevice(w http.ResponseWriter, r *http.Request, networkID
 			writeJSON(w, http.StatusOK, map[string]any{"reports": reports})
 		case http.MethodPost:
 			var req struct {
-				Checks []storage.DiagnosticCheck `json:"checks"`
+				Checks    []storage.DiagnosticCheck `json:"checks"`
+				FRPReport json.RawMessage           `json:"frp_report,omitempty"`
 			}
-			if !decodeJSON(w, r, &req) {
+			if !decodeStrictJSONLimit(w, r, &req, diagreport.MaxRequestBytes) {
 				return
 			}
-			report, err := s.Store.SaveDiagnostics(storage.DiagnosticReport{DeviceID: did, NetworkID: nid, Checks: req.Checks})
+			report, err := s.Store.SaveDiagnostics(storage.DiagnosticReport{DeviceID: did, NetworkID: nid, Checks: req.Checks, FRPReport: req.FRPReport})
 			if err != nil {
 				status := http.StatusBadRequest
 				if errors.Is(err, storage.ErrNotFound) {
@@ -443,6 +447,34 @@ func (s *Server) devices(w http.ResponseWriter, r *http.Request, id string) {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
 }
+func decodeStrictJSONLimit(w http.ResponseWriter, r *http.Request, target any, limit int) bool {
+	defer r.Body.Close()
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, int64(limit)))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		writeDecodeError(w, err)
+		return false
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		if err == nil {
+			err = errors.New("trailing JSON value")
+		}
+		writeDecodeError(w, err)
+		return false
+	}
+	return true
+}
+
+func writeDecodeError(w http.ResponseWriter, err error) {
+	var tooLarge *http.MaxBytesError
+	if errors.As(err, &tooLarge) {
+		writeError(w, http.StatusRequestEntityTooLarge, "diagnostic request is too large")
+		return
+	}
+	writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+}
+
 func decodeJSON(w http.ResponseWriter, r *http.Request, target any) bool {
 	defer r.Body.Close()
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))

@@ -72,10 +72,10 @@ func cleanupIPv4Address(record ResourceRecord, runner Runner) error {
 	if err != nil || !present {
 		return err
 	}
-	query := "Get-NetIPAddress -InterfaceAlias " + psQuote(record.Name) +
+	query := "$addresses=@(Get-NetIPAddress -InterfaceAlias " + psQuote(record.Name) +
 		" -AddressFamily IPv4 -IPAddress " + psQuote(prefix.Addr().String()) +
 		" -PrefixLength " + strconv.Itoa(prefix.Bits()) +
-		" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty IPAddress"
+		" -ErrorAction SilentlyContinue); if ($addresses.Count -eq 0) { exit 0 }; $addresses | Select-Object -ExpandProperty IPAddress"
 	output, err := runPowerShell(runner, query)
 	if err != nil {
 		return fmt.Errorf("query IPv4 address %q: %w", record.Prefix, err)
@@ -116,9 +116,9 @@ func cleanupRoute(record ResourceRecord, runner Runner) error {
 	if err != nil || !present {
 		return err
 	}
-	query := "Get-NetRoute -InterfaceAlias " + psQuote(record.Name) +
+	query := "$routes=@(Get-NetRoute -InterfaceAlias " + psQuote(record.Name) +
 		" -AddressFamily IPv4 -DestinationPrefix " + psQuote(prefix.String()) +
-		" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty DestinationPrefix"
+		" -ErrorAction SilentlyContinue); if ($routes.Count -eq 0) { exit 0 }; $routes | Select-Object -ExpandProperty DestinationPrefix"
 	output, err := runPowerShell(runner, query)
 	if err != nil {
 		return fmt.Errorf("query route %q: %w", record.Prefix, err)
@@ -140,8 +140,8 @@ func cleanupRoute(record ResourceRecord, runner Runner) error {
 }
 
 func cleanupFirewallRule(record ResourceRecord, runner Runner) error {
-	query := "Get-NetFirewallRule -Name " + psQuote(record.Name) +
-		" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty InstanceID"
+	query := "$rules=@(Get-NetFirewallRule -Name " + psQuote(record.Name) +
+		" -ErrorAction SilentlyContinue); if ($rules.Count -eq 0) { exit 0 }; $rules | Select-Object -ExpandProperty InstanceID"
 	output, err := runPowerShell(runner, query)
 	if err != nil {
 		return fmt.Errorf("query firewall rule %q: %w", record.Name, err)
@@ -153,8 +153,8 @@ func cleanupFirewallRule(record ResourceRecord, runner Runner) error {
 	if len(values) != 1 {
 		return fmt.Errorf("%w: firewall rule %q is ambiguous", ErrResourceNotOwned, record.Name)
 	}
-	ruleID, err := normalizeGUID(values[0])
-	if err != nil || !sameGUID(ruleID, record.ResourceID) {
+	ruleID, err := normalizeFirewallRuleID(values[0])
+	if err != nil || !sameFirewallRuleID(ruleID, record.ResourceID) {
 		return fmt.Errorf("%w: firewall rule %q identity does not match", ErrResourceNotOwned, record.Name)
 	}
 	if _, err := runPowerShell(runner, "Remove-NetFirewallRule -Name "+psQuote(record.Name)+" -Confirm:$false -ErrorAction Stop | Out-Null"); err != nil {
@@ -178,7 +178,7 @@ func verifyAdapterParent(record ResourceRecord, runner Runner) (bool, error) {
 }
 
 func queryAdapterGUID(runner Runner, name string) (string, bool, error) {
-	output, err := runPowerShell(runner, "Get-NetAdapter -Name "+psQuote(name)+" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty InterfaceGuid")
+	output, err := runPowerShell(runner, "$adapters=@(Get-NetAdapter -Name "+psQuote(name)+" -ErrorAction SilentlyContinue); if ($adapters.Count -eq 0) { exit 0 }; $adapters | Select-Object -ExpandProperty InterfaceGuid")
 	if err != nil {
 		return "", false, fmt.Errorf("query adapter %q: %w", name, err)
 	}
@@ -196,6 +196,31 @@ func queryAdapterGUID(runner Runner, name string) (string, bool, error) {
 	return guid, true, nil
 }
 
+func normalizeFirewallRuleID(value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", errors.New("empty firewall rule identity")
+	}
+	if guid, err := normalizeGUID(value); err == nil {
+		return guid, nil
+	}
+	if !validExactName(value) || len(value) > 256 {
+		return "", errors.New("invalid firewall rule identity")
+	}
+	return value, nil
+}
+
+func sameFirewallRuleID(a, b string) bool {
+	first, err := normalizeFirewallRuleID(a)
+	if err != nil {
+		return false
+	}
+	second, err := normalizeFirewallRuleID(b)
+	if err != nil {
+		return false
+	}
+	return strings.EqualFold(first, second)
+}
 func normalizeGUID(value string) (string, error) {
 	value = strings.TrimSpace(value)
 	if value == "" {

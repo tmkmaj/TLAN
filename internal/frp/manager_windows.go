@@ -35,6 +35,7 @@ type Options struct {
 	LeaseProvider       LeaseProvider
 	MeshTargetProvider  MeshTargetProvider
 	NetObserver         netpolicy.Observer
+	ChangeNotifier      netpolicy.ChangeNotifier
 	EndpointRegistry    *EndpointRegistry
 	EgressCheckInterval time.Duration
 	ReservationProvider func() []TargetReservation
@@ -61,6 +62,10 @@ type Manager struct {
 	leaseProvider      LeaseProvider
 	meshTargets        MeshTargetProvider
 	observer           netpolicy.Observer
+	changes            netpolicy.ChangeNotifier
+	changesOwned       bool
+	changeCloseOnce    sync.Once
+	changeCloseErr     error
 	endpoints          *EndpointRegistry
 	meshInterface      string
 	egressInterval     time.Duration
@@ -192,6 +197,15 @@ func NewManager(options Options) (*Manager, error) {
 		manager.runtimeCeiling = ceiling
 	} else if !errors.Is(err, ErrNoConfig) {
 		return nil, err
+	}
+	manager.logs.setPersistent(newPersistentLog(store.Root(), defaultLogRetention()))
+	if options.ChangeNotifier != nil {
+		manager.changes = options.ChangeNotifier
+	} else if notifier, notifierErr := netpolicy.NewChangeNotifier(); notifierErr != nil {
+		manager.logs.add(fmt.Sprintf("network change notifications unavailable; using polling fallback: %v", notifierErr))
+	} else if notifier != nil {
+		manager.changes = notifier
+		manager.changesOwned = true
 	}
 	return manager, nil
 }
@@ -342,6 +356,12 @@ func (m *Manager) Endpoints() []EndpointRecord {
 		return nil
 	}
 	return registry.SnapshotForProfile(profileID)
+}
+
+// LogStorage returns the active persistent log path, retained-file summary,
+// retention limits, and the latest storage error without reading file contents.
+func (m *Manager) LogStorage() LogStorageStatus {
+	return m.logs.storageStatus()
 }
 
 func (m *Manager) EndpointDiagnostics() []string {
@@ -826,11 +846,17 @@ func (m *Manager) startEgressMonitor(inst *managedInstance) {
 func (m *Manager) watchEgress(inst *managedInstance, interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
+	changes := (<-chan struct{})(nil)
+	if m.changes != nil {
+		changes = m.changes.Changes()
+	}
 	for {
-		select {
-		case <-inst.done:
+		triggeredByChange, ok := waitEgressTrigger(inst.done, ticker.C, changes)
+		if !ok {
 			return
-		case <-ticker.C:
+		}
+		if triggeredByChange {
+			m.logs.add("network change notification triggered route recheck")
 		}
 		if inst.stopping.Load() {
 			return
@@ -887,6 +913,33 @@ func (m *Manager) watchEgress(inst *managedInstance, interval time.Duration) {
 	}
 }
 
+func waitEgressTrigger(done <-chan struct{}, tick <-chan time.Time, changes <-chan struct{}) (bool, bool) {
+	select {
+	case <-done:
+		return false, false
+	case <-tick:
+		return false, true
+	case <-changes:
+	}
+	timer := time.NewTimer(300 * time.Millisecond)
+	defer timer.Stop()
+	for {
+		select {
+		case <-done:
+			return false, false
+		case <-changes:
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			timer.Reset(300 * time.Millisecond)
+		case <-timer.C:
+			return true, true
+		}
+	}
+}
 func (m *Manager) failEgressRuntime(inst *managedInstance, cause error, generation uint64) {
 	m.observationMu.Lock()
 	if generation != m.observationGen {
@@ -1479,7 +1532,18 @@ func (m *Manager) Stop(ctx context.Context) error {
 	return m.stopCurrent(ctx)
 }
 
-func (m *Manager) Close(ctx context.Context) error { return m.Stop(ctx) }
+// Close stops the managed runtime and releases the persistent log handle.
+// Stop leaves the log open because the Manager remains reusable.
+func (m *Manager) Close(ctx context.Context) error {
+	stopErr := m.Stop(ctx)
+	m.changeCloseOnce.Do(func() {
+		if m.changesOwned && m.changes != nil {
+			m.changeCloseErr = m.changes.Close()
+		}
+	})
+	closeErr := m.logs.closePersistent()
+	return errors.Join(stopErr, m.changeCloseErr, closeErr)
+}
 
 func (m *Manager) stopCurrent(ctx context.Context) error {
 	m.mu.Lock()
@@ -2144,6 +2208,7 @@ func (m *Manager) Snapshot(ctx context.Context) Snapshot {
 		ServerPort: cfg.Profile.Server.Port, Revision: cfg.Profile.Revision,
 		SharedToken: configured && m.store.HasToken(cfg.Profile.Server.CredentialRef),
 		Endpoints:   m.Endpoints(), Observation: m.observationStatus(), Logs: m.logs.snapshot(),
+		LogStorage: m.logs.storageStatus(),
 	}
 	if lastErr != nil {
 		snapshot.LastError = lastErr.Error()

@@ -21,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/private-radminlan/lanmesh/core"
 	"github.com/private-radminlan/lanmesh/internal/clientapi"
 	"github.com/private-radminlan/lanmesh/internal/clientui"
 	frpctl "github.com/private-radminlan/lanmesh/internal/frp"
@@ -46,8 +47,9 @@ type diagnosticExport struct {
 }
 
 type frpDiagnosticExport struct {
-	GeneratedAt time.Time              `json:"generated_at"`
-	Profiles    []frpProfileDiagnostic `json:"profiles"`
+	SchemaVersion int                    `json:"schema_version"`
+	GeneratedAt   time.Time              `json:"generated_at"`
+	Profiles      []frpProfileDiagnostic `json:"profiles"`
 }
 
 type frpProfileDiagnostic struct {
@@ -221,7 +223,7 @@ func buildFRPDiagnosticExport(ctx context.Context, sources []frpDiagnosticSource
 	} else {
 		now = now.UTC()
 	}
-	result := frpDiagnosticExport{GeneratedAt: now}
+	result := frpDiagnosticExport{SchemaVersion: diagnosticSchemaVersion, GeneratedAt: now, Profiles: []frpProfileDiagnostic{}}
 	var checks []clientapi.DiagnosticCheck
 	for _, source := range sources {
 		if source.Manager == nil && source.Snapshot == nil && !source.Configured {
@@ -242,7 +244,7 @@ func buildFRPDiagnosticExport(ctx context.Context, sources []frpDiagnosticSource
 			ServerKind: cfg.Profile.Server.Kind, ServerHost: cfg.Profile.Server.Host,
 			ServerPort: cfg.Profile.Server.Port, Transport: cfg.Profile.Server.Transport,
 			TLSServerName: cfg.Profile.Server.TLSServerName, TrustedCAPath: cfg.Profile.Server.TrustedCAPath,
-			Snapshot: snapshot, Logs: append([]string(nil), snapshot.Logs...),
+			Snapshot: snapshot, Logs: append([]string{}, snapshot.Logs...),
 		}
 		var reservations []frpctl.TargetReservation
 		if source.Manager != nil {
@@ -887,20 +889,9 @@ func writeDiagnosticExport(dir string, export diagnosticExport, secrets []string
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", "", fmt.Errorf("创建诊断目录: %w", err)
 	}
-	data, err := json.Marshal(export)
+	jsonData, err := encodeRedactedFRPDiagnosticJSON(export, secrets, true)
 	if err != nil {
-		return "", "", fmt.Errorf("编码诊断 JSON: %w", err)
-	}
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.UseNumber()
-	var document any
-	if err = decoder.Decode(&document); err != nil {
-		return "", "", fmt.Errorf("准备诊断 JSON: %w", err)
-	}
-	document = redactFRPDiagnosticJSONValue(document, secrets...)
-	jsonData, err := json.MarshalIndent(document, "", "  ")
-	if err != nil {
-		return "", "", fmt.Errorf("编码诊断 JSON: %w", err)
+		return "", "", err
 	}
 	jsonPath := filepath.Join(dir, "diagnostics.json")
 	textPath := filepath.Join(dir, "diagnostics.txt")
@@ -911,6 +902,69 @@ func writeDiagnosticExport(dir string, export diagnosticExport, secrets []string
 		return jsonPath, textPath, err
 	}
 	return jsonPath, textPath, nil
+}
+func encodeRedactedFRPDiagnosticJSON(value any, secrets []string, indent bool) ([]byte, error) {
+	data, err := json.Marshal(value)
+	if err != nil {
+		return nil, fmt.Errorf("编码诊断 JSON: %w", err)
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	var document any
+	if err = decoder.Decode(&document); err != nil {
+		return nil, fmt.Errorf("准备诊断 JSON: %w", err)
+	}
+	document = redactFRPDiagnosticJSONValue(document, secrets...)
+	if indent {
+		data, err = json.MarshalIndent(document, "", "  ")
+	} else {
+		data, err = json.Marshal(document)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("编码诊断 JSON: %w", err)
+	}
+	return data, nil
+}
+
+func frpDiagnosticSecretValues(sources []frpDiagnosticSource, base []string) []string {
+	seen := make(map[string]struct{}, len(base)+len(sources))
+	out := make([]string, 0, len(base)+len(sources))
+	add := func(value string) {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return
+		}
+		if _, ok := seen[value]; ok {
+			return
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	for _, value := range base {
+		add(value)
+	}
+	for _, source := range sources {
+		if source.Provider == nil {
+			continue
+		}
+		source.Provider.mu.Lock()
+		for _, lease := range source.Provider.leases {
+			add(lease.Credential)
+		}
+		source.Provider.mu.Unlock()
+	}
+	return out
+}
+
+func uploadFRPDiagnosticReport(api *clientapi.Client, networkID core.NetworkID, deviceID core.DeviceID, checks []clientapi.DiagnosticCheck, report frpDiagnosticExport, secrets []string) error {
+	if api == nil {
+		return errors.New("FRP 诊断上传客户端不可用")
+	}
+	reportJSON, err := encodeRedactedFRPDiagnosticJSON(report, secrets, false)
+	if err != nil {
+		return err
+	}
+	return api.UploadDiagnosticsWithFRP(networkID, deviceID, checks, reportJSON)
 }
 
 func redactFRPDiagnosticJSONValue(value any, secrets ...string) any {

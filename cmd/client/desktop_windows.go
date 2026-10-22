@@ -724,7 +724,7 @@ func (a *desktop) diagnose() {
 	}
 	nid := core.NetworkID(a.membership.Network.ID)
 	deviceID := a.identity.DeviceID
-	secrets := []string{api.Token}
+	secrets := frpDiagnosticSecretValues(frpSources, []string{api.Token})
 	go func() {
 		ctx := a.ctx
 		if ctx == nil {
@@ -747,7 +747,7 @@ func (a *desktop) diagnose() {
 		}
 		var uploadErr error
 		if err == nil && api.Token != "" && nid != "" && deviceID != "" {
-			uploadErr = api.UploadDiagnostics(nid, deviceID, checks)
+			uploadErr = uploadFRPDiagnosticReport(&api, nid, deviceID, checks, frpReport, secrets)
 		}
 		detail := export.Text() + "\r\nJSON: " + jsonPath + "\r\n文本: " + textPath
 		a.ui(func() {

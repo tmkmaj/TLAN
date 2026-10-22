@@ -1,4 +1,4 @@
-# 验证记录（2026-10-18，最后更新 2026-10-21）
+# 验证记录（2026-10-18，最后更新 2026-10-22）
 
 ## P2/P3 受控发布验证（2026-10-21，R1/R2 复核）
 
@@ -6,6 +6,10 @@
 
 - 最新审查报告 F-01～F-07 的代码路径已修复，显式 `frp_audit_regression` 回归全部通过；详细证据与残余边界见 [R1/R2 实现与验证报告](docs/R1-R2-IMPLEMENTATION-REPORT-2026-10-21.md)。
 - R2 协调层新增独立 EndpointRegistry（admin/visitor/TargetGateway/egress 监听归属、跨 profile 冲突检测）和 ObservationDebouncer（generation、两次稳定去抖、旧结果丢弃）；R4 诊断入口新增完整 FRP JSON/文本导出，覆盖 snapshot、lease、route、TargetGateway、日志和 TLS/CA 结果。
+- R2 进一步接入 Windows IP Helper 接口/地址/路由变更通知，Manager 事件唤醒并去抖，ticker 作为兜底。
+- R4 诊断已从本地导出扩展到服务端完整上传：严格 schema/大小/重复 key 校验、客户端与服务端双重脱敏、旧 checks-only 协议兼容。
+- FRP 持久化日志已接入：每 profile `logs/frp.log`，2 MiB/5 文件/8 MiB 保留上限，轮转、DACL、脱敏和诊断摘要均有测试。
+- 真实 Windows adapter smoke 发现并修复 PowerShell CLIXML、非 GUID 防火墙 InstanceID、适配器不存在退出码三个生产缺陷；修复后 `--adapter-smoke-test` 通过，Wintun/地址/路由/防火墙均清理。详见 `docs/R2-R4-LOGGING-DIAGNOSTICS-VERIFICATION-2026-10-22.md`。
 - 高级能力批次已完成：TCP/WebSocket/WSS/KCP/QUIC 传输、TCPMUX/XTCP、HTTP locations/Basic Auth/subdomain/Header rewrite、managed 精确高级授权、目标成员审批、批量端口和安全 JSON 配置导入导出。本机真实 FRP 联调通过 TCP/UDP/WebSocket/KCP/QUIC、HTTP 高级字段、TCPMUX、managed HTTP/TCPMUX/XTCP 授权；WSS 已通过公网 Caddy 8444 managed 端到端回显；XTCP 双端打洞仍待真实环境。
 - 客户端已支持托盘、关闭到托盘、当前用户登录自启动；受管 frpc 使用 Medium 完整性、Administrators deny-only 的受限令牌启动，并保留 fail-closed 无管理员回退。Mesh 资源账本、精确恢复和 GUI 残留提示已接入。
 - 受控核心更新基础设施 `internal/coreupdate` + `cmd/corepack` 已实现签名清单、哈希、原子安装和回滚测试；生产签名密钥、更新源和客户端自动更新入口尚未部署。

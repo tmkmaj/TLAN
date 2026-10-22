@@ -115,6 +115,7 @@ log.level = "info"
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer func() { _ = manager.Close(context.Background()) }()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	err = manager.Start(ctx)

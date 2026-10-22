@@ -558,8 +558,10 @@ go test -mod=vendor -tags frp_audit_regression ./internal/frp -run TestAuditRegr
 - 主 FRPS 已增加 UDP 7002/7003（KCP/QUIC）、TCP 18081（TCPMUX）和 `subDomainHost`。
 - WSS FRPS 已增加 TCP 18082/18444（HTTP/HTTPS vhost）、TCP 18083（TCPMUX）和 `subDomainHost`。
 - 主 FRPS 仍 TLS-only；WSS FRPS 仍只监听 `127.0.0.1:7001`。
-- 最新服务端二进制已部署到 `8.163.21.82`，SHA-256 为 `93e6af22f50b32bad2d6a16dd58cf3e7a904228c03f5f72a54d34706bba9de89`。
+- 最新服务端二进制已部署到 `8.163.21.82`，SHA-256 为 `0eab75c8924b0a650cae23744785d000a4ced78404551fc7163b76b37e62a0bd`。
 - 2026-10-21 已建立首个 Git 提交基线；发布产物和临时验证目录保持忽略。
+- 2026-10-22 已完成 R2 Windows 网络变更通知、R4 完整诊断服务端上传和 FRP 持久化日志轮转；真实 `--adapter-smoke-test` 发现并修复 CLIXML 输出污染、非 GUID 防火墙身份和适配器不存在退出码三个生产缺陷，修复后 Wintun 创建/地址/路由/防火墙/清理全部通过。
+- 2026-10-22 仍只有单物理上游，真实双 Windows、独立 NAT、XTCP 打洞和 24–72 小时长稳仍未验证。
 - 真实公网 managed 回归已通过：TCP、WebSocket、KCP、QUIC、主/WSS TCP、HTTP、HTTPS、TCPMUX；停止后的端口/路由清理、lease 撤销、临时成员删除和配置 SHA 恢复均通过。
 
 ### 9.3 仍不能宣称完成

@@ -186,7 +186,7 @@ ops = ["Login", "NewProxy", "Ping", "NewUserConn"]
 	if err = manager.Start(ctx); err != nil {
 		t.Fatalf("managed advanced start: %v\nlogs:\n%s", err, manager.logs.text())
 	}
-	defer func() { _ = manager.Stop(context.Background()) }()
+	defer func() { _ = manager.Close(context.Background()) }()
 
 	httpReq, err := http.NewRequest(http.MethodGet, fmt.Sprintf("http://127.0.0.1:%d/api", vhostPort), nil)
 	if err != nil {

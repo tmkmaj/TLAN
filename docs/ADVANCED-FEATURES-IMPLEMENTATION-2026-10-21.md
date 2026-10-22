@@ -20,6 +20,7 @@
 - visitor：STCP、SUDP、XTCP。
 - HTTP/HTTPS：customDomains、subdomain、locations、Basic Auth、Host Header rewrite、routeByHTTPUser、请求/响应 Header。
 - 规则 transport：useEncryption、useCompression、proxyProtocolVersion。`proxyProtocolVersion` 只写入本地 frpc TOML，FRP v0.71.1 的 FRPS 插件无法观察，因此不纳入 managed 精确授权声明。
+- 受管 FRP 日志持久化到每个 profile 的 `logs/frp.log`，默认 2 MiB/5 文件/8 MiB 上限，轮转并继续脱敏；完整 FRP 诊断可上传到控制面，服务端再次校验和脱敏。
 - XTCP visitor：protocol、keepTunnelOpen、重试参数、fallback。
 - KCP/QUIC 使用本机回环 UDP 出口中继，仍执行实际路由观察和接口绑定。
 

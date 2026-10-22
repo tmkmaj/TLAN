@@ -364,7 +364,7 @@ Caddy 访问日志记录 `uri=/~!frp`、HTTP/1.1 Upgrade 和 `status=101`；FRPS
 2026-10-21 15:31（Asia/Shanghai）已完成最终发布工程同步：
 
 1. 使用最新源码重建客户端、服务端、FRPS 包和 Linux 安装器，并更新 `dist/SHA256SUMS.txt`；
-2. 服务端二进制已部署，远端 SHA-256 为 `93e6af22f50b32bad2d6a16dd58cf3e7a904228c03f5f72a54d34706bba9de89`；
+2. 服务端二进制已部署，远端 SHA-256 为 `0eab75c8924b0a650cae23744785d000a4ced78404551fc7163b76b37e62a0bd`；
 3. 主 FRPS 已启用 KCP/QUIC、TCPMUX 和 subdomain；WSS 实例已启用独立 HTTP/HTTPS vhost 和 TCPMUX；
 4. 主机防火墙已放行 7000/tcp、7002-7003/udp、18080-18083/tcp、18443-18444/tcp、30000-30999/tcp+udp；云安全组仍需按实际环境确认；
 5. KCP、QUIC、WebSocket、主/WSS TCP、HTTP、HTTPS、TCPMUX 的 managed 公网组合已重新验证，详见 `docs/FINAL-PUBLIC-DEPLOYMENT-VERIFICATION-2026-10-21.md`。

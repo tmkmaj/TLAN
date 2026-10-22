@@ -3,6 +3,7 @@ package storage
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -76,6 +77,7 @@ type DiagnosticReport struct {
 	DeviceID  core.DeviceID     `json:"device_id"`
 	NetworkID core.NetworkID    `json:"network_id"`
 	Checks    []DiagnosticCheck `json:"checks"`
+	FRPReport json.RawMessage   `json:"frp_report,omitempty"`
 	CreatedAt time.Time         `json:"created_at"`
 }
 type NetworkSummary struct {

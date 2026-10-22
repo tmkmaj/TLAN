@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/private-radminlan/lanmesh/core"
+	"github.com/private-radminlan/lanmesh/internal/diagreport"
 	"github.com/private-radminlan/lanmesh/internal/enrollment"
 	"github.com/private-radminlan/lanmesh/internal/frpauth"
 )
@@ -103,6 +104,7 @@ type DiagnosticReport struct {
 	DeviceID  core.DeviceID     `json:"device_id"`
 	NetworkID core.NetworkID    `json:"network_id"`
 	Checks    []DiagnosticCheck `json:"checks"`
+	FRPReport json.RawMessage   `json:"frp_report,omitempty"`
 	CreatedAt time.Time         `json:"created_at"`
 }
 
@@ -199,8 +201,23 @@ func (c *Client) GetCandidates(networkID core.NetworkID, deviceID core.DeviceID)
 }
 
 func (c *Client) SubmitDiagnostics(networkID core.NetworkID, deviceID core.DeviceID, checks []DiagnosticCheck) (DiagnosticReport, error) {
+	return c.SubmitDiagnosticsWithFRP(networkID, deviceID, checks, nil)
+}
+
+// SubmitDiagnosticsWithFRP submits one legacy checks batch together with an
+// optional complete FRP diagnostic report. The report is sanitized client-side
+// and again by the control plane before it is persisted.
+func (c *Client) SubmitDiagnosticsWithFRP(networkID core.NetworkID, deviceID core.DeviceID, checks []DiagnosticCheck, frpReport json.RawMessage) (DiagnosticReport, error) {
 	var response DiagnosticReport
-	err := c.request(http.MethodPost, "/api/v1/networks/"+networkID.String()+"/devices/"+deviceID.String()+"/diagnostics", map[string]any{"checks": checks}, &response)
+	body := map[string]any{"checks": checks}
+	if len(frpReport) > 0 {
+		sanitized, err := diagreport.Sanitize(frpReport)
+		if err != nil {
+			return DiagnosticReport{}, err
+		}
+		body["frp_report"] = sanitized
+	}
+	err := c.request(http.MethodPost, "/api/v1/networks/"+networkID.String()+"/devices/"+deviceID.String()+"/diagnostics", body, &response)
 	return response, err
 }
 

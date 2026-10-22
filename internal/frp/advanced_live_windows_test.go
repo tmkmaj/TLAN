@@ -148,7 +148,7 @@ log.level = "info"
 			if err = manager.Start(ctx); err != nil {
 				t.Fatalf("manager start: %v\nlogs:\n%s", err, manager.logs.text())
 			}
-			defer manager.Stop(context.Background())
+			defer manager.Close(context.Background())
 			if transport.name == "kcp" || transport.name == "quic" {
 				if manager.instance == nil || manager.instance.udpEgressProxy == nil {
 					t.Fatal("UDP transport did not start the UDP egress guard")
@@ -290,7 +290,7 @@ log.level = "info"
 	if err = manager.Start(ctx); err != nil {
 		t.Fatalf("manager start: %v\nlogs:\n%s", err, manager.logs.text())
 	}
-	defer manager.Stop(context.Background())
+	defer manager.Close(context.Background())
 	request := func(path string, auth bool) (*http.Response, []byte) {
 		req, reqErr := http.NewRequest(http.MethodGet, fmt.Sprintf("http://127.0.0.1:%d%s", vhostHTTPPort, path), nil)
 		if reqErr != nil {
@@ -409,7 +409,7 @@ log.level = "info"
 	if err = manager.Start(ctx); err != nil {
 		t.Fatalf("manager start: %v\nlogs:\n%s", err, manager.logs.text())
 	}
-	defer manager.Stop(context.Background())
+	defer manager.Close(context.Background())
 	conn, err := net.DialTimeout("tcp4", net.JoinHostPort("127.0.0.1", strconv.Itoa(tcpmuxPort)), 5*time.Second)
 	if err != nil {
 		t.Fatal(err)

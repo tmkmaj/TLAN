@@ -13,12 +13,17 @@ import (
 	"encoding/pem"
 	"math/big"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/private-radminlan/lanmesh/core"
+	"github.com/private-radminlan/lanmesh/internal/clientapi"
+	"github.com/private-radminlan/lanmesh/internal/diagreport"
 	frpctl "github.com/private-radminlan/lanmesh/internal/frp"
 	"github.com/private-radminlan/lanmesh/internal/netpolicy"
 )
@@ -71,9 +76,14 @@ func TestBuildFRPDiagnosticExportIncludesRequiredSectionsAndRedactsSecrets(t *te
 			"lease-1234567890": {NetworkID: "net-diag", DeviceID: "device-local", ServerID: "frps-managed-1", Rules: []frpctl.LeaseRule{{ID: "rule-diag"}}},
 		},
 	}
-	report, checks := buildFRPDiagnosticExport(context.Background(), []frpDiagnosticSource{{
+	sources := []frpDiagnosticSource{{
 		ProfileID: cfg.Profile.ID, Config: cfg, Configured: true, Provider: provider, Snapshot: &snapshot,
-	}}, []string{"member-token-super-secret"}, now)
+	}}
+	secrets := frpDiagnosticSecretValues(sources, []string{"member-token-super-secret"})
+	if !containsString(secrets, "capability-super-secret") {
+		t.Fatal("managed lease capability was not included in diagnostic redaction secrets")
+	}
+	report, checks := buildFRPDiagnosticExport(context.Background(), sources, secrets, now)
 	if len(report.Profiles) != 1 {
 		t.Fatalf("profiles = %d, want 1", len(report.Profiles))
 	}
@@ -98,7 +108,7 @@ func TestBuildFRPDiagnosticExportIncludesRequiredSectionsAndRedactsSecrets(t *te
 		Checks: checks, FRP: report,
 	}
 	dir := t.TempDir()
-	jsonPath, textPath, err := writeDiagnosticExport(dir, export, []string{"member-token-super-secret"})
+	jsonPath, textPath, err := writeDiagnosticExport(dir, export, secrets)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,6 +130,15 @@ func TestBuildFRPDiagnosticExportIncludesRequiredSectionsAndRedactsSecrets(t *te
 	for _, secret := range []string{"token-super-secret", "capability-super-secret", "bearer-super-secret", "member-token-super-secret", "private-key-super-secret", "private-key-space-secret", "lease-1234567890"} {
 		if strings.Contains(string(jsonData), secret) || strings.Contains(string(textData), secret) {
 			t.Fatalf("diagnostic export leaked %q", secret)
+		}
+	}
+	uploadReport, err := encodeRedactedFRPDiagnosticJSON(report, secrets, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, secret := range []string{"token-super-secret", "capability-super-secret", "bearer-super-secret", "member-token-super-secret", "private-key-super-secret", "private-key-space-secret", "lease-1234567890"} {
+		if strings.Contains(string(uploadReport), secret) {
+			t.Fatalf("FRP upload report leaked %q", secret)
 		}
 	}
 	for _, section := range []string{`"snapshot"`, `"managed_leases"`, `"egress"`, `"routes"`, `"target_gateways"`, `"logs"`, `"tls"`} {
@@ -273,4 +292,72 @@ func writeFRPDiagnosticTLSServerFixture(t *testing.T, now time.Time) (string, tl
 		t.Fatal(err)
 	}
 	return caPath, tls.Certificate{Certificate: [][]byte{serverDER}, PrivateKey: serverKey}
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
+func TestFRPDiagnosticUploadPayloadUsesStableArrays(t *testing.T) {
+	cfg := frpctl.NewDefaultConfig()
+	cfg.Profile.ID = "profile-empty-logs"
+	cfg.Profile.Name = "empty logs"
+	report, _ := buildFRPDiagnosticExport(context.Background(), []frpDiagnosticSource{{
+		ProfileID: cfg.Profile.ID, Config: cfg, Configured: true,
+		Snapshot: &frpctl.Snapshot{Configured: true, State: "stopped"},
+	}}, nil, time.Now().UTC())
+	raw, err := encodeRedactedFRPDiagnosticJSON(report, nil, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"logs":[]`) {
+		t.Fatalf("empty logs must encode as an array: %s", raw)
+	}
+	if _, err := diagreport.Sanitize(raw); err != nil {
+		t.Fatalf("upload payload failed server schema validation: %v", err)
+	}
+}
+
+func TestUploadFRPDiagnosticReportIncludesChecksAndCompleteReport(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		var body struct {
+			Checks    []clientapi.DiagnosticCheck `json:"checks"`
+			FRPReport json.RawMessage             `json:"frp_report"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode upload: %v", err)
+		}
+		if len(body.Checks) != 1 || body.Checks[0].Name != "legacy" {
+			t.Errorf("checks = %+v", body.Checks)
+		}
+		if _, err := diagreport.Sanitize(body.FRPReport); err != nil {
+			t.Errorf("FRP report = %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer server.Close()
+	report := frpDiagnosticExport{
+		SchemaVersion: diagnosticSchemaVersion,
+		GeneratedAt:   time.Now().UTC(),
+		Profiles: []frpProfileDiagnostic{{
+			ProfileID: "profile-a", ProfileName: "test", Configured: true,
+			Snapshot: frpctl.Snapshot{Configured: true, State: "stopped"}, Logs: []string{},
+		}},
+	}
+	api := clientapi.New(server.URL, "member_token")
+	err := uploadFRPDiagnosticReport(api, core.NetworkID("net-a"), core.DeviceID("device-a"), []clientapi.DiagnosticCheck{{Name: "legacy", Status: "pass"}}, report, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if requests != 1 {
+		t.Fatalf("requests = %d, want 1", requests)
+	}
 }

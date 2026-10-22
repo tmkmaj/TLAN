@@ -197,6 +197,7 @@ ops = ["Login", "NewProxy", "Ping", "NewUserConn"]
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer func() { _ = manager.Close(context.Background()) }()
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	if err = manager.Start(ctx); err != nil {

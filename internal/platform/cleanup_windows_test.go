@@ -135,3 +135,33 @@ func TestWindowsCleanupRouteUsesExactPrefix(t *testing.T) {
 		t.Fatalf("cleanup scripts = %#v", runner.scripts)
 	}
 }
+
+func TestWindowsCleanupFirewallAcceptsStableInstanceID(t *testing.T) {
+	record := makeOwnedRecord(t, "instance", ResourceFirewallRule, "LANMesh-LANMesh", "10.44.0.0/24", "LANMesh-LANMesh", "{22222222-2222-2222-2222-222222222222}")
+	runner := &fakeWindowsRunner{handle: func(script string) ([]byte, error) {
+		switch {
+		case strings.Contains(script, "Get-NetFirewallRule"):
+			return []byte("LANMesh-LANMesh\r\n"), nil
+		case strings.Contains(script, "Remove-NetFirewallRule"):
+			return nil, nil
+		default:
+			t.Fatalf("unexpected script: %s", script)
+			return nil, nil
+		}
+	}}
+	if err := CleanupResourceWithRunner(record, runner); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestWindowsAdapterQueryTreatsMissingAdapterAsAbsent(t *testing.T) {
+	runner := &fakeWindowsRunner{handle: func(script string) ([]byte, error) {
+		if !strings.Contains(script, "if ($adapters.Count -eq 0) { exit 0 }") {
+			t.Fatalf("adapter query does not explicitly handle a missing adapter: %s", script)
+		}
+		return nil, nil
+	}}
+	if guid, present, err := queryAdapterGUID(runner, "LANMesh-Test"); err != nil || present || guid != "" {
+		t.Fatalf("missing adapter result = guid=%q present=%v err=%v", guid, present, err)
+	}
+}

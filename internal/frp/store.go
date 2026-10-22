@@ -18,6 +18,8 @@ const (
 	secretsFileName = "secrets.json"
 	caFileName      = "ca.pem"
 	runtimeDirName  = "runtime"
+	logsDirName     = "logs"
+	frpLogFileName  = "frp.log"
 )
 
 type Store struct {
@@ -46,6 +48,12 @@ func NewStore(root string) (*Store, error) {
 func (s *Store) Root() string        { return s.root }
 func (s *Store) RuntimeRoot() string { return filepath.Join(s.root, runtimeDirName) }
 func (s *Store) CAFile() string      { return filepath.Join(s.root, caFileName) }
+
+// LogRoot is deliberately outside RuntimeRoot. Runtime instance directories
+// are removed as processes exit, while retained FRP logs must remain available
+// for diagnostics and later export.
+func (s *Store) LogRoot() string { return filepath.Join(s.root, logsDirName) }
+func (s *Store) LogFile() string { return filepath.Join(s.LogRoot(), frpLogFileName) }
 
 func (s *Store) Ensure() error {
 	if err := os.MkdirAll(s.root, 0o700); err != nil {

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/private-radminlan/lanmesh/core"
+	"github.com/private-radminlan/lanmesh/internal/diagreport"
 )
 
 func (s *Store) SaveDiagnostics(report DiagnosticReport) (DiagnosticReport, error) {
@@ -15,8 +16,8 @@ func (s *Store) SaveDiagnostics(report DiagnosticReport) (DiagnosticReport, erro
 	if err := report.NetworkID.Validate(); err != nil {
 		return DiagnosticReport{}, err
 	}
-	if len(report.Checks) == 0 || len(report.Checks) > 64 {
-		return DiagnosticReport{}, errors.New("between 1 and 64 diagnostic checks are required")
+	if len(report.Checks) > 64 {
+		return DiagnosticReport{}, errors.New("at most 64 diagnostic checks are allowed per report")
 	}
 	for _, check := range report.Checks {
 		if strings.TrimSpace(check.Name) == "" || len(check.Name) > 128 {
@@ -28,6 +29,16 @@ func (s *Store) SaveDiagnostics(report DiagnosticReport) (DiagnosticReport, erro
 		if len(check.Detail) > 2048 {
 			return DiagnosticReport{}, errors.New("diagnostic detail is too long")
 		}
+	}
+	if len(report.Checks) == 0 && len(report.FRPReport) == 0 {
+		return DiagnosticReport{}, errors.New("diagnostic checks or an FRP diagnostic report are required")
+	}
+	if len(report.FRPReport) > 0 {
+		sanitized, err := diagreport.Sanitize(report.FRPReport)
+		if err != nil {
+			return DiagnosticReport{}, err
+		}
+		report.FRPReport = sanitized
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()

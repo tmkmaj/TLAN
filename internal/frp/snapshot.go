@@ -60,4 +60,5 @@ type Snapshot struct {
 	LastError      string
 	LastErrorCode  string
 	Logs           []string
+	LogStorage     LogStorageStatus
 }

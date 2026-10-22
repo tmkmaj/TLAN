@@ -19,5 +19,6 @@ func cloneCandidates(record CandidateRecord) CandidateRecord {
 
 func cloneReport(report DiagnosticReport) DiagnosticReport {
 	report.Checks = slices.Clone(report.Checks)
+	report.FRPReport = slices.Clone(report.FRPReport)
 	return report
 }

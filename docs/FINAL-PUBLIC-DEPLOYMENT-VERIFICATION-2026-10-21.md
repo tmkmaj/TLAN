@@ -5,7 +5,7 @@
 ## 1. 最终部署
 
 - 服务器：`8.163.21.82`，CentOS 7。
-- 控制面服务端二进制 SHA-256：`93e6af22f50b32bad2d6a16dd58cf3e7a904228c03f5f72a54d34706bba9de89`，与本地 `dist/linux/tmknetworklan-server` 一致。
+- 控制面服务端二进制 SHA-256：`0eab75c8924b0a650cae23744785d000a4ced78404551fc7163b76b37e62a0bd`，与本地 `dist/linux/tmknetworklan-server` 一致。
 - 安装器、客户端 ZIP、服务端 ZIP、FRPS 包最终摘要以 `dist/SHA256SUMS.txt` 为准。
 - `tmknetworklan.service`、`tmknetworklan-https.service`、`tlan-frps.service`、`tlan-frps-wss.service`、`tlan-sync-frps-cert.timer` 均为 `active`。
 - 主 FRPS：TCP 7000（TLS-only）、UDP 7002（KCP）、UDP 7003（QUIC）、TCP 18080/18443（HTTP/HTTPS vhost）、TCP 18081（TCPMUX）。

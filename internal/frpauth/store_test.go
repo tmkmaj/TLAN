@@ -12,7 +12,7 @@ import (
 
 func testStore(t *testing.T) (*Store, *time.Time) {
 	t.Helper()
-	clock := time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)
+	clock := time.Now().UTC().Truncate(time.Second)
 	store, err := NewStore(Options{
 		StatePath:      filepath.Join(t.TempDir(), "frp-leases.json"),
 		ServerID:       "frps-managed-1",
@@ -37,7 +37,7 @@ func testRules() []Rule {
 }
 
 func TestIssuePersistsOnlyCapabilityHashAndSurvivesRestart(t *testing.T) {
-	store, _ := testStore(t)
+	store, clock := testStore(t)
 	lease, err := store.Issue("net-test", "dev-test", "frps-managed-1", testRules())
 	if err != nil {
 		t.Fatal(err)
@@ -79,7 +79,7 @@ func TestIssuePersistsOnlyCapabilityHashAndSurvivesRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	reopened.now = func() time.Time { return time.Date(2026, 10, 21, 12, 1, 0, 0, time.UTC) }
+	reopened.now = func() time.Time { return clock.Add(time.Minute) }
 	if err := reopened.AuthorizeLogin(LoginRequest{
 		LeaseID: lease.LeaseID, Capability: lease.Credential, ServerID: "frps-managed-1", User: "device-user", RunID: "",
 	}); err != nil {

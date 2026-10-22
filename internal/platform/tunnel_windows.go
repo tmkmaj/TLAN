@@ -265,5 +265,5 @@ func firewallRuleID(runner Runner, name string) (string, error) {
 	if len(values) != 1 {
 		return "", fmt.Errorf("firewall rule %q did not return exactly one identity", name)
 	}
-	return normalizeGUID(values[0])
+	return normalizeFirewallRuleID(values[0])
 }
