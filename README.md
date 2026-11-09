@@ -205,6 +205,15 @@ Windows 使用 Wintun 三层网卡，IPv4 包通过额外信封保持原始广�
 
 未测试 Dark Hours，未实现完整的游戏专用诊断与配置模块。普通组网不能保证修复 Steam/EOS 服务或游戏自身故障。其他功能差距见 FEATURE-AUDIT.md。
 
+## 应用流量转发（显式代理模式）
+
+左侧导航新增第三个模块“应用流量转发”。当前交付的是**显式代理模式**：客户端在本机回环地址启动 SOCKS5 代理（默认 `127.0.0.1:1080`），你把目标应用的代理设置指向它后，该应用的流量会经独立的 Linux Egress Gateway 出网。
+
+页面支持：添加/编辑/删除应用规则（exe 路径、是否含子进程、TCP/UDP）、服务器设置（网关地址、TLS 名称、CA、租约 ID、capability 文件、本地代理地址）、启动/停止、复制代理地址。Mesh 与内网穿透是独立开关，停止应用流量转发不会影响它们。
+
+安全边界：只监听回环；TLS 强制校验证书；网关拒绝私网/回环/链路本地/元数据地址与管理端口；断线或租约失效时 helper 拒绝代理连接（fail-closed）；IPv6 策略默认 `block`。
+
+**重要限制**：按进程的**透明**转发需要签名的 WFP 内核组件，当前尚未实现，界面与文档均标注为显式代理模式，不宣称“完全透明转发”。详细验收范围见 [EGRESS-VALIDATION.md](docs/EGRESS-VALIDATION.md)。
 ## 从源码构建
 
 需要 Go 1.23.1 或以上版本，依赖已 vendored：
@@ -247,6 +256,7 @@ go test -mod=vendor ./internal/frp -run TestLiveFRPTCPUDP -v
 
 
 开发者可运行 `TmkNetworkLAN.exe --ui-smoke-test 报告绝对路径` 验证原生控件初始化，不创建网卡；`--adapter-smoke-test` 则显式创建并清理测试 Wintun 网卡。`--server`、`--stun` 和 `--identity` 参数用于开发调试，普通用户不需要使用。
+
 
 
 

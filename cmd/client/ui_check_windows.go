@@ -60,7 +60,7 @@ func checkDesktopUI() error {
 		return nil
 	}
 	assertPage := func(want int) error {
-		for i, page := range []*walk.Composite{a.joinPage, a.powerPage, a.frpPage} {
+		for i, page := range []*walk.Composite{a.joinPage, a.powerPage, a.frpPage, a.egress.page} {
 			// IsWindowVisible also considers the hidden root window, so check
 			// each page's own native visibility flag instead.
 			visible := win.GetWindowLong(page.Handle(), win.GWL_STYLE)&win.WS_VISIBLE != 0
@@ -118,6 +118,26 @@ func checkDesktopUI() error {
 	if a.frpRules.CurrentIndex() != -1 {
 		a.frpRules.SetCurrentIndex(-1)
 	}
+	if a.egress == nil || a.railEgress == nil || a.egress.toggle == nil || a.egress.rules == nil || a.egress.modeLabel == nil {
+		return fmt.Errorf("egress page controls were not initialized")
+	}
+	a.showPage(pageEgress)
+	if err := assertPage(pageEgress); err != nil {
+		return err
+	}
+	if !strings.Contains(a.egress.modeLabel.Text(), "显式代理") {
+		return fmt.Errorf("egress page must label the explicit proxy limitation")
+	}
+	a.egress.model.setRows([][]string{{"示例应用", `C:\Example\app.exe`, "否", "已停止"}})
+	a.egress.rules.SetVisible(true)
+	a.egress.empty.SetVisible(false)
+	if len(a.egress.model.rows) != 1 {
+		return fmt.Errorf("egress rule table did not render the fixture rule")
+	}
+	a.showPage(pagePower)
+	if err := assertPage(pagePower); err != nil {
+		return err
+	}
 	dc := win.GetDC(a.window.Handle())
 	if dc == 0 {
 		return fmt.Errorf("could not obtain UI drawing context")
@@ -127,7 +147,7 @@ func checkDesktopUI() error {
 	defer c.dispose()
 	border := uiBlue
 	c.rounded(win.RECT{Right: 340, Bottom: 56}, 16, uiWhite, &border)
-	for _, kind := range []string{"power", "frp", "network", "more"} {
+	for _, kind := range []string{"power", "frp", "egress", "network", "more"} {
 		c.navIcon(win.RECT{Right: 42, Bottom: 42}, kind, uiBlue)
 	}
 	for state := 0; state <= 2; state++ {

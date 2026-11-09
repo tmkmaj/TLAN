@@ -32,6 +32,13 @@ try {
     $clientFlags = "-H=windowsgui -s -w -X main.bundledServerURL=$($ServerURL.TrimEnd('/')) -X main.bundledSTUNAddress=$STUNAddress"
     & $goPath build -mod=vendor -trimpath -ldflags $clientFlags -o 'dist\windows\TmkNetworkLAN.exe' '.\cmd\client'
     if ($LASTEXITCODE -ne 0) { throw 'Windows client build failed' }
+    # The explicit-proxy helper is a separate binary so the GUI never implements
+    # the data plane. It is packaged next to the client and launched on demand.
+    $egressRuntime = 'dist\windows\runtime\egress'
+    New-Item -ItemType Directory -Force -Path $egressRuntime | Out-Null
+    & $goPath build -mod=vendor -trimpath -ldflags '-s -w' -o (Join-Path $egressRuntime 'egress-helper.exe') '.\cmd\egress-helper'
+    if ($LASTEXITCODE -ne 0) { throw 'Egress helper build failed' }
+    if (-not (Test-Path -LiteralPath (Join-Path $egressRuntime 'egress-helper.exe'))) { throw 'Egress helper was not produced' }
     Copy-Item -LiteralPath 'cmd\client\TmkNetworkLAN.exe.manifest' -Destination 'dist\windows\TmkNetworkLAN.exe.manifest' -Force
     foreach ($legacy in @('dist\windows\lanmesh-client.exe','dist\windows\lanmesh-client.exe.manifest')) {
         if (Test-Path -LiteralPath $legacy) { Remove-Item -LiteralPath $legacy -Force }
@@ -54,6 +61,8 @@ try {
     Copy-Item -LiteralPath 'docs\ADVANCED-FEATURES-IMPLEMENTATION-2026-10-21.md' -Destination 'dist\windows\docs\ADVANCED-FEATURES-IMPLEMENTATION-2026-10-21.md' -Force
     Copy-Item -LiteralPath 'docs\CORE-UPDATE-INFRASTRUCTURE.md' -Destination 'dist\windows\docs\CORE-UPDATE-INFRASTRUCTURE.md' -Force
     Copy-Item -LiteralPath 'docs\FRPC-DESKTOP-COVERAGE.md' -Destination 'dist\windows\docs\FRPC-DESKTOP-COVERAGE.md' -Force
+    Copy-Item -LiteralPath 'docs\EGRESS-DESIGN.md' -Destination 'dist\windows\docs\EGRESS-DESIGN.md' -Force
+    Copy-Item -LiteralPath 'docs\EGRESS-VALIDATION.md' -Destination 'dist\windows\docs\EGRESS-VALIDATION.md' -Force
     New-Item -ItemType Directory -Force 'dist/windows/docs/screenshots' | Out-Null
     Copy-Item -LiteralPath 'docs\screenshots\frp-p2.png' -Destination 'dist\windows\docs\screenshots\frp-p2.png' -Force
     Copy-Item -LiteralPath 'THIRD-PARTY-NOTICES.md' -Destination 'dist\windows\THIRD-PARTY-NOTICES.md' -Force
@@ -67,6 +76,7 @@ try {
     foreach ($key in $previous.Keys) { [Environment]::SetEnvironmentVariable($key,$previous[$key],'Process') }
     Pop-Location
 }
+
 
 
 

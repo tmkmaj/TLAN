@@ -37,9 +37,10 @@ type desktop struct {
 	code                                                                                                  *walk.LineEdit
 	token                                                                                                 string
 	joinButton, toggleButton, membersButton, frpEntryButton                                               *walk.PushButton
-	railPower, railFRP, railVersion, railMore                                                             *walk.PushButton
+	railPower, railFRP, railEgress, railVersion, railMore                                                 *walk.PushButton
 	powerVisual, compactPowerVisual                                                                       *walk.ImageView
 	joinPage, shellPage, powerPage, frpPage, connectedArea, notice                                        *walk.Composite
+	egress                                                                                                *egressPanel
 	frpToggleButton, frpSettingsButton, frpAddButton, frpAddVisitorButton, frpEditButton, frpDeleteButton *walk.PushButton
 	frpNewProfileButton, frpApprovalButton, frpImportButton, frpExportButton, frpBatchButton              *walk.PushButton
 	frpProfileBox                                                                                         *walk.ComboBox
@@ -202,11 +203,17 @@ func runDesktop() {
 					if n%2 == 0 && a.page == pageFRP {
 						a.refreshFRP()
 					}
+					if n%2 == 0 && a.page == pageEgress && a.egress != nil {
+						a.egress.refresh()
+					}
 				})
 			}
 		}
 	}()
 	a.window.Run()
+	if a.egress != nil && a.egress.controller != nil {
+		_ = a.egress.controller.stop(context.Background())
+	}
 	a.waitFRPClose()
 	if a.session != nil {
 		<-a.session.done
@@ -773,7 +780,7 @@ func runUITest(path string) {
 		os.WriteFile(path, []byte("FAIL: "+err.Error()), 0600)
 		os.Exit(1)
 	}
-	os.WriteFile(path, []byte("PASS: integrated Mesh workspace, FRP page, tray actions, close policy, version control, power-off transition, member/rule tables and antialiased drawing calls; no network or adapter created\n"), 0600)
+	os.WriteFile(path, []byte("PASS: integrated Mesh workspace, FRP page, 应用流量转发 page (explicit-proxy banner), tray actions, close policy, version control, power-off transition, member/rule tables and antialiased drawing calls; no network or adapter created\n"), 0600)
 }
 func runAdapterTest(path string) {
 	os.WriteFile(path, []byte("RUNNING\n"), 0600)

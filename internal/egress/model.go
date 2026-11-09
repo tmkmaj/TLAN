@@ -206,6 +206,13 @@ type EgressServer struct {
 	ServerName    string `json:"serverName,omitempty"`
 	TrustedCARef  string `json:"trustedCaRef,omitempty"`
 	CredentialRef string `json:"credentialRef"`
+	// LeaseID and CapabilityFile are used by the explicit-proxy helper to
+	// authenticate against the gateway. They are optional in the model so a
+	// profile can be drafted before a lease exists.
+	LeaseID        string `json:"leaseId,omitempty"`
+	CapabilityFile string `json:"capabilityFile,omitempty"`
+	PolicyVersion  int    `json:"policyVersion,omitempty"`
+	ProxyListen    string `json:"proxyListen,omitempty"`
 }
 
 // EgressPolicy freezes DNS, IPv6, kill-switch, and target allow-list behavior.

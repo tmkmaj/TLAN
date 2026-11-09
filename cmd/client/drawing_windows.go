@@ -270,6 +270,16 @@ func (c *smoothCanvas) navIcon(r win.RECT, kind string, color walk.Color) {
 			defer gpDeletePen.Call(pen)
 			c.call(gpDrawLine, c.graphics, pen, uintptr(cx), uintptr(y+int(float64(iconSize)*0.38)), uintptr(cx), uintptr(y+int(float64(iconSize)*0.74)))
 		}
+	case "egress":
+		pen := c.pen(color, float32(math.Max(1.6, float64(iconSize)*0.09)))
+		if pen != 0 {
+			defer gpDeletePen.Call(pen)
+			mid := cy
+			c.call(gpDrawLine, c.graphics, pen, uintptr(x+int(float64(iconSize)*0.12)), uintptr(mid), uintptr(x+int(float64(iconSize)*0.84)), uintptr(mid))
+			c.call(gpDrawLine, c.graphics, pen, uintptr(x+int(float64(iconSize)*0.64)), uintptr(mid-int(float64(iconSize)*0.16)), uintptr(x+int(float64(iconSize)*0.84)), uintptr(mid))
+			c.call(gpDrawLine, c.graphics, pen, uintptr(x+int(float64(iconSize)*0.64)), uintptr(mid+int(float64(iconSize)*0.16)), uintptr(x+int(float64(iconSize)*0.84)), uintptr(mid))
+			c.call(gpDrawLine, c.graphics, pen, uintptr(x+int(float64(iconSize)*0.12)), uintptr(mid-int(float64(iconSize)*0.20)), uintptr(x+int(float64(iconSize)*0.12)), uintptr(mid+int(float64(iconSize)*0.20)))
+		}
 	default:
 		dot := int(math.Max(3, float64(iconSize)*0.18))
 		gap := int(float64(iconSize) * 0.24)

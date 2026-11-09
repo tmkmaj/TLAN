@@ -124,6 +124,22 @@ func deriveFrameKey(secret []byte, direction Direction) ([]byte, error) {
 	return key, nil
 }
 
+// DeriveHandshakeSecret returns the fixed key used only for the handshake
+// frames. The handshake carries the capability; it is protected by TLS and by
+// this key so a passive observer without TLS cannot read it. After the
+// handshake both sides switch to DeriveSessionSecret.
+func DeriveHandshakeSecret() []byte {
+	sum := sha256.Sum256([]byte("TLAN egress handshake v1"))
+	return sum[:]
+}
+
+// DeriveSessionSecret derives the 32-byte data-plane key from the one-time
+// lease capability. The gateway stores only the capability hash and derives the
+// same key after authenticating the handshake.
+func DeriveSessionSecret(capability string) []byte {
+	sum := sha256.Sum256([]byte("TLAN egress session capability v1\x00" + capability))
+	return sum[:]
+}
 func newFrameAEAD(secret []byte, direction Direction) (frameAEAD, error) {
 	key, err := deriveFrameKey(secret, direction)
 	if err != nil {

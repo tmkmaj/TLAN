@@ -25,6 +25,7 @@ Radmin VPN 官方帮助确认了网络名称与密码加入、虚拟网卡、Pin
 | 自有 Debian 服务端 | 已实现，待实机部署验收 | Linux amd64 独立二进制；信令、STUN、中继可在一台服务器运行 |
 | Windows 原生 GUI EXE | 已实现 | 白蓝界面；运行时需同目录 Wintun DLL 和管理员权限 |
 | 内网穿透（FRP P2/P3 受控发布） | 已实现本机回环、物理 LAN、TLAN 成员/本机 Mesh 地址、TCP/UDP/HTTP/HTTPS/STCP/SUDP、visitor、多配置、托管租约和 TargetGateway | 固定 FRP v0.71.1、强制 TLS、独立 Job；FRPS Login/NewProxy/Ping/NewUserConn 插件、端口/域名配额、按设备撤销、mesh_peer/mesh_self 授权、管理员目标服务授权、虚拟接口绑定和依赖暂停/恢复已接入；真实公网/双机/抓包/长稳和低权限 worker 仍未验收 |
+| 应用流量转发（显式代理） | 部分 | 独立 `internal/egress`/`internal/egressgateway` 与 `cmd/egress-gateway`/`cmd/egress-helper` 已实现并测试；GUI 第三页与客户端打包已接入；透明按进程转发需签名 WFP 组件，尚未实现；未做真实 Linux NAT 与跨公网验收 |
 | 创建、加入、退出网络 | 已实现 | 网络密码、持久化成员、稳定身份与虚拟 IPv4 |
 | 端到端加密 | 已实现 | wireguard-go；服务端转发加密载荷 |
 | UDP 直连、STUN、中继回退 | 已实现基础路径 | UDP 直连与 HTTP/HTTPS Upgrade 中继；本地真实加密实例已测 |
@@ -64,5 +65,6 @@ Radmin VPN 官方帮助确认了网络名称与密码加入、虚拟网卡、Pin
 6. 完成真实 Debian 与跨公网双 Windows 验收、长期运行验证，再完成签名、更新和发布流程。
 
 这些条目区分了开发缺项与验证缺项；不以文件存在、编译通过或界面状态作为实际组网成功的证明。
+
 
 

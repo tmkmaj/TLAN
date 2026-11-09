@@ -38,6 +38,7 @@ const (
 	pageJoin = iota
 	pagePower
 	pageFRP
+	pageEgress
 )
 
 const (
@@ -257,6 +258,8 @@ func (a *desktop) build() error {
 		connectedArea,
 	}}
 	frpPage := a.buildFRPPage()
+	a.egress = newEgressPanel(a)
+	egressPage := a.egress.view()
 
 	moreNav := navButton(&a.railMore, "more", "更多操作", nil, a.showRailMenu)
 	moreNav.ContextMenuItems = []MenuItem{
@@ -277,13 +280,19 @@ func (a *desktop) build() error {
 		VSpacer{Size: 8},
 		navButton(&a.railFRP, "frp", "内网穿透", func() bool { return a.page == pageFRP && a.railSelection == 0 }, a.openFRP),
 		VSpacer{Size: 8},
+		navButton(&a.railEgress, "egress", "应用流量转发", func() bool { return a.page == pageEgress && a.railSelection == 0 }, func() {
+			a.railSelection = 0
+			a.invalidateRail()
+			a.showPage(pageEgress)
+		}),
+		VSpacer{Size: 8},
 		navButton(&a.railVersion, "info", "版本信息", func() bool { return a.railSelection == 2 }, a.openVersionInfo),
 		VSpacer{StretchFactor: 1},
 		moreNav,
 		VSpacer{Size: 12},
 		Label{Text: appVersion, TextColor: uiBlue, Font: Font{PointSize: 8, Bold: true}, TextAlignment: AlignCenter, NoPrefix: true},
 	}}
-	contentHost := Composite{StretchFactor: 1, Background: SolidColorBrush{Color: uiBackground}, Layout: VBox{MarginsZero: true, SpacingZero: true}, Children: []Widget{powerPage, frpPage}}
+	contentHost := Composite{StretchFactor: 1, Background: SolidColorBrush{Color: uiBackground}, Layout: VBox{MarginsZero: true, SpacingZero: true}, Children: []Widget{powerPage, frpPage, egressPage}}
 	shellPage := Composite{AssignTo: &a.shellPage, Visible: false, StretchFactor: 1, Background: SolidColorBrush{Color: uiBackground}, Layout: HBox{MarginsZero: true, SpacingZero: true}, Children: []Widget{rail, contentHost}}
 
 	err = (MainWindow{AssignTo: &a.window, Title: windowTitle, Icon: icon, Visible: !a.startHidden, Size: Size{Width: 1020, Height: 720}, MinSize: Size{Width: 940, Height: 620}, Font: Font{Family: "Microsoft YaHei UI", PointSize: 10}, Background: SolidColorBrush{Color: uiBackground}, Layout: VBox{MarginsZero: true, SpacingZero: true}, Children: []Widget{
@@ -342,7 +351,7 @@ func (a *desktop) showRailMenu() {
 }
 
 func (a *desktop) invalidateRail() {
-	for _, button := range []*walk.PushButton{a.railPower, a.railFRP, a.railVersion, a.railMore} {
+	for _, button := range []*walk.PushButton{a.railPower, a.railFRP, a.railEgress, a.railVersion, a.railMore} {
 		if button != nil {
 			button.Invalidate()
 		}
@@ -398,6 +407,7 @@ func (a *desktop) showPage(page int) {
 	a.shellPage.SetVisible(shellVisible)
 	a.powerPage.SetVisible(shellVisible && page == pagePower)
 	a.frpPage.SetVisible(shellVisible && page == pageFRP)
+	a.egress.page.SetVisible(shellVisible && page == pageEgress)
 	a.page = page
 	a.window.SetSuspended(false)
 	a.invalidateRail()
@@ -411,6 +421,10 @@ func (a *desktop) showPage(page int) {
 			a.frpToggleButton.SetFocus()
 		}
 		a.refreshFRP()
+	case pageEgress:
+		if a.egress != nil {
+			a.egress.refresh()
+		}
 	}
 }
 

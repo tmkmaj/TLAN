@@ -26,11 +26,12 @@ type fakePeer struct {
 
 func newFakePeer(t *testing.T, conn net.Conn, secret []byte, sessionID SessionID) *fakePeer {
 	t.Helper()
-	reader, err := NewFrameReader(conn, secret, DirectionClientToServer)
+	handshakeSecret := DeriveHandshakeSecret()
+	reader, err := NewFrameReader(conn, handshakeSecret, DirectionClientToServer)
 	if err != nil {
 		t.Fatal(err)
 	}
-	writer, err := NewFrameWriter(conn, secret, DirectionServerToClient)
+	writer, err := NewFrameWriter(conn, handshakeSecret, DirectionServerToClient)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,6 +75,16 @@ func (p *fakePeer) acceptHandshake() (handshakeRequest, error) {
 	if err := p.writer.WriteFrame(Frame{Type: FrameHandshakeAck, SessionID: p.sessionID, Payload: payload}); err != nil {
 		return handshakeRequest{}, err
 	}
+	reader, err := NewFrameReader(p.conn, p.secret, DirectionClientToServer)
+	if err != nil {
+		return handshakeRequest{}, err
+	}
+	writer, err := NewFrameWriter(p.conn, p.secret, DirectionServerToClient)
+	if err != nil {
+		return handshakeRequest{}, err
+	}
+	p.reader = reader
+	p.writer = writer
 	p.reader.SetExpectedSession(p.sessionID)
 	return request, nil
 }
@@ -137,9 +148,12 @@ func testSessionConfig(dialer Dialer) SessionConfig {
 	return SessionConfig{
 		Dialer:            dialer,
 		Secret:            bytes.Repeat([]byte{0x5a}, 32),
+		ProfileID:         "work",
 		RuleID:            "browser",
 		DeviceID:          "dev-test",
 		LeaseID:           "lease-test",
+		Capability:        "capability-for-tests",
+		PolicyVersion:     1,
 		KeepaliveInterval: 40 * time.Millisecond,
 		PeerTimeout:       2 * time.Second,
 		HandshakeTimeout:  2 * time.Second,

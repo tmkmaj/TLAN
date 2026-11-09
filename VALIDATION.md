@@ -1,5 +1,13 @@
 # 验证记录（2026-10-18，最后更新 2026-10-22）
 
+## 应用流量转发（显式代理模式，2026-11-09）
+
+- 新增 `internal/egress`（模型/校验/独立存储/DPAPI、TLNE v1 协议、两步密钥握手、目标前导、客户端与网关会话）与 `internal/egressgateway`（租约、策略、配额、Lease API、nftables/iptables NAT 生命周期）。
+- 新增独立二进制 `cmd/egress-gateway`（Linux 服务）与 `cmd/egress-helper`（Windows 回环 SOCKS5 显式代理，fail-closed）。
+- 客户端新增“应用流量转发”第三页：规则表、服务器设置、启停、复制代理地址；顶部明确标注“显式代理模式，透明 WFP 未启用”。
+- `build-windows-client.ps1` 已把 `runtime/egress/egress-helper.exe` 打包进客户端 ZIP。
+- 验证：`go test -mod=vendor ./... -count=1` 全部 ok（TEMP 指向工作区目录时）；`cmd/egress-gateway`、`cmd/egress-helper`、`internal/egress`、`internal/egressgateway` 测试通过；`net.Pipe` 客户端↔网关 TCP 端到端、握手拒绝与目标阻断通过；Linux 交叉构建通过；发布 EXE `--ui-smoke-test` PASS。
+- **未完成**：签名 WFP 透明捕获、真实 Linux NAT 验证、跨公网双机与长稳验收、租约 API 接入既有控制面（当前独立网关提供）。
 ## P2/P3 受控发布验证（2026-10-21，R1/R2 复核）
 
 - FRPS 发布模板 P0 一致性已修复并完成公网部署：主实例补齐 KCP/QUIC/TCPMUX/subdomain，WSS 回环实例补齐独立 vhost/TCPMUX/subdomain；主实例仍 TLS-only，WSS 回环仍仅 127.0.0.1:7001。2026-10-21 15:31（Asia/Shanghai）已在 8.163.21.82 部署最新安装器和 frpauth 续租修复；KCP、QUIC、WebSocket、主/WSS TCP、HTTP、HTTPS、TCPMUX 的真实公网 managed 回归均通过。详见 `docs/FINAL-PUBLIC-DEPLOYMENT-VERIFICATION-2026-10-21.md`。
@@ -174,3 +182,4 @@
 - `scripts/verify-build-baseline.ps1` 已在 `go1.27.2 windows/amd64` 实际运行通过，并验证固定 FRPC/FRPS/Wintun SHA-256。
 - F-01 至 F-06 已整理为 `frp_audit_regression` 可选回归套件。截至本轮复核，F-01、F-02、F-04、F-05、F-06 已通过，F-03 仍失败且不能被默认绿灯掩盖；F-03 属于 R2 的路由/出口约束工作。命令和平台分类见 `docs/R0-BUILD-AND-TEST-BASELINE.md`。
 - CI 新增 Windows 与 Linux 双平台任务。2026-10-21 已建立首个 Git 提交基线；`dist/`、`.tmp-*`、运行配置、日志和凭据目录保持忽略，后续变更可通过 Git diff 审查。
+

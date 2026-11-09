@@ -37,9 +37,12 @@ func (f DialerFunc) Dial(ctx context.Context) (net.Conn, error) { return f(ctx) 
 type SessionConfig struct {
 	Dialer            Dialer
 	Secret            []byte
+	ProfileID         string
 	RuleID            string
 	DeviceID          string
 	LeaseID           string
+	Capability        string
+	PolicyVersion     int
 	KeepaliveInterval time.Duration
 	PeerTimeout       time.Duration
 	HandshakeTimeout  time.Duration
@@ -47,10 +50,13 @@ type SessionConfig struct {
 }
 
 type handshakeRequest struct {
-	RuleID   string `json:"ruleId"`
-	DeviceID string `json:"deviceId"`
-	LeaseID  string `json:"leaseId"`
-	Nonce    string `json:"nonce"`
+	ProfileID     string `json:"profileId"`
+	RuleID        string `json:"ruleId"`
+	DeviceID      string `json:"deviceId"`
+	LeaseID       string `json:"leaseId"`
+	Capability    string `json:"capability"`
+	PolicyVersion int    `json:"policyVersion"`
+	Nonce         string `json:"nonce"`
 }
 
 type handshakeAck struct {
@@ -101,8 +107,17 @@ func NewSession(cfg SessionConfig) (*Session, error) {
 	if len(cfg.Secret) != 32 {
 		return nil, codedError(CodeInvalidSessionConfig, ErrInvalidSessionConfig, "secret must be exactly 32 bytes")
 	}
+	if !validIdentifier(cfg.ProfileID) {
+		return nil, codedError(CodeInvalidSessionConfig, ErrInvalidSessionConfig, "profile id is invalid")
+	}
 	if !validIdentifier(cfg.RuleID) {
 		return nil, codedError(CodeInvalidSessionConfig, ErrInvalidSessionConfig, "rule id is invalid")
+	}
+	if cfg.PolicyVersion < 1 {
+		return nil, codedError(CodeInvalidSessionConfig, ErrInvalidSessionConfig, "policy version must be positive")
+	}
+	if value := strings.TrimSpace(cfg.Capability); value == "" || len(value) > 4096 {
+		return nil, codedError(CodeInvalidSessionConfig, ErrInvalidSessionConfig, "capability is required")
 	}
 	if !validIdentifier(cfg.DeviceID) {
 		return nil, codedError(CodeInvalidSessionConfig, ErrInvalidSessionConfig, "device id is invalid")
@@ -321,27 +336,19 @@ func (s *Session) connectAndHandshake(ctx context.Context) (*FrameReader, *Frame
 		return nil, nil, nil, s.failure(StateError, err), err
 	}
 	s.conn = conn
-	writer, err := NewFrameWriter(conn, s.secret, DirectionClientToServer)
+	handshakeSecret := DeriveHandshakeSecret()
+	writer, err := NewFrameWriter(conn, handshakeSecret, DirectionClientToServer)
 	if err != nil {
 		s.mu.Unlock()
 		_ = conn.Close()
 		return nil, nil, nil, &sessionFailure{state: StateError, err: err}, err
 	}
-	reader, err := NewFrameReader(conn, s.secret, DirectionServerToClient)
+	reader, err := NewFrameReader(conn, handshakeSecret, DirectionServerToClient)
 	if err != nil {
 		s.mu.Unlock()
 		_ = conn.Close()
 		return nil, nil, nil, &sessionFailure{state: StateError, err: err}, err
 	}
-	guard, guardErr := NewFrameRateGuard(defaultFrameRateLimit, time.Second)
-	if guardErr != nil {
-		s.mu.Unlock()
-		_ = conn.Close()
-		return nil, nil, nil, &sessionFailure{state: StateError, err: guardErr}, guardErr
-	}
-	reader.SetRateGuard(guard)
-	s.writer = writer
-	s.reader = reader
 	s.mu.Unlock()
 
 	stopConn := context.AfterFunc(ctx, func() { _ = conn.Close() })
@@ -361,10 +368,13 @@ func (s *Session) connectAndHandshake(ctx context.Context) (*FrameReader, *Frame
 		return nil, nil, stopConn, &sessionFailure{state: StateError, err: fmt.Errorf("generate handshake nonce: %w", err)}, err
 	}
 	request := handshakeRequest{
-		RuleID:   s.cfg.RuleID,
-		DeviceID: s.cfg.DeviceID,
-		LeaseID:  s.cfg.LeaseID,
-		Nonce:    base64.StdEncoding.EncodeToString(nonce),
+		ProfileID:     s.cfg.ProfileID,
+		RuleID:        s.cfg.RuleID,
+		DeviceID:      s.cfg.DeviceID,
+		LeaseID:       s.cfg.LeaseID,
+		Capability:    s.cfg.Capability,
+		PolicyVersion: s.cfg.PolicyVersion,
+		Nonce:         base64.StdEncoding.EncodeToString(nonce),
 	}
 	payload, err := encodeStrictJSON(request)
 	if err != nil {
@@ -401,6 +411,22 @@ func (s *Session) connectAndHandshake(ctx context.Context) (*FrameReader, *Frame
 		err = codedError(CodeHandshakeRejected, ErrHandshakeRejected, "acknowledged frame session does not match payload session")
 		return nil, nil, stopConn, s.failure(StateError, err), err
 	}
+	// Switch to the capability-derived session key only after the handshake
+	// has been authenticated. Frames after this point use a different key in
+	// both directions.
+	writer, err = NewFrameWriter(conn, s.secret, DirectionClientToServer)
+	if err != nil {
+		return nil, nil, stopConn, &sessionFailure{state: StateError, err: err}, err
+	}
+	reader, err = NewFrameReader(conn, s.secret, DirectionServerToClient)
+	if err != nil {
+		return nil, nil, stopConn, &sessionFailure{state: StateError, err: err}, err
+	}
+	guard, guardErr := NewFrameRateGuard(defaultFrameRateLimit, time.Second)
+	if guardErr != nil {
+		return nil, nil, stopConn, &sessionFailure{state: StateError, err: guardErr}, guardErr
+	}
+	reader.SetRateGuard(guard)
 	reader.SetExpectedSession(sessionID)
 	if err := conn.SetDeadline(time.Time{}); err != nil {
 		return nil, nil, stopConn, &sessionFailure{state: StateError, err: fmt.Errorf("clear handshake deadline: %w", err)}, err
@@ -416,6 +442,8 @@ func (s *Session) connectAndHandshake(ctx context.Context) (*FrameReader, *Frame
 	s.hasSession = true
 	s.state = StateRunning
 	s.updatedAt = now
+	s.writer = writer
+	s.reader = reader
 	s.mu.Unlock()
 	return reader, writer, stopConn, nil, nil
 }
