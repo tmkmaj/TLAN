@@ -121,6 +121,16 @@
 - “查看详细”错误对话框绑定与应用窗口相同的内嵌刷痕 T 图标；实际弹窗截图确认标题栏图标同步。
 - `--ui-smoke-test` 验证新导航控件、工作区切换、启动与成员区域展开收起及新绘制组件初始化；检查不访问服务器或创建网卡。
 
+## 服务器部署记录（2026-11-10）
+
+- 目标服务器 `8.163.21.82`，CentOS 7，root SSH；报告不记录密码。部署前配置备份：`/var/lib/lanmesh/tnlan-config.yml.before-admin-console-20261110121403`；安装器备份：`/var/backups/tmknetworklan/install-l96CHBtW`。
+- 配置更新：`server.admin_listen=127.0.0.1:8081`，管理 TLS 为空，`server.admin_allow_insecure_http=false`；`security.admin_token` 按要求设置为 `Tmkmaj233`；`network.join_code=TmkNetwork`；`frp.mode=managed` 保持不变。
+- 安装包 `dist/TmkNetworkLAN-server-linux-amd64.run` SHA-256：`fd39ff9f515930bbad0043f5b78d1685b698f1c06b9f812567563dfb6c6fa0c5`；安装器输出 `READY`。
+- 远程控制服务二进制 SHA-256：`ecf67bf44bfce0388200700d04cb3d12253118a7fcf8da3d9275c9067810b180`，与本地安装器暂存二进制一致。
+- 服务状态：`tmknetworklan`、`tmknetworklan-https`、`tlan-frps`、`tlan-frps-wss` 均为 active；控制端口 `127.0.0.1:8080`、管理端口 `127.0.0.1:8081`、公网 HTTPS 8443 和 STUN 3478 正常。
+- 管理页验证：登录返回 200、CSRF 下发、`/admin/api/session` 和 `/admin/api/overview` 返回 `ok`；`version=0.2.0`、`admin_listen=127.0.0.1:8081`、`admin_tls=false`、`member_count=3`，成员数据保留；页面和登录响应均未出现 `Tmkmaj233`；管理 listener 的 `/api/v1/status` 返回 404；最近 10 分钟无 panic/fatal/error/failed 日志。
+- 通过 SSH 隧道在真实 Chrome 验证已部署控制台：版本显示 `v0.2.0`、亮色/暗色切换成功、成员数 3、无 console/page error。截图：`docs/screenshots/admin-deployed-overview-2026-11-10.png`、`admin-deployed-settings-2026-11-10.png`、`admin-deployed-dark-2026-11-10.png`。
+
 ## 服务端 YAML 配置
 
 - 服务端只从当前目录读取 `tnlan-config.yml`；文件不存在时生成默认固定 `TmkNetwork`/`Tmkmaj233`、默认回环管理监听和全部默认配置，文件权限为 `0600`，随后以退出码 0 结束。
