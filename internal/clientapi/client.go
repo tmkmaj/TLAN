@@ -349,7 +349,7 @@ func requestRetryable(method, path string) bool {
 }
 
 func requestErrorRetryable(ctx context.Context, err error) bool {
-	if ctx.Err() != nil || errors.Is(err, context.Canceled) {
+	if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return false
 	}
 	var networkError *networkRequestError
