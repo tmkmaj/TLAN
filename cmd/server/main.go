@@ -26,6 +26,7 @@ func main() {
 		log.Fatal(err)
 	}
 }
+
 func run() error {
 	cfg, created, err := config.LoadOrCreate(config.FileName)
 	if err != nil {
@@ -40,6 +41,9 @@ func run() error {
 		fmt.Println("请检查配置中的监听地址、网络和令牌，然后再次运行程序。")
 		fmt.Println("生成的管理员令牌仅供服务器维护使用；network.join_code 可以分享给熟人。")
 		return nil
+	}
+	if len([]byte(cfg.Security.AdminToken)) < 24 {
+		log.Print("warning: security.admin_token is shorter than 24 bytes; keep the admin listener private and protect it with TLS or a firewall")
 	}
 	if err := cfg.EnsureDataDir(); err != nil {
 		return err
@@ -126,37 +130,137 @@ func run() error {
 			}
 		}()
 	}
-	service := &control.Server{Store: store, AdminToken: cfg.Security.AdminToken, Relay: relay, FRP: frpStore, DisableEnrollment: cfg.Network.JoinCode == ""}
-	server := &http.Server{Addr: cfg.Server.Listen, Handler: service.Handler(), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second, IdleTimeout: 90 * time.Second, MaxHeaderBytes: 32 * 1024}
+	service := &control.Server{Store: store, AdminToken: cfg.Security.AdminToken, Relay: relay, FRP: frpStore, DisableEnrollment: cfg.Network.JoinCode == "", StartedAt: time.Now().UTC()}
+	adminNet, adminTLS, err := adminListener(cfg)
+	if err != nil {
+		return err
+	}
+	if adminNet != nil {
+		defer adminNet.Close()
+	}
+	controlServer := &http.Server{Addr: cfg.Server.Listen, Handler: service.Handler(), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second, IdleTimeout: 90 * time.Second, MaxHeaderBytes: 32 * 1024}
 	// TLSNextProto disables HTTP/2 for the native HTTP/1.1 Upgrade relay.
-	server.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12, NextProtos: []string{"http/1.1"}}
-	server.TLSNextProto = make(map[string]func(*http.Server, *tls.Conn, http.Handler))
-	done := make(chan error, 1)
+	controlServer.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12, NextProtos: []string{"http/1.1"}}
+	controlServer.TLSNextProto = make(map[string]func(*http.Server, *tls.Conn, http.Handler))
+	controlDone := make(chan error, 1)
 	go func() {
 		if cfg.Server.TLSCert != "" {
-			done <- server.ListenAndServeTLS(cfg.Server.TLSCert, cfg.Server.TLSKey)
+			controlDone <- controlServer.ListenAndServeTLS(cfg.Server.TLSCert, cfg.Server.TLSKey)
 		} else {
-			done <- server.ListenAndServe()
+			controlDone <- controlServer.ListenAndServe()
 		}
 	}()
 	log.Printf("TmkNetworkLAN control + Upgrade relay listening on %s", cfg.Server.Listen)
-	select {
-	case err := <-done:
-		if !errors.Is(err, http.ErrServerClosed) {
-			return err
+	var adminServer *http.Server
+	var adminDone <-chan error
+	if adminNet != nil {
+		adminServer = &http.Server{
+			Handler:           service.AdminHandler(cfg.Security.AdminToken, adminTLS),
+			ReadHeaderTimeout: 10 * time.Second,
+			ReadTimeout:       30 * time.Second,
+			IdleTimeout:       90 * time.Second,
+			MaxHeaderBytes:    32 * 1024,
 		}
-		return nil
+		if adminTLS {
+			adminServer.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+		}
+		adminErrCh := make(chan error, 1)
+		adminDone = adminErrCh
+		go func() {
+			serveErr := adminServer.Serve(adminNet)
+			if errors.Is(serveErr, http.ErrServerClosed) {
+				serveErr = nil
+			}
+			adminErrCh <- serveErr
+		}()
+		if adminTLS {
+			log.Printf("admin console listening on %s with TLS", cfg.Server.AdminListen)
+		} else {
+			log.Printf("admin console listening on %s (plaintext)", cfg.Server.AdminListen)
+		}
+	}
+	var runErr error
+	select {
+	case err := <-controlDone:
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			runErr = err
+		}
+	case err := <-adminDone:
+		if err != nil {
+			runErr = fmt.Errorf("admin console stopped: %w", err)
+		}
 	case <-ctx.Done():
 	}
 	relay.Close()
 	shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+	if adminServer != nil {
+		if err := adminServer.Shutdown(shutdown); err != nil {
+			log.Printf("admin console shutdown: %v", err)
+			if runErr == nil {
+				runErr = err
+			}
+		}
+	}
 	if frpPlugin != nil {
 		if err := frpPlugin.Shutdown(shutdown); err != nil {
 			log.Printf("managed FRP plugin shutdown: %v", err)
+			if runErr == nil {
+				runErr = err
+			}
 		}
 	}
-	return server.Shutdown(shutdown)
+	if err := controlServer.Shutdown(shutdown); err != nil {
+		log.Printf("control server shutdown: %v", err)
+		if runErr == nil {
+			runErr = err
+		}
+	}
+	return runErr
+}
+
+func adminListener(cfg config.Config) (net.Listener, bool, error) {
+	address := strings.TrimSpace(cfg.Server.AdminListen)
+	if address == "" {
+		return nil, false, nil
+	}
+	certPath := strings.TrimSpace(cfg.Server.AdminTLSCert)
+	keyPath := strings.TrimSpace(cfg.Server.AdminTLSKey)
+	if (certPath == "") != (keyPath == "") {
+		return nil, false, fmt.Errorf("server.admin_tls_cert and server.admin_tls_key must be set together")
+	}
+	if certPath == "" {
+		if !isLoopbackAddress(address) {
+			log.Printf("warning: admin console is listening on %s without TLS; restrict it to a private network and firewall", address)
+		}
+		listener, err := net.Listen("tcp", address)
+		if err != nil {
+			return nil, false, fmt.Errorf("listen for admin console: %w", err)
+		}
+		return listener, false, nil
+	}
+	cert, err := tls.LoadX509KeyPair(certPath, keyPath)
+	if err != nil {
+		return nil, false, fmt.Errorf("load admin TLS certificate: %w", err)
+	}
+	raw, err := net.Listen("tcp", address)
+	if err != nil {
+		return nil, false, fmt.Errorf("listen for admin console: %w", err)
+	}
+	return tls.NewListener(raw, &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12}), true, nil
+}
+
+func isLoopbackAddress(address string) bool {
+	host, _, err := net.SplitHostPort(strings.TrimSpace(address))
+	if err != nil {
+		return false
+	}
+	host = strings.TrimSpace(strings.Trim(host, "[]"))
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 func frpAuthOptions(cfg config.Config) frpauth.Options {
@@ -182,6 +286,7 @@ func frpAuthOptions(cfg config.Config) frpauth.Options {
 		AllowedDomains: append([]string(nil), domains...),
 	}
 }
+
 func relayListener(cfg config.Config) (net.Listener, error) {
 	if (cfg.Server.RelayCert == "") != (cfg.Server.RelayKey == "") {
 		return nil, fmt.Errorf("server.relay_cert and server.relay_key must be set together")
@@ -196,6 +301,7 @@ func relayListener(cfg config.Config) (net.Listener, error) {
 	}
 	return tls.Listen("tcp", cfg.Server.RelayListen, &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12})
 }
+
 func serveRelay(ctx context.Context, listener net.Listener, broker *network.RelayBroker) {
 	defer listener.Close()
 	go func() { <-ctx.Done(); listener.Close() }()
