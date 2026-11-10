@@ -302,7 +302,28 @@ func (a *desktop) configureFRPTable() {
 	a.frpRules.SetGridlines(false)
 }
 
+func (a *desktop) requireMemberToken(action string) bool {
+	if a.api != nil && strings.HasPrefix(a.api.Token, "member_") {
+		return true
+	}
+	if code := strings.TrimSpace(a.token); code != "" {
+		a.joinAfter = func() {
+			a.railSelection = 0
+			a.showPage(pageFRP)
+		}
+		a.join()
+		return false
+	}
+	a.showPage(pageJoin)
+	a.code.SetFocus()
+	a.showNotice(clientui.Feedback{Title: "请先验证入网令牌", Message: "端口映射需要先输入有效令牌并加入网络。"})
+	return false
+}
+
 func (a *desktop) openFRP() {
+	if !a.requireMemberToken("内网穿透") {
+		return
+	}
 	a.railSelection = 0
 	a.showPage(pageFRP)
 }
@@ -621,6 +642,9 @@ func (a *desktop) stopFRP() {
 }
 
 func (a *desktop) toggleFRP() {
+	if !a.requireMemberToken("内网穿透") {
+		return
+	}
 	if a.frpManager == nil {
 		a.showFRPError("启动内网穿透", a.frpInitErr)
 		return

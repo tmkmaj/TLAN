@@ -41,6 +41,12 @@ type desktop struct {
 	powerVisual, compactPowerVisual                                                                       *walk.ImageView
 	joinPage, shellPage, powerPage, frpPage, connectedArea, notice                                        *walk.Composite
 	egress                                                                                                *egressPanel
+	admin                                                                                                 *adminPanel
+	adminAPI                                                                                              *clientapi.AdminClient
+	adminToken                                                                                            string
+	adminMode                                                                                             bool
+	railAdmin                                                                                             *walk.PushButton
+	joinAfter                                                                                             func()
 	frpToggleButton, frpSettingsButton, frpAddButton, frpAddVisitorButton, frpEditButton, frpDeleteButton *walk.PushButton
 	frpNewProfileButton, frpApprovalButton, frpImportButton, frpExportButton, frpBatchButton              *walk.PushButton
 	frpProfileBox                                                                                         *walk.ComboBox
@@ -154,6 +160,12 @@ func runDesktop() {
 	identity.DisplayName = name
 	a := &desktop{identity: identity, api: clientapi.New(base, token), ctx: ctx, cancel: cancel, settings: settings, stun: *stun, startHidden: *startup}
 	a.api.Context = ctx
+	if settings.ServerURL == base && strings.TrimSpace(settings.AdminToken) != "" {
+		a.adminMode = true
+		a.adminToken = strings.TrimSpace(settings.AdminToken)
+		a.adminAPI = clientapi.NewAdmin(base, a.adminToken)
+		a.adminAPI.Context = ctx
+	}
 	if token != "" {
 		a.membership = clientapi.Membership{Network: clientapi.Network{ID: settings.NetworkID, Name: settings.NetworkName, CIDR: settings.NetworkCIDR}, Member: clientapi.Device{ID: identity.DeviceID.String(), Name: name, VirtualIP: settings.VirtualIP}}
 	}
@@ -180,6 +192,9 @@ func runDesktop() {
 	a.window.Closing().Attach(a.handleWindowClosing)
 	if settingsErr != nil {
 		a.showError("读取本机配置", settingsErr)
+	}
+	if a.adminMode {
+		a.restoreAdminAccess()
 	}
 	if token != "" {
 		a.restoreMembership()
@@ -241,6 +256,11 @@ func (a *desktop) setStatus(text string) { a.status.SetText(text) }
 func (a *desktop) remember() error {
 	a.settings.ServerURL = a.api.BaseURL
 	a.settings.Token = a.api.Token
+	if a.adminMode {
+		a.settings.AdminToken = a.adminToken
+	} else {
+		a.settings.AdminToken = ""
+	}
 	a.settings.NetworkID = a.membership.Network.ID
 	a.settings.DeviceName = a.identity.DisplayName
 	a.settings.STUNServer = a.stun
@@ -286,6 +306,57 @@ func (a *desktop) restoreMembership() {
 		})
 	}()
 }
+func (a *desktop) restoreAdminAccess() {
+	if !a.adminMode || a.adminAPI == nil {
+		return
+	}
+	go func() {
+		_, err := a.adminAPI.Overview()
+		a.ui(func() {
+			if err == nil {
+				a.setAdminMode(true, a.adminToken)
+				return
+			}
+			if isAdminAuthFailure(err) {
+				a.setAdminMode(false, "")
+				a.showNotice(clientui.Feedback{Title: "管理权限已失效", Message: "请输入当前管理令牌重新加入网络。"})
+				return
+			}
+			a.setStatus("管理服务暂时不可用，打开管理面板后可重试。")
+		})
+	}()
+}
+
+func (a *desktop) setAdminMode(enabled bool, token string) {
+	token = strings.TrimSpace(token)
+	enabled = enabled && token != ""
+	a.adminMode = enabled
+	if !enabled {
+		a.adminToken = ""
+		a.adminAPI = nil
+		if a.admin != nil {
+			a.admin.reset()
+		}
+		if a.railAdmin != nil {
+			a.railAdmin.SetVisible(false)
+		}
+		if a.page == pageAdmin {
+			a.showPage(pagePower)
+		}
+		a.invalidateRail()
+		return
+	}
+	a.adminToken = token
+	if a.api != nil {
+		a.adminAPI = clientapi.NewAdmin(a.api.BaseURL, token)
+		a.adminAPI.Context = a.ctx
+	}
+	if a.railAdmin != nil {
+		a.railAdmin.SetVisible(true)
+	}
+	a.invalidateRail()
+}
+
 func (a *desktop) join() {
 	if a.busy {
 		return
@@ -308,6 +379,8 @@ func (a *desktop) join() {
 		a.showNotice(clientui.Feedback{Title: "客户端尚未配置连接服务", Message: "请向软件提供者获取配置好服务器地址的客户端。"})
 		return
 	}
+	after := a.joinAfter
+	a.joinAfter = nil
 	a.dismissNotice()
 	a.busy = true
 	a.joinButton.SetEnabled(false)
@@ -330,12 +403,16 @@ func (a *desktop) join() {
 			a.api.Token = m.Token
 			a.membership = m
 			a.members = nil
+			a.setAdminMode(m.Admin, code)
 			a.refreshFRPIdentity()
 			a.applyMembership()
 			if err := a.remember(); err != nil {
 				a.showError("保存成员凭据", err)
 			}
 			a.setStatus("已加入网络，点击电源开启连接。")
+			if after != nil {
+				after()
+			}
 		})
 	}()
 }
@@ -696,6 +773,7 @@ func (a *desktop) leaveNetwork() {
 				a.showError("退出网络", err)
 				return
 			}
+			a.setAdminMode(false, "")
 			a.membership = clientapi.Membership{}
 			a.api.Token = ""
 			a.members = nil
@@ -780,7 +858,7 @@ func runUITest(path string) {
 		os.WriteFile(path, []byte("FAIL: "+err.Error()), 0600)
 		os.Exit(1)
 	}
-	os.WriteFile(path, []byte("PASS: integrated Mesh workspace, FRP page, 应用流量转发 page (explicit-proxy banner and top-aligned layout), tray actions, close policy, version control, power-off transition, member/rule tables, navigation accessibility states and antialiased drawing calls; no network or adapter created\n"), 0600)
+	os.WriteFile(path, []byte("PASS: integrated Mesh workspace, FRP page, 应用流量转发 page (explicit-proxy banner and top-aligned layout), admin-only management panel, tray actions, close policy, version control, power-off transition, member/rule tables, navigation accessibility states and antialiased drawing calls; no network or adapter created\n"), 0600)
 }
 func runAdapterTest(path string) {
 	os.WriteFile(path, []byte("RUNNING\n"), 0600)

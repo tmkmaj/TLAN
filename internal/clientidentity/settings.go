@@ -11,6 +11,7 @@ import (
 type Settings struct {
 	ServerURL     string `json:"server_url"`
 	Token         string `json:"token"`
+	AdminToken    string `json:"admin_token,omitempty"`
 	STUNServer    string `json:"stun_server,omitempty"`
 	RelayOnly     bool   `json:"relay_only"`
 	NetworkID     string `json:"network_id,omitempty"`
@@ -50,6 +51,10 @@ func LoadSettings() (Settings, error) {
 		return settings, err
 	}
 	settings.Token, err = UnprotectSecret(settings.Token)
+	if err != nil {
+		return settings, err
+	}
+	settings.AdminToken, err = UnprotectSecret(settings.AdminToken)
 	return settings, err
 }
 func SaveSettings(settings Settings) error {
@@ -61,6 +66,10 @@ func SaveSettings(settings Settings) error {
 		return err
 	}
 	settings.Token, err = ProtectSecret(settings.Token)
+	if err != nil {
+		return err
+	}
+	settings.AdminToken, err = ProtectSecret(settings.AdminToken)
 	if err != nil {
 		return err
 	}

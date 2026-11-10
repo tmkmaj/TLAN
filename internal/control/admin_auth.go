@@ -32,6 +32,15 @@ type adminWindow struct {
 	count int
 }
 
+func adminTokenMatches(got, want string) bool {
+	if want == "" {
+		return false
+	}
+	gotHash := sha256.Sum256([]byte(got))
+	wantHash := sha256.Sum256([]byte(want))
+	return subtle.ConstantTimeCompare(gotHash[:], wantHash[:]) == 1
+}
+
 type adminAuth struct {
 	tokenHash [32]byte
 	secure    bool

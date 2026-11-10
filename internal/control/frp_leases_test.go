@@ -91,6 +91,30 @@ func leaseRequest(networkID, deviceID string) string {
 		`]}`
 }
 
+func TestFRPLeaseRequiresMemberToken(t *testing.T) {
+	fixture := newFRPAPIFixture(t)
+	defer fixture.close()
+	body := leaseRequest(fixture.network, fixture.device)
+
+	response := fixture.request(http.MethodPost, "/api/v1/frp/leases", "", body)
+	if response.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated FRP lease status = %d, body = %s", response.StatusCode, readResponse(response))
+	}
+	response.Body.Close()
+
+	response = fixture.request(http.MethodPost, "/api/v1/frp/leases", fixture.service.AdminToken, body)
+	if response.StatusCode != http.StatusForbidden {
+		t.Fatalf("admin-token FRP lease status = %d, body = %s", response.StatusCode, readResponse(response))
+	}
+	response.Body.Close()
+
+	response = fixture.request(http.MethodGet, "/api/v1/frp/capabilities", "", "")
+	if response.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated FRP capabilities status = %d, body = %s", response.StatusCode, readResponse(response))
+	}
+	response.Body.Close()
+}
+
 func TestFRPLeaseMemberAPIAndRevocation(t *testing.T) {
 	fixture := newFRPAPIFixture(t)
 	defer fixture.close()

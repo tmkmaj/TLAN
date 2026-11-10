@@ -39,6 +39,7 @@ const (
 	pagePower
 	pageFRP
 	pageEgress
+	pageAdmin
 )
 
 const (
@@ -175,7 +176,7 @@ func (a *desktop) build() error {
 		tokenInputView{assign: &a.code, value: &a.token, submit: a.join},
 		join,
 		frpEntry,
-		Label{Text: "内网穿透无需加入虚拟网络；令牌仅由当前 Windows 用户加密保存", TextColor: uiMuted, Font: Font{PointSize: 8}, TextAlignment: AlignCenter, NoPrefix: true},
+		Label{Text: "输入令牌验证身份后，才可配置端口映射；令牌仅由当前 Windows 用户加密保存", TextColor: uiMuted, Font: Font{PointSize: 8}, TextAlignment: AlignCenter, NoPrefix: true},
 	}}, fill: uiWhite, radius: 16, border: borderColor(uiBorder)}
 	joinPage := Composite{AssignTo: &a.joinPage, StretchFactor: 1, Background: SolidColorBrush{Color: uiBackground}, Layout: VBox{Margins: Margins{Left: 28, Top: 28, Right: 28, Bottom: 28}, SpacingZero: true}, Children: []Widget{
 		VSpacer{StretchFactor: 1},
@@ -260,7 +261,18 @@ func (a *desktop) build() error {
 	frpPage := a.buildFRPPage()
 	a.egress = newEgressPanel(a)
 	egressPage := a.egress.view()
+	a.admin = newAdminPanel(a)
+	adminPage := a.admin.view()
 
+	adminNav := navButton(&a.railAdmin, "admin", "管理面板", func() bool { return a.page == pageAdmin && a.railSelection == 0 }, func() {
+		if !a.adminMode {
+			return
+		}
+		a.railSelection = 0
+		a.invalidateRail()
+		a.showPage(pageAdmin)
+	})
+	adminNav.Visible = a.adminMode
 	moreNav := navButton(&a.railMore, "more", "更多操作", nil, a.showRailMenu)
 	moreNav.ContextMenuItems = []MenuItem{
 		Action{Text: "连接诊断", OnTriggered: a.diagnose},
@@ -287,6 +299,8 @@ func (a *desktop) build() error {
 			a.invalidateRail()
 			a.showPage(pageEgress)
 		}),
+		VSpacer{Size: 6},
+		adminNav,
 		VSpacer{StretchFactor: 1},
 		Composite{MinSize: Size{Width: 28, Height: 1}, MaxSize: Size{Width: 28, Height: 1}, Background: SystemColorBrush{Color: walk.SysColorBtnFace}, Alignment: AlignHCenterVNear},
 		VSpacer{Size: 12},
@@ -296,7 +310,7 @@ func (a *desktop) build() error {
 		VSpacer{Size: 10},
 		themeLabelView{Label: Label{Text: appVersion, TextColor: navSecondaryTextColor(), Font: Font{PointSize: 8}, TextAlignment: AlignCenter, NoPrefix: true}, color: navSecondaryTextColor},
 	}}
-	contentHost := Composite{StretchFactor: 1, Background: SolidColorBrush{Color: uiBackground}, Layout: VBox{MarginsZero: true, SpacingZero: true, Alignment: AlignHNearVNear}, Children: []Widget{powerPage, frpPage, egressPage}}
+	contentHost := Composite{StretchFactor: 1, Background: SolidColorBrush{Color: uiBackground}, Layout: VBox{MarginsZero: true, SpacingZero: true, Alignment: AlignHNearVNear}, Children: []Widget{powerPage, frpPage, egressPage, adminPage}}
 	railDivider := Composite{MinSize: Size{Width: 1}, MaxSize: Size{Width: 1}, Background: SystemColorBrush{Color: walk.SysColorBtnFace}}
 	shellPage := Composite{AssignTo: &a.shellPage, Visible: false, StretchFactor: 1, Background: SolidColorBrush{Color: uiBackground}, Layout: HBox{MarginsZero: true, SpacingZero: true, Alignment: AlignHNearVNear}, Children: []Widget{rail, railDivider, contentHost}}
 
@@ -376,6 +390,7 @@ func (a *desktop) invalidateRail() {
 	setState(a.railPower, navState(a.page == pagePower && a.railSelection == 0))
 	setState(a.railFRP, navState(a.page == pageFRP && a.railSelection == 0))
 	setState(a.railEgress, navState(a.page == pageEgress && a.railSelection == 0))
+	setState(a.railAdmin, navState(a.page == pageAdmin && a.railSelection == 0))
 	setState(a.railVersion, walk.AccStateFocusable)
 	setState(a.railMore, walk.AccStateFocusable|walk.AccStateHasPopup)
 }
@@ -423,6 +438,9 @@ func (a *desktop) showVersionInfo() {
 }
 
 func (a *desktop) showPage(page int) {
+	if page == pageAdmin && !a.adminMode {
+		page = pagePower
+	}
 	a.window.SetSuspended(true)
 	shellVisible := page != pageJoin
 	a.joinPage.SetVisible(!shellVisible)
@@ -430,6 +448,9 @@ func (a *desktop) showPage(page int) {
 	a.powerPage.SetVisible(shellVisible && page == pagePower)
 	a.frpPage.SetVisible(shellVisible && page == pageFRP)
 	a.egress.page.SetVisible(shellVisible && page == pageEgress)
+	if a.admin != nil && a.admin.page != nil {
+		a.admin.page.SetVisible(shellVisible && page == pageAdmin)
+	}
 	a.page = page
 	a.window.SetSuspended(false)
 	a.window.RequestLayout()
@@ -447,6 +468,10 @@ func (a *desktop) showPage(page int) {
 	case pageEgress:
 		if a.egress != nil {
 			a.egress.refresh()
+		}
+	case pageAdmin:
+		if a.admin != nil {
+			a.admin.refreshData()
 		}
 	}
 }
@@ -550,7 +575,7 @@ func (a *desktop) updatePowerButtons() {
 }
 
 func (a *desktop) showError(action string, err error) {
-	f := clientui.Explain(action, err, a.api.Token)
+	f := clientui.Explain(action, err, a.api.Token, a.adminToken)
 	switch f.Title {
 	case "网络密码不正确":
 		f.Title = "入网令牌不正确"
@@ -593,7 +618,7 @@ func (a *desktop) showErrorDetails() {
 	}
 }
 func (a *desktop) showTextDialog(title, message, detail string) {
-	detail = clientui.Redact(detail, a.api.Token)
+	detail = clientui.Redact(detail, a.api.Token, a.adminToken)
 	var dlg *walk.Dialog
 	var closeButton *walk.PushButton
 	err := (Dialog{AssignTo: &dlg, Title: title, Icon: a.appIcon, Size: Size{Width: 620, Height: 400}, MinSize: Size{Width: 520, Height: 320}, Font: Font{Family: "Microsoft YaHei UI", PointSize: 10}, Background: SolidColorBrush{Color: uiWhite}, Layout: VBox{Margins: Margins{Left: 24, Top: 22, Right: 24, Bottom: 22}, Spacing: 16}, CancelButton: &closeButton, DefaultButton: &closeButton, Children: []Widget{heading(title), TextLabel{Text: message, MinSize: Size{Width: 440}, TextColor: uiMuted}, TextEdit{Text: detail, ReadOnly: true, VScroll: true, StretchFactor: 1}, Composite{Layout: HBox{MarginsZero: true}, Children: []Widget{caption("可选中并复制详情"), HSpacer{}, actionButton(&closeButton, "关闭", false, 88, func() { dlg.Accept() })}}}}).Create(a.window)

@@ -109,3 +109,51 @@ func TestRenameDeviceRejectsInvalidName(t *testing.T) {
 		}
 	}
 }
+func adminTestKey(seed byte) string {
+	key := make([]byte, 32)
+	key[0] = seed
+	return base64.StdEncoding.EncodeToString(key)
+}
+
+func TestEnrollPrivateAsAdminIssuesMemberCredential(t *testing.T) {
+	store, network, _ := adminStorageFixture(t)
+	request := core.RegisterDeviceRequest{DeviceID: "device-admin-enroll", DisplayName: "Admin Node", WireGuardPublicKey: adminTestKey(7)}
+	summary, member, token, err := store.EnrollPrivateAsAdmin(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.ID != network.ID || member.ID != request.DeviceID.String() || !strings.HasPrefix(token, "member_") {
+		t.Fatalf("admin enrollment = %+v/%+v/%q", summary, member, token)
+	}
+	credential, ok := store.AuthenticateMember(token)
+	if !ok || credential.DeviceID != request.DeviceID.String() || credential.NetworkID != network.ID {
+		t.Fatalf("admin member credential = %+v/%v", credential, ok)
+	}
+}
+
+func TestEnrollPrivateAsAdminPreservesIdentity(t *testing.T) {
+	store, network, member := adminStorageFixture(t)
+	request := core.RegisterDeviceRequest{DeviceID: core.DeviceID(member.ID), DisplayName: member.Name, WireGuardPublicKey: member.PublicKey}
+	_, again, _, err := store.EnrollPrivateAsAdmin(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.ID != member.ID || again.VirtualIP != member.VirtualIP || !again.JoinedAt.Equal(member.JoinedAt) {
+		t.Fatalf("admin reenrollment changed identity: %+v -> %+v", member, again)
+	}
+	if _, err := store.PrivateNetwork(); err != nil {
+		t.Fatal(err)
+	}
+	_ = network
+}
+
+func TestEnrollPrivateAsAdminRejectsBlockedDevice(t *testing.T) {
+	store, network, member := adminStorageFixture(t)
+	if _, err := store.SetDeviceBlocked(network.ID, member.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	_, _, _, err := store.EnrollPrivateAsAdmin(core.RegisterDeviceRequest{DeviceID: core.DeviceID(member.ID), WireGuardPublicKey: member.PublicKey})
+	if !errors.Is(err, ErrBlocked) {
+		t.Fatalf("blocked admin enrollment error = %v, want ErrBlocked", err)
+	}
+}

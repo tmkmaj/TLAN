@@ -61,10 +61,21 @@ func (s *Store) EnsurePrivateNetwork(name, code, cidr string) (NetworkSummary, e
 // EnrollPrivate issues a token scoped to one device in one network. The HTTP
 // layer seals that token to the device's X25519 key before returning it.
 func (s *Store) EnrollPrivate(req core.RegisterDeviceRequest, code string) (NetworkSummary, Device, string, error) {
+	return s.enrollPrivate(req, code, false)
+}
+
+// EnrollPrivateAsAdmin joins the private network without consuming the normal
+// network join code. The caller must authenticate the configured admin token
+// before calling this method.
+func (s *Store) EnrollPrivateAsAdmin(req core.RegisterDeviceRequest) (NetworkSummary, Device, string, error) {
+	return s.enrollPrivate(req, "", true)
+}
+
+func (s *Store) enrollPrivate(req core.RegisterDeviceRequest, code string, admin bool) (NetworkSummary, Device, string, error) {
 	if err := req.Validate(); err != nil {
 		return NetworkSummary{}, Device{}, "", err
 	}
-	if len(code) > 256 {
+	if !admin && len(code) > 256 {
 		return NetworkSummary{}, Device{}, "", ErrInvalidPassword
 	}
 	s.mu.Lock()
@@ -73,7 +84,7 @@ func (s *Store) EnrollPrivate(req core.RegisterDeviceRequest, code string) (Netw
 	if !ok {
 		return NetworkSummary{}, Device{}, "", errors.New("private enrollment is disabled")
 	}
-	if !verifyPassword(code, n.PasswordHash) {
+	if !admin && !verifyPassword(code, n.PasswordHash) {
 		return NetworkSummary{}, Device{}, "", ErrInvalidPassword
 	}
 	id := req.DeviceID.String()

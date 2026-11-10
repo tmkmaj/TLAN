@@ -55,13 +55,13 @@ func checkDesktopUI() error {
 		if got != visible {
 			return fmt.Errorf("workspace shell visibility = %v, want %v", got, visible)
 		}
-		if a.railPower == nil || a.railFRP == nil || a.railVersion == nil || a.railMore == nil || a.toggleButton == nil || a.membersButton == nil || a.connectedArea == nil || a.frpPage == nil || a.frpRules == nil || a.frpToggleButton == nil || a.frpProfileBox == nil || a.frpAddVisitorButton == nil {
+		if a.railPower == nil || a.railFRP == nil || a.railVersion == nil || a.railMore == nil || a.admin == nil || a.admin.table == nil || a.admin.refresh == nil || a.admin.rename == nil || a.admin.ban == nil || a.toggleButton == nil || a.membersButton == nil || a.connectedArea == nil || a.frpPage == nil || a.frpRules == nil || a.frpToggleButton == nil || a.frpProfileBox == nil || a.frpAddVisitorButton == nil {
 			return fmt.Errorf("redesigned navigation or action controls were not initialized")
 		}
 		return nil
 	}
 	assertPage := func(want int) error {
-		for i, page := range []*walk.Composite{a.joinPage, a.powerPage, a.frpPage, a.egress.page} {
+		for i, page := range []*walk.Composite{a.joinPage, a.powerPage, a.frpPage, a.egress.page, a.admin.page} {
 			// IsWindowVisible also considers the hidden root window, so check
 			// each page's own native visibility flag instead.
 			visible := win.GetWindowLong(page.Handle(), win.GWL_STYLE)&win.WS_VISIBLE != 0
@@ -129,6 +129,26 @@ func checkDesktopUI() error {
 	if !strings.Contains(a.egress.modeLabel.Text(), "显式代理") {
 		return fmt.Errorf("egress page must label the explicit proxy limitation")
 	}
+	a.setAdminMode(true, "Tmkmaj233")
+	if !a.railAdmin.Visible() || a.adminAPI == nil {
+		return fmt.Errorf("admin mode did not reveal the management panel entry")
+	}
+	a.admin.busy = true
+	a.showPage(pageAdmin)
+	a.admin.apply(clientapi.AdminOverview{Service: "tmknetworklan-control", Version: "0.2.0", Stage: "admin-ui-smoke", Network: clientapi.Network{Name: "私人网络", CIDR: "10.77.0.0/24"}, MemberCount: 3, OnlineCount: 2, BlockedCount: 1, RelayStatus: "enabled", RelaySessions: 1, FRPStatus: "managed", FRPLeaseCount: 1}, clientapi.AdminMembers{Members: []clientapi.AdminMember{{ID: "dev-ui-smoke", Name: "UI Check", VirtualIP: "10.77.0.2", Online: true}, {ID: "dev-ui-friend", Name: "Friend-PC", VirtualIP: "10.77.0.3", Online: true, RelayCount: 1}, {ID: "dev-ui-blocked", Name: "Blocked-PC", VirtualIP: "10.77.0.4", Blocked: true}}}, nil)
+	a.admin.setBusy(false)
+	if err := assertPage(pageAdmin); err != nil {
+		return err
+	}
+	if len(a.admin.model.rows) != 3 || !strings.Contains(a.admin.counts.Text(), "3 / 2") {
+		return fmt.Errorf("admin panel fixture did not render overview or members")
+	}
+	a.admin.table.SetCurrentIndex(2)
+	a.admin.refreshButtons()
+	if !a.admin.unban.Enabled() || a.admin.ban.Enabled() {
+		return fmt.Errorf("admin member actions did not reflect blocked state")
+	}
+	a.setAdminMode(false, "")
 	a.egress.model.setRows([][]string{{"示例应用", `C:\Example\app.exe`, "否", "已停止"}})
 	a.egress.rules.SetVisible(true)
 	a.egress.empty.SetVisible(false)
@@ -148,7 +168,7 @@ func checkDesktopUI() error {
 	defer c.dispose()
 	border := uiBlue
 	c.rounded(win.RECT{Right: 340, Bottom: 56}, 16, uiWhite, &border)
-	for _, kind := range []string{"power", "frp", "egress", "network", "more"} {
+	for _, kind := range []string{"power", "frp", "egress", "admin", "network", "more"} {
 		c.navIcon(win.RECT{Right: 42, Bottom: 42}, kind, uiBlue)
 	}
 	for state := 0; state <= 2; state++ {
@@ -232,6 +252,20 @@ func runUIPreview(mode string) {
 			a.egress.controller.profile = profile
 			a.showPage(pageEgress)
 		}
+	} else if mode == "admin" {
+		a.setAdminMode(true, "Tmkmaj233")
+		a.admin.busy = true
+		a.showPage(pageAdmin)
+		a.admin.apply(clientapi.AdminOverview{Service: "tmknetworklan-control", Version: "0.2.0", Stage: "admin-console", ControlListen: "0.0.0.0:8080 / TLS", AdminListen: "127.0.0.1:8081", Network: clientapi.Network{Name: "朋友们的私人网络", CIDR: "10.77.0.0/24"}, MemberCount: 5, OnlineCount: 3, BlockedCount: 1, RelayStatus: "enabled", RelaySessions: 2, FRPStatus: "managed", FRPLeaseCount: 4}, clientapi.AdminMembers{Members: []clientapi.AdminMember{
+			{ID: "dev-tmk-pc", Name: "Tmk-PC", VirtualIP: "10.77.0.2", Online: true, RelayCount: 1, FRPLeases: 2},
+			{ID: "dev-alice", Name: "DESKTOP-ALICE", VirtualIP: "10.77.0.3", Online: true, RelayCount: 1, FRPLeases: 1},
+			{ID: "dev-bob", Name: "LAPTOP-BOB", VirtualIP: "10.77.0.4", Online: false, RelayCount: 0, FRPLeases: 0},
+			{ID: "dev-chen", Name: "手机热点", VirtualIP: "10.77.0.5", Online: true, RelayCount: 1, FRPLeases: 1},
+			{ID: "dev-blocked", Name: "已拉黑设备", VirtualIP: "10.77.0.6", Blocked: true},
+		}}, nil)
+		a.admin.setBusy(false)
+		a.admin.table.SetCurrentIndex(0)
+		a.admin.refreshButtons()
 	} else if mode == "rail-focus" {
 		a.showPage(pagePower)
 		a.connectedArea.SetVisible(true)

@@ -2,7 +2,11 @@
 
 package clientidentity
 
-import "testing"
+import (
+	"bytes"
+	"os"
+	"testing"
+)
 
 func TestSaveSettingsPersistsResidentPreferences(t *testing.T) {
 	t.Setenv("AppData", t.TempDir())
@@ -16,5 +20,31 @@ func TestSaveSettingsPersistsResidentPreferences(t *testing.T) {
 	}
 	if !got.CloseToTray || !got.LaunchAtLogin {
 		t.Fatalf("resident preferences were not persisted: %+v", got)
+	}
+}
+
+func TestSaveSettingsProtectsAdminToken(t *testing.T) {
+	t.Setenv("AppData", t.TempDir())
+	want := Settings{ServerURL: "https://example.test", Token: "member_test", AdminToken: "Tmkmaj233"}
+	if err := SaveSettings(want); err != nil {
+		t.Fatal(err)
+	}
+	got, err := LoadSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Token != want.Token || got.AdminToken != want.AdminToken {
+		t.Fatalf("credentials were not round-tripped: %+v", got)
+	}
+	path, err := settingsPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(raw, []byte("Tmkmaj233")) {
+		t.Fatal("admin token was persisted as plaintext")
 	}
 }

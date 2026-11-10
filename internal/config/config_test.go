@@ -127,6 +127,7 @@ func TestValidationErrorsAreActionable(t *testing.T) {
 		{"short admin token", func(c *Config) { c.Security.AdminToken = "short" }, "security.admin_token"},
 		{"unpaired admin TLS", func(c *Config) { c.Server.AdminTLSCert = "admin.crt" }, "server.admin_tls_cert"},
 		{"short join code", func(c *Config) { c.Network.JoinCode = "short" }, "network.join_code"},
+		{"admin token equals join code", func(c *Config) { c.Security.AdminToken = c.Network.JoinCode }, "security.admin_token"},
 		{"invalid listener", func(c *Config) { c.Server.Listen = "8080" }, "server.listen"},
 		{"unpaired TLS", func(c *Config) { c.Server.TLSCert = "server.crt" }, "server.tls_cert"},
 		{"unpaired relay TLS", func(c *Config) { c.Server.RelayCert = "relay.crt" }, "server.relay_cert"},

@@ -68,6 +68,7 @@ try {
     Copy-Item -LiteralPath 'docs\screenshots\sidebar-refinement-2026-11-10.png' -Destination 'dist\windows\docs\screenshots\sidebar-refinement-2026-11-10.png' -Force
     Copy-Item -LiteralPath 'docs\screenshots\egress-explicit-proxy-2026-11-10.png' -Destination 'dist\windows\docs\screenshots\egress-explicit-proxy-2026-11-10.png' -Force
     Copy-Item -LiteralPath 'docs\screenshots\sidebar-focus-2026-11-10.png' -Destination 'dist\windows\docs\screenshots\sidebar-focus-2026-11-10.png' -Force
+    Copy-Item -LiteralPath 'docs\screenshots\admin-client-panel-2026-11-10.png' -Destination 'dist\windows\docs\screenshots\admin-client-panel-2026-11-10.png' -Force
     Copy-Item -LiteralPath 'THIRD-PARTY-NOTICES.md' -Destination 'dist\windows\THIRD-PARTY-NOTICES.md' -Force
     $licenses = @('github.com/lxn/walk','github.com/lxn/win','golang.zx2c4.com/wireguard','golang.zx2c4.com/wintun','golang.org/x/sys','golang.org/x/net','golang.org/x/crypto','gopkg.in/Knetic/govaluate.v3')
     New-Item -ItemType Directory -Force 'dist/windows/licenses' | Out-Null

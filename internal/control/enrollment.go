@@ -84,10 +84,6 @@ func (s *Server) allowEnrollment(r *http.Request) bool {
 }
 func (s *Server) enroll(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
-	if s.DisableEnrollment {
-		writeError(w, 503, "private enrollment is disabled")
-		return
-	}
 	if r.Method != http.MethodPost {
 		writeError(w, 405, "method not allowed")
 		return
@@ -112,6 +108,11 @@ func (s *Server) enroll(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
+	admin := s.adminTokenMatches(req.Code)
+	if s.DisableEnrollment && !admin {
+		writeError(w, 503, "private enrollment is disabled")
+		return
+	}
 	if err := req.Device.Validate(); err != nil {
 		writeError(w, 400, err.Error())
 		return
@@ -120,7 +121,15 @@ func (s *Server) enroll(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "invalid device key")
 		return
 	}
-	n, member, token, err := s.Store.EnrollPrivate(req.Device, req.Code)
+	var n storage.NetworkSummary
+	var member storage.Device
+	var token string
+	var err error
+	if admin {
+		n, member, token, err = s.Store.EnrollPrivateAsAdmin(req.Device)
+	} else {
+		n, member, token, err = s.Store.EnrollPrivate(req.Device, req.Code)
+	}
 	if err != nil {
 		status := http.StatusBadRequest
 		if errors.Is(err, storage.ErrInvalidPassword) {
@@ -136,7 +145,8 @@ func (s *Server) enroll(w http.ResponseWriter, r *http.Request) {
 		Network storage.NetworkSummary `json:"network"`
 		Member  storage.Device         `json:"member"`
 		Token   string                 `json:"token"`
-	}{n, member, token})
+		Admin   bool                   `json:"admin,omitempty"`
+	}{n, member, token, admin})
 	sealed, err := enrollment.Seal(req.Device.WireGuardPublicKey, plain)
 	if err != nil {
 		writeError(w, 400, "invalid device key")

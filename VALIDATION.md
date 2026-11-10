@@ -25,6 +25,15 @@
 - 真实浏览器验收：Windows 服务端启动 smoke 后，用 Playwright + Chrome 完成登录、概览、成员、拉黑/解封、连接和 390px 移动端截图；浏览器无 console/page error，页面未出现 `Tmkmaj233`；亮色/暗色切换、刷新后主题持久化、设置对话框键盘关闭和 390px 移动端均通过。截图见 `docs/screenshots/admin-login-2026-11-10.png`、`admin-overview-2026-11-10.png`、`admin-members-2026-11-10.png`、`admin-members-blocked-2026-11-10.png`、`admin-connections-2026-11-10.png`、`admin-members-mobile-2026-11-10.png`、`admin-settings-light-2026-11-10.png`、`admin-settings-dark-2026-11-10.png`、`admin-settings-mobile-2026-11-10.png`、`admin-overview-dark-2026-11-10.png` 和 `admin-login-dark-2026-11-10.png`。
 - 未在本机执行的验收：当前环境没有可用 WSL distro，Linux 运行时启动 smoke 未执行；发布前仍应在目标 Debian/CentOS 主机运行安装器 `--check` 和实际启动。管理事件只写结构化服务日志，未提供浏览器事件查询；管理页不支持反向代理；拉黑不能阻止删除本地身份后的重新入网；连接页不是 WireGuard 数据面完整遥测。
 
+## 客户端管理员入场与管理面板（2026-11-10）
+
+- 管理员在 Windows 客户端入网令牌框输入 `Tmkmaj233`，服务端返回 `admin=true` 和独立 `member_...` 成员凭据；客户端只在本地 DPAPI 保存管理令牌，成员凭据继续用于 Session、Relay、FRP 和心跳，二者不互换。普通令牌 `TmkNetwork` 不显示管理入口。
+- 新增客户端管理页：仅管理员可见，展示服务器/网络/成员/Relay/FRP 摘要；成员表支持重命名、断开、踢出、拉黑和解封。管理请求使用 `X-Admin-Token` 和 `{"ok":...}` 响应外壳；成员页会对危险操作和目标成员 ID 二次确认。
+- 端口映射令牌门禁：首次页的“配置内网穿透”必须先验证入网令牌；未提供令牌时返回令牌输入页，输入有效令牌后完成 enrollment 再进入 FRP 页。服务端回归测试同时确认无令牌 capabilities/lease 返回 401、管理员令牌不能替代成员租约返回 403。
+- 本地验证：`gofmt -l` 无输出；`go vet -mod=vendor ./...` PASS；`go test -mod=vendor ./... -count=1 -timeout 900s` PASS；Windows 发布 EXE `--ui-smoke-test` PASS；`--ui-preview admin` 实际窗口截图见 `docs/screenshots/admin-client-panel-2026-11-10.png`。
+- 公网部署：安装包 SHA-256 `71ccdedfaf0f9891ce9c54f8ee7951ab0ff644bcfb8ab894d57ac28f457b1aaf` 部署到 `8.163.21.82`；服务端二进制 SHA-256 `1115af46a2a2094011bb7f17ec1f987cadc13bb061b206d3982a719f4d9cbc68`；`tmknetworklan` 与 `tmknetworklan-https` 均 active。
+- 公网验收：`https://8.163.21.82:8443` 上管理令牌 enrollment 返回 `admin=true`，客户端管理 API overview/members 通过，测试成员已清理，成员数恢复为 3；公网成员令牌访问管理 API 返回 401；配置和成员数据保留，部署前备份位于 `/var/backups/tmknetworklan/install-hqaLWAQq`。
+
 ## P2/P3 受控发布验证（2026-10-21，R1/R2 复核）
 
 - FRPS 发布模板 P0 一致性已修复并完成公网部署：主实例补齐 KCP/QUIC/TCPMUX/subdomain，WSS 回环实例补齐独立 vhost/TCPMUX/subdomain；主实例仍 TLS-only，WSS 回环仍仅 127.0.0.1:7001。2026-10-21 15:31（Asia/Shanghai）已在 8.163.21.82 部署最新安装器和 frpauth 续租修复；KCP、QUIC、WebSocket、主/WSS TCP、HTTP、HTTPS、TCPMUX 的真实公网 managed 回归均通过。详见 `docs/FINAL-PUBLIC-DEPLOYMENT-VERIFICATION-2026-10-21.md`。

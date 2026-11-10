@@ -278,6 +278,23 @@ func (c *smoothCanvas) navIcon(r win.RECT, kind string, color walk.Color) {
 			defer gpDeletePen.Call(pen)
 			c.call(gpDrawLine, c.graphics, pen, uintptr(cx), uintptr(y+int(float64(iconSize)*0.38)), uintptr(cx), uintptr(y+int(float64(iconSize)*0.74)))
 		}
+	case "admin":
+		pen := c.pen(color, float32(math.Max(1.6, float64(iconSize)*0.085)))
+		if pen != 0 {
+			defer gpDeletePen.Call(pen)
+			left := x + int(float64(iconSize)*0.22)
+			right := x + int(float64(iconSize)*0.78)
+			top := y + int(float64(iconSize)*0.18)
+			mid := y + int(float64(iconSize)*0.50)
+			bottom := y + int(float64(iconSize)*0.80)
+			c.call(gpDrawLine, c.graphics, pen, uintptr(left), uintptr(top), uintptr(right), uintptr(top))
+			c.call(gpDrawLine, c.graphics, pen, uintptr(left), uintptr(top), uintptr(left), uintptr(mid))
+			c.call(gpDrawLine, c.graphics, pen, uintptr(right), uintptr(top), uintptr(right), uintptr(mid))
+			c.call(gpDrawLine, c.graphics, pen, uintptr(left), uintptr(mid), uintptr(cx), uintptr(bottom))
+			c.call(gpDrawLine, c.graphics, pen, uintptr(right), uintptr(mid), uintptr(cx), uintptr(bottom))
+			ring := int(float64(iconSize) * 0.16)
+			c.ring(cx-ring/2, cy-ring/2, ring, color, 1.5)
+		}
 	case "egress":
 		pen := c.pen(color, float32(math.Max(1.6, float64(iconSize)*0.09)))
 		if pen != 0 {

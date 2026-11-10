@@ -281,6 +281,9 @@ func (c Config) Validate() error {
 	if tokenLength < 8 || tokenLength > 256 || c.Security.AdminToken == "change-me" || strings.HasPrefix(c.Security.AdminToken, "REPLACE_") {
 		return errors.New("security.admin_token must contain 8-256 bytes")
 	}
+	if c.Network.JoinCode != "" && c.Security.AdminToken == c.Network.JoinCode {
+		return errors.New("security.admin_token must differ from network.join_code")
+	}
 
 	if err := c.FRP.Validate(); err != nil {
 		return fmt.Errorf("frp: %w", err)

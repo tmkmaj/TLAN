@@ -311,7 +311,11 @@ func (c *adminConsole) relayCounts() map[string]int {
 }
 
 func (c *adminConsole) memberAction(w http.ResponseWriter, r *http.Request, requestID string) {
-	path := strings.TrimPrefix(r.URL.Path, "/admin/api/members/")
+	c.memberActionForPrefix(w, r, requestID, "/admin/api/members/")
+}
+
+func (c *adminConsole) memberActionForPrefix(w http.ResponseWriter, r *http.Request, requestID, prefix string) {
+	path := strings.TrimPrefix(r.URL.Path, prefix)
 	parts := strings.Split(path, "/")
 	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
 		writeAdminFailure(w, http.StatusNotFound, requestID, "NOT_FOUND", "接口不存在")

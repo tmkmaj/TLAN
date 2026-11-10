@@ -19,25 +19,27 @@ import (
 )
 
 type Server struct {
-	DisableEnrollment bool
-	joinMu            sync.Mutex
-	joinAttempts      map[string]joinWindow
-	joinSlots         chan struct{}
-	joinSlotsOnce     sync.Once
-	Store             *storage.Store
-	AdminToken        string
-	StartedAt         time.Time
-	ControlListen     string
-	ControlTLS        bool
-	AdminListen       string
-	AdminTLS          bool
-	DataDirSummary    string
-	Relay             *network.RelayBroker
-	FRP               *frpauth.Store
-	relayMu           sync.Mutex
-	relaySlotsOnce    sync.Once
-	relaySlots        chan struct{}
-	relayPairs        map[string]network.RelayTicket
+	DisableEnrollment   bool
+	joinMu              sync.Mutex
+	joinAttempts        map[string]joinWindow
+	joinSlots           chan struct{}
+	joinSlotsOnce       sync.Once
+	publicAdminMu       sync.Mutex
+	publicAdminAttempts map[string]adminWindow
+	Store               *storage.Store
+	AdminToken          string
+	StartedAt           time.Time
+	ControlListen       string
+	ControlTLS          bool
+	AdminListen         string
+	AdminTLS            bool
+	DataDirSummary      string
+	Relay               *network.RelayBroker
+	FRP                 *frpauth.Store
+	relayMu             sync.Mutex
+	relaySlotsOnce      sync.Once
+	relaySlots          chan struct{}
+	relayPairs          map[string]network.RelayTicket
 }
 
 func (s *Server) Handler() http.Handler {
@@ -46,6 +48,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/enroll", s.enroll)
 	mux.HandleFunc("/api/v1/session", s.memberSession)
 	mux.HandleFunc("/api/v1/status", s.status)
+	mux.HandleFunc("/api/v1/admin/", s.adminAPI)
 	mux.HandleFunc("/api/v1/networks", s.networks)
 	mux.HandleFunc("/api/v1/networks/", s.network)
 	mux.HandleFunc("/api/v1/devices/register", s.registerDevice)
@@ -62,6 +65,22 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/relay/stream", s.relayStream)
 	return logging(s.auth(mux))
 }
+
+type adminKey struct{}
+
+func adminIdentity(r *http.Request) bool {
+	value, _ := r.Context().Value(adminKey{}).(bool)
+	return value
+}
+
+func isAdminAPIPath(path string) bool {
+	return strings.HasPrefix(path, "/api/v1/admin/")
+}
+
+func (s *Server) adminTokenMatches(token string) bool {
+	return adminTokenMatches(token, s.AdminToken)
+}
+
 func (s *Server) auth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/health" || r.URL.Path == "/api/v1/enroll" {
@@ -72,8 +91,24 @@ func (s *Server) auth(next http.Handler) http.Handler {
 		if token == "" {
 			token = strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 		}
-		if s.AdminToken != "" && token == s.AdminToken {
-			next.ServeHTTP(w, r)
+		if isAdminAPIPath(r.URL.Path) {
+			ip := adminClientIP(r)
+			if !s.allowPublicAdminAttempt(ip) {
+				w.Header().Set("Retry-After", "900")
+				writeError(w, http.StatusTooManyRequests, "too many admin attempts")
+				return
+			}
+			if !s.adminTokenMatches(token) {
+				s.notePublicAdminFailure(ip)
+				writeError(w, http.StatusUnauthorized, "unauthorized")
+				return
+			}
+			s.resetPublicAdminFailures(ip)
+			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), adminKey{}, true)))
+			return
+		}
+		if s.adminTokenMatches(token) {
+			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), adminKey{}, true)))
 			return
 		}
 		if credential, ok := s.Store.AuthenticateMember(token); ok && (frpRouteAllowed(r) || memberRouteAllowed(r, credential)) {

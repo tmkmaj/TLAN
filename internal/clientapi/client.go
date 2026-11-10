@@ -47,6 +47,7 @@ type Membership struct {
 	Network Network `json:"network"`
 	Member  Device  `json:"member"`
 	Token   string  `json:"token,omitempty"`
+	Admin   bool    `json:"admin,omitempty"`
 }
 
 func (c *Client) Enroll(code string, device core.RegisterDeviceRequest, privateKey string) (Membership, error) {
@@ -117,6 +118,10 @@ type RelayTicket struct {
 }
 
 func New(baseURL, token string) *Client {
+	return &Client{BaseURL: strings.TrimRight(strings.TrimSpace(baseURL), "/"), Token: token, HTTP: newControlHTTPClient()}
+}
+
+func newControlHTTPClient() *http.Client {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	// The control API must reach the configured relay directly. Bypass local
 	// proxy settings and force HTTP/1.1 so security software cannot reset an
@@ -125,12 +130,12 @@ func New(baseURL, token string) *Client {
 	transport.ForceAttemptHTTP2 = false
 	transport.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12, NextProtos: []string{"http/1.1"}}
 	transport.TLSNextProto = make(map[string]func(string, *tls.Conn) http.RoundTripper)
-	return &Client{BaseURL: strings.TrimRight(strings.TrimSpace(baseURL), "/"), Token: token, HTTP: &http.Client{Transport: transport, Timeout: 15 * time.Second, CheckRedirect: func(request *http.Request, via []*http.Request) error {
+	return &http.Client{Transport: transport, Timeout: 15 * time.Second, CheckRedirect: func(request *http.Request, via []*http.Request) error {
 		if len(via) >= 5 || request.URL.Host != via[0].URL.Host || (via[0].URL.Scheme == "https" && request.URL.Scheme != "https") {
 			return http.ErrUseLastResponse
 		}
 		return nil
-	}}}
+	}}
 }
 
 func (c *Client) ListNetworks() ([]Network, error) {
