@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"sort"
 	"sync"
 	"time"
 
@@ -55,6 +56,15 @@ func (t RelayTicket) Valid(now time.Time) bool {
 	return t.SessionID != "" && t.Source != "" && t.Target != "" && t.Secret != "" && now.Before(t.ExpiresAt)
 }
 
+type RelaySessionSummary struct {
+	SessionID     string        `json:"session_id"`
+	Source        core.DeviceID `json:"source"`
+	Target        core.DeviceID `json:"target"`
+	CreatedAt     time.Time     `json:"created_at"`
+	LastActivity  time.Time     `json:"last_activity"`
+	AttachedPeers int           `json:"attached_peers"`
+}
+
 type RelayMessage struct {
 	From core.DeviceID
 	To   core.DeviceID
@@ -62,6 +72,7 @@ type RelayMessage struct {
 }
 
 type relaySession struct {
+	createdAt    time.Time
 	ticket       RelayTicket
 	mu           sync.Mutex
 	closed       bool
@@ -138,9 +149,49 @@ func (b *RelayBroker) CreateSession(source, target core.DeviceID, ttl time.Durat
 		b.mu.Unlock()
 		return RelayTicket{}, ErrRelayCapacity
 	}
-	b.sessions[sessionID] = &relaySession{ticket: ticket, peers: make(map[core.DeviceID]*RelayConnection), lastActivity: b.now()}
+	b.sessions[sessionID] = &relaySession{ticket: ticket, peers: make(map[core.DeviceID]*RelayConnection), createdAt: b.now(), lastActivity: b.now()}
 	b.mu.Unlock()
 	return ticket, nil
+}
+
+func (b *RelayBroker) Snapshot() []RelaySessionSummary {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	now := b.now()
+	items := make([]RelaySessionSummary, 0, len(b.sessions))
+	for _, session := range b.sessions {
+		session.mu.Lock()
+		if !session.closed && session.ticket.Valid(now) {
+			items = append(items, RelaySessionSummary{
+				SessionID: session.ticket.SessionID, Source: session.ticket.Source, Target: session.ticket.Target,
+				CreatedAt: session.createdAt, LastActivity: session.lastActivity, AttachedPeers: len(session.peers),
+			})
+		}
+		session.mu.Unlock()
+	}
+	sort.Slice(items, func(i, j int) bool { return items[i].CreatedAt.Before(items[j].CreatedAt) })
+	return items
+}
+
+func (b *RelayBroker) DisconnectDevice(device core.DeviceID) int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	count := 0
+	for id, session := range b.sessions {
+		session.mu.Lock()
+		if session.closed || (session.ticket.Source != device && session.ticket.Target != device) {
+			session.mu.Unlock()
+			continue
+		}
+		session.closed = true
+		for _, peer := range session.peers {
+			peer.closeLocked()
+		}
+		session.mu.Unlock()
+		delete(b.sessions, id)
+		count++
+	}
+	return count
 }
 
 func (b *RelayBroker) SessionActive(ticket RelayTicket) bool {
