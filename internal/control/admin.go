@@ -48,13 +48,18 @@ func (s *Server) AdminHandler(adminToken string, secure bool) http.Handler {
 
 func (c *adminConsole) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Referrer-Policy", "no-referrer")
+	w.Header().Set("X-Frame-Options", "DENY")
+	w.Header().Set("Content-Security-Policy", "default-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
 	switch {
 	case r.URL.Path == "/admin" || r.URL.Path == "/admin/":
-		if _, _, ok := c.auth.authorize(r); !ok {
-			writeAdminPage(w, false)
+		_, csrf, ok := c.auth.authorize(r)
+		if !ok {
+			writeAdminPage(w, false, "")
 			return
 		}
-		writeAdminPage(w, true)
+		writeAdminPage(w, true, csrf)
 	case r.URL.Path == "/admin/login":
 		c.auth.login(w, r)
 	case r.URL.Path == "/admin/logout":
@@ -69,6 +74,7 @@ func (c *adminConsole) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "endpoint not found")
 	}
 }
+
 func (c *adminConsole) serveAPI(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case r.URL.Path == "/admin/api/overview" && r.Method == http.MethodGet:
@@ -160,6 +166,7 @@ func (c *adminConsole) relayCounts() map[string]int {
 	}
 	return counts
 }
+
 func (c *adminConsole) memberAction(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/admin/api/members/")
 	parts := strings.Split(path, "/")
@@ -175,10 +182,6 @@ func (c *adminConsole) memberAction(w http.ResponseWriter, r *http.Request) {
 	network, err := c.server.Store.PrivateNetwork()
 	if err != nil {
 		writeError(w, http.StatusNotFound, "private network is not configured")
-		return
-	}
-	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	switch parts[1] {
@@ -202,30 +205,26 @@ func (c *adminConsole) memberAction(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, http.StatusOK, map[string]string{"status": "disconnected"})
 	case "kick":
-		if err := c.disconnect(network.ID, deviceID); err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
-			return
-		}
 		if err := c.server.Store.RevokeMemberCredentials(network.ID, deviceID.String()); err != nil {
 			writeStorageError(w, err)
 			return
 		}
-		if err := c.revokeFRP(network.ID, deviceID.String()); err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
+		revokeErr := c.revokeFRP(network.ID, deviceID.String())
+		disconnectErr := c.disconnect(network.ID, deviceID)
+		if revokeErr != nil || disconnectErr != nil {
+			writeError(w, http.StatusInternalServerError, actionPartialFailure("kicked", revokeErr, disconnectErr))
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]string{"status": "kicked"})
 	case "ban":
-		if err := c.disconnect(network.ID, deviceID); err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
-			return
-		}
 		if _, err := c.server.Store.SetDeviceBlocked(network.ID, deviceID.String(), true); err != nil {
 			writeStorageError(w, err)
 			return
 		}
-		if err := c.revokeFRP(network.ID, deviceID.String()); err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
+		revokeErr := c.revokeFRP(network.ID, deviceID.String())
+		disconnectErr := c.disconnect(network.ID, deviceID)
+		if revokeErr != nil || disconnectErr != nil {
+			writeError(w, http.StatusInternalServerError, actionPartialFailure("banned", revokeErr, disconnectErr))
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]string{"status": "banned"})
@@ -239,6 +238,16 @@ func (c *adminConsole) memberAction(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeError(w, http.StatusNotFound, "endpoint not found")
 	}
+}
+
+func actionPartialFailure(action string, failures ...error) string {
+	message := action + " persisted, but runtime cleanup failed:"
+	for _, failure := range failures {
+		if failure != nil {
+			message += " " + failure.Error()
+		}
+	}
+	return message
 }
 
 func (c *adminConsole) disconnect(networkID string, deviceID core.DeviceID) error {

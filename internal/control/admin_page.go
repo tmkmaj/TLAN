@@ -1,15 +1,31 @@
 package control
 
 import (
+	_ "embed"
+	"html"
 	"io"
 	"net/http"
+	"strings"
 )
 
-func writeAdminPage(w http.ResponseWriter, authenticated bool) {
+const adminCSRFPlaceholder = "__CSRF_TOKEN__"
+
+//go:embed admin_login.html
+var adminLoginPage string
+
+//go:embed admin_console.html
+var adminConsolePage string
+
+func writeAdminPage(w http.ResponseWriter, authenticated bool, csrf string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if authenticated {
-		_, _ = io.WriteString(w, `<!doctype html><html lang="zh-CN"><body><h1>TLAN 管理控制台</h1></body></html>`)
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Referrer-Policy", "no-referrer")
+	w.Header().Set("X-Frame-Options", "DENY")
+	w.Header().Set("Content-Security-Policy", "default-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
+	if !authenticated {
+		_, _ = io.WriteString(w, adminLoginPage)
 		return
 	}
-	_, _ = io.WriteString(w, `<!doctype html><html lang="zh-CN"><body><form method="post" action="/admin/login">管理控制台</form></body></html>`)
+	_, _ = io.WriteString(w, strings.Replace(adminConsolePage, adminCSRFPlaceholder, html.EscapeString(csrf), 1))
 }
