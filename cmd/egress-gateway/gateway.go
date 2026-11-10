@@ -92,6 +92,10 @@ func (s *gatewayService) serveConnection(ctx context.Context, connection net.Con
 		ctx = context.Background()
 	}
 	defer connection.Close()
+	stopOnCancel := context.AfterFunc(ctx, func() {
+		_ = connection.Close()
+	})
+	defer stopOnCancel()
 
 	state := &connectionState{service: s}
 	session, err := egress.NewGatewaySession(egress.GatewaySessionConfig{
@@ -211,6 +215,9 @@ func (s *connectionState) dial(ctx context.Context, target egress.OpenTarget, ne
 	var failures []error
 	for _, address := range addresses {
 		connection, dialErr := s.service.network.dialContext(dialCtx, network, address.String())
+		if dialErr == nil && connection == nil {
+			dialErr = errors.New("dialer returned a nil connection")
+		}
 		if dialErr == nil {
 			release = false
 			return &quotaConnection{
@@ -406,6 +413,9 @@ func (r *sessionRegistry) closeAll() {
 }
 
 func (r *sessionRegistry) monitor(ctx context.Context, issuer *egressgateway.LeaseIssuer, logger *log.Logger) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if r == nil || issuer == nil {
 		return
 	}
@@ -476,6 +486,15 @@ func (a *targetAuthorizer) authorize(ctx context.Context, target egress.OpenTarg
 	}
 	if err := target.Validate(); err != nil {
 		return fmt.Errorf("invalid target: %w", err)
+	}
+	protocol, err := gatewayProtocol(target.Protocol)
+	if err != nil {
+		return err
+	}
+	for _, policy := range a.policies {
+		if !policyAllowsProtocol(policy.Policy(), protocol) {
+			return fmt.Errorf("target protocol %s is denied by policy", protocol)
+		}
 	}
 	if _, denied := a.denyPorts[target.Port]; denied {
 		return fmt.Errorf("target port %d is denied by gateway policy", target.Port)

@@ -336,11 +336,12 @@ func (p *egressPanel) view() Composite {
 			{Title: "名称", Width: 200}, {Title: "应用", Width: 300}, {Title: "子进程", Width: 80}, {Title: "状态", Width: 100},
 		}},
 		TextLabel{AssignTo: &p.empty, Text: "还没有应用规则。点击“添加应用”选择要转发的 exe。", TextColor: uiMuted, MinSize: Size{Width: 360, Height: 140}, StretchFactor: 1, TextAlignment: AlignHCenterVCenter},
+		VSpacer{StretchFactor: 1},
 	}}, fill: uiWhite, radius: 12, border: borderColor(uiBorder)}
 	rulesCard.Composite.StretchFactor = 1
 	rulesCard.Row = 4
 
-	return Composite{AssignTo: &p.page, Visible: false, StretchFactor: 1, Background: SolidColorBrush{Color: uiBackground}, Layout: Grid{Columns: 1, Margins: Margins{Left: 20, Top: 14, Right: 20, Bottom: 16}, Spacing: 10}, Children: []Widget{
+	return Composite{AssignTo: &p.page, Visible: false, StretchFactor: 1, Background: SolidColorBrush{Color: uiBackground}, Layout: VBox{Margins: Margins{Left: 20, Top: 14, Right: 20, Bottom: 16}, Spacing: 10, Alignment: AlignHNearVNear}, Children: []Widget{
 		banner, header, statusCard, message, rulesCard,
 	}}
 }

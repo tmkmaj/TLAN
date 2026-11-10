@@ -15,7 +15,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const defaultConfigPath = "/etc/tlan-egress/egress-gateway.toml"
+const defaultConfigPath = "/etc/tlan-egress/egress-gateway.yaml"
 
 type gatewayConfig struct {
 	Listen   string        `yaml:"listen"`
@@ -209,6 +209,12 @@ func (l limitsConfig) gatewayLimits() egressgateway.Limits {
 }
 
 func (p policyConfig) validate(dnsServers []string) error {
+	if !p.DenyPrivate {
+		return errors.New("policy.deny_private must be true: private targets are always blocked")
+	}
+	if !p.DenyMetadata {
+		return errors.New("policy.deny_metadata must be true: cloud metadata targets are always blocked")
+	}
 	if len(p.AllowCIDRs) == 0 {
 		return errors.New("policy.allow_cidrs must not be empty")
 	}
@@ -218,10 +224,8 @@ func (p policyConfig) validate(dnsServers []string) error {
 			return fmt.Errorf("policy.allow_cidrs contains invalid or unmasked prefix %q", raw)
 		}
 	}
-	switch p.IPv6Policy {
-	case string(egressgateway.IPv6PolicyBlock), string(egressgateway.IPv6PolicyAllowPublic):
-	default:
-		return fmt.Errorf("policy.ipv6_policy must be %q or %q", egressgateway.IPv6PolicyBlock, egressgateway.IPv6PolicyAllowPublic)
+	if p.IPv6Policy != string(egressgateway.IPv6PolicyBlock) {
+		return fmt.Errorf("policy.ipv6_policy must be %q in the gateway deployment; IPv6 egress is not enabled", egressgateway.IPv6PolicyBlock)
 	}
 	switch p.DNSPolicy {
 	case string(egressgateway.DNSPolicyBlock):

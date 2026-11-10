@@ -211,7 +211,7 @@ Windows 使用 Wintun 三层网卡，IPv4 包通过额外信封保持原始广�
 
 页面支持：添加/编辑/删除应用规则（exe 路径、是否含子进程、TCP/UDP）、服务器设置（网关地址、TLS 名称、CA、租约 ID、capability 文件、本地代理地址）、启动/停止、复制代理地址。Mesh 与内网穿透是独立开关，停止应用流量转发不会影响它们。
 
-安全边界：只监听回环；TLS 强制校验证书；网关拒绝私网/回环/链路本地/元数据地址与管理端口；断线或租约失效时 helper 拒绝代理连接（fail-closed）；IPv6 策略默认 `block`。
+安全边界：只监听回环；TLS 强制校验证书；网关拒绝私网/回环/链路本地/元数据地址与管理端口；断线或租约失效时 helper 拒绝代理连接（fail-closed）；网关 CLI 的 IPv6 只接受 `block`。当前 `dns_servers` 是 DNS 目标白名单，目标 hostname 仍由网关主机系统 resolver 解析；`max_rate_bps` 只记录、尚未实际限速。
 
 **重要限制**：按进程的**透明**转发需要签名的 WFP 内核组件，当前尚未实现，界面与文档均标注为显式代理模式，不宣称“完全透明转发”。详细验收范围见 [EGRESS-VALIDATION.md](docs/EGRESS-VALIDATION.md)。
 ## 从源码构建

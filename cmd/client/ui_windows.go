@@ -269,31 +269,36 @@ func (a *desktop) build() error {
 		Action{Text: "更换入网令牌", OnTriggered: a.changeCode},
 		Action{Text: "退出当前网络", OnTriggered: a.leaveNetwork},
 	}
-	rail := Composite{MinSize: Size{Width: 68}, MaxSize: Size{Width: 68}, Alignment: AlignHNearVNear, Background: SolidColorBrush{Color: uiSidebar}, Layout: VBox{Margins: Margins{Left: 13, Top: 14, Right: 13, Bottom: 12}, SpacingZero: true}, Children: []Widget{
-		ImageView{Image: a.logoImage, MinSize: Size{Width: 42, Height: 42}, MaxSize: Size{Width: 42, Height: 42}, Mode: ImageViewModeShrink, Alignment: AlignHCenterVCenter},
-		VSpacer{Size: 22},
+	rail := Composite{MinSize: Size{Width: 72}, MaxSize: Size{Width: 72}, Alignment: AlignHNearVNear, Background: SystemColorBrush{Color: walk.SysColorWindow}, Layout: VBox{Margins: Margins{Left: 13, Top: 16, Right: 13, Bottom: 14}, SpacingZero: true}, Children: []Widget{
+		roundView{Composite: Composite{MinSize: Size{Width: 46, Height: 46}, MaxSize: Size{Width: 46, Height: 46}, Background: SolidColorBrush{Color: uiBlueSoft}, Layout: VBox{MarginsZero: true}, Children: []Widget{
+			ImageView{Image: a.logoImage, MinSize: Size{Width: 38, Height: 38}, MaxSize: Size{Width: 38, Height: 38}, Mode: ImageViewModeShrink, Alignment: AlignHCenterVCenter},
+		}}, fill: uiBlueSoft, radius: 12},
+		VSpacer{Size: 18},
 		navButton(&a.railPower, "power", "虚拟网卡组网", func() bool { return a.page == pagePower && a.railSelection == 0 }, func() {
 			a.railSelection = 0
 			a.invalidateRail()
 			a.showPage(pagePower)
 		}),
-		VSpacer{Size: 8},
+		VSpacer{Size: 6},
 		navButton(&a.railFRP, "frp", "内网穿透", func() bool { return a.page == pageFRP && a.railSelection == 0 }, a.openFRP),
-		VSpacer{Size: 8},
+		VSpacer{Size: 6},
 		navButton(&a.railEgress, "egress", "应用流量转发", func() bool { return a.page == pageEgress && a.railSelection == 0 }, func() {
 			a.railSelection = 0
 			a.invalidateRail()
 			a.showPage(pageEgress)
 		}),
-		VSpacer{Size: 8},
-		navButton(&a.railVersion, "info", "版本信息", func() bool { return a.railSelection == 2 }, a.openVersionInfo),
 		VSpacer{StretchFactor: 1},
-		moreNav,
+		Composite{MinSize: Size{Width: 28, Height: 1}, MaxSize: Size{Width: 28, Height: 1}, Background: SystemColorBrush{Color: walk.SysColorBtnFace}, Alignment: AlignHCenterVNear},
 		VSpacer{Size: 12},
-		Label{Text: appVersion, TextColor: uiBlue, Font: Font{PointSize: 8, Bold: true}, TextAlignment: AlignCenter, NoPrefix: true},
+		navButton(&a.railVersion, "info", "版本信息", func() bool { return a.railSelection == 2 }, a.openVersionInfo),
+		VSpacer{Size: 6},
+		moreNav,
+		VSpacer{Size: 10},
+		themeLabelView{Label: Label{Text: appVersion, TextColor: navSecondaryTextColor(), Font: Font{PointSize: 8}, TextAlignment: AlignCenter, NoPrefix: true}, color: navSecondaryTextColor},
 	}}
-	contentHost := Composite{StretchFactor: 1, Background: SolidColorBrush{Color: uiBackground}, Layout: VBox{MarginsZero: true, SpacingZero: true}, Children: []Widget{powerPage, frpPage, egressPage}}
-	shellPage := Composite{AssignTo: &a.shellPage, Visible: false, StretchFactor: 1, Background: SolidColorBrush{Color: uiBackground}, Layout: HBox{MarginsZero: true, SpacingZero: true}, Children: []Widget{rail, contentHost}}
+	contentHost := Composite{StretchFactor: 1, Background: SolidColorBrush{Color: uiBackground}, Layout: VBox{MarginsZero: true, SpacingZero: true, Alignment: AlignHNearVNear}, Children: []Widget{powerPage, frpPage, egressPage}}
+	railDivider := Composite{MinSize: Size{Width: 1}, MaxSize: Size{Width: 1}, Background: SystemColorBrush{Color: walk.SysColorBtnFace}}
+	shellPage := Composite{AssignTo: &a.shellPage, Visible: false, StretchFactor: 1, Background: SolidColorBrush{Color: uiBackground}, Layout: HBox{MarginsZero: true, SpacingZero: true, Alignment: AlignHNearVNear}, Children: []Widget{rail, railDivider, contentHost}}
 
 	err = (MainWindow{AssignTo: &a.window, Title: windowTitle, Icon: icon, Visible: !a.startHidden, Size: Size{Width: 1020, Height: 720}, MinSize: Size{Width: 940, Height: 620}, Font: Font{Family: "Microsoft YaHei UI", PointSize: 10}, Background: SolidColorBrush{Color: uiBackground}, Layout: VBox{MarginsZero: true, SpacingZero: true}, Children: []Widget{
 		joinPage, shellPage,
@@ -351,11 +356,28 @@ func (a *desktop) showRailMenu() {
 }
 
 func (a *desktop) invalidateRail() {
-	for _, button := range []*walk.PushButton{a.railPower, a.railFRP, a.railEgress, a.railVersion, a.railMore} {
-		if button != nil {
-			button.Invalidate()
+	setState := func(button *walk.PushButton, state walk.AccState) {
+		if button == nil {
+			return
 		}
+		if !button.Enabled() {
+			state |= walk.AccStateUnavailable
+		}
+		_ = button.Accessibility().SetState(state)
+		button.Invalidate()
 	}
+	navState := func(selected bool) walk.AccState {
+		state := walk.AccStateFocusable | walk.AccStateSelectable
+		if selected {
+			state |= walk.AccStateSelected
+		}
+		return state
+	}
+	setState(a.railPower, navState(a.page == pagePower && a.railSelection == 0))
+	setState(a.railFRP, navState(a.page == pageFRP && a.railSelection == 0))
+	setState(a.railEgress, navState(a.page == pageEgress && a.railSelection == 0))
+	setState(a.railVersion, walk.AccStateFocusable)
+	setState(a.railMore, walk.AccStateFocusable|walk.AccStateHasPopup)
 }
 
 func (a *desktop) openVersionInfo() {
@@ -410,6 +432,7 @@ func (a *desktop) showPage(page int) {
 	a.egress.page.SetVisible(shellVisible && page == pageEgress)
 	a.page = page
 	a.window.SetSuspended(false)
+	a.window.RequestLayout()
 	a.invalidateRail()
 	switch page {
 	case pageJoin:

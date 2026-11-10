@@ -128,4 +128,3 @@ func TestServeGatewayAppliesAndRollsBackNAT(t *testing.T) {
 		t.Fatalf("NAT rollback count = %d, want 1", rollback)
 	}
 }
-

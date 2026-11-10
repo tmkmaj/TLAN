@@ -12,6 +12,7 @@ import (
 	"github.com/lxn/win"
 	"github.com/private-radminlan/lanmesh/internal/clientapi"
 	"github.com/private-radminlan/lanmesh/internal/clientidentity"
+	"github.com/private-radminlan/lanmesh/internal/egress"
 	frpctl "github.com/private-radminlan/lanmesh/internal/frp"
 )
 
@@ -219,6 +220,29 @@ func runUIPreview(mode string) {
 		a.frpToggleButton.SetText("停止穿透")
 		a.frpLogs.SetText(strings.Join(a.frpSnapshot.Logs, "\r\n"))
 		a.showPage(pageFRP)
+	} else if mode == "egress" {
+		if a.egress != nil && a.egress.controller != nil {
+			profile := a.egress.controller.defaultProfile()
+			profile.Server.Endpoint = "egress.example.test"
+			profile.Server.ServerName = "egress.example.test"
+			profile.Rules = []egress.AppRule{
+				{ID: "rule-browser", Name: "工作浏览器", ExePath: `C:\Program Files\Example\browser.exe`, IncludeChildren: true, Enabled: true, Protocols: []egress.Protocol{egress.ProtocolTCP, egress.ProtocolUDP}},
+				{ID: "rule-chat", Name: "聊天客户端", ExePath: `C:\Apps\chat.exe`, Enabled: false, Protocols: []egress.Protocol{egress.ProtocolTCP}},
+			}
+			a.egress.controller.profile = profile
+			a.showPage(pageEgress)
+		}
+	} else if mode == "rail-focus" {
+		a.showPage(pagePower)
+		a.connectedArea.SetVisible(true)
+		go func() {
+			time.Sleep(500 * time.Millisecond)
+			a.window.Synchronize(func() {
+				if a.railPower != nil {
+					a.railPower.SetFocus()
+				}
+			})
+		}()
 	} else if mode == "off" {
 		a.setPoweredOff()
 		a.showPage(pagePower)

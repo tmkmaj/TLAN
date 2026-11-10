@@ -330,6 +330,11 @@ func (g *GatewaySession) data(ctx context.Context, frame Frame) error {
 			stream.mu.Unlock()
 			return nil
 		}
+		if target.Protocol != ProtocolTCP {
+			stream.mu.Unlock()
+			g.failStream(stream.id, codedError(CodeInvalidFramePayload, ErrInvalidFramePayload, "TCP stream target protocol must be %q, got %q", ProtocolTCP, target.Protocol))
+			return nil
+		}
 		if err := g.cfg.AuthorizeTarget(ctx, target); err != nil {
 			stream.mu.Unlock()
 			g.failStream(stream.id, err)
@@ -402,6 +407,9 @@ func (g *GatewaySession) datagram(ctx context.Context, frame Frame) error {
 	target, payload, err := DecodeDatagram(frame.Payload)
 	if err != nil {
 		return err
+	}
+	if target.Protocol != ProtocolUDP {
+		return codedError(CodeInvalidFramePayload, ErrInvalidFramePayload, "UDP datagram target protocol must be %q, got %q", ProtocolUDP, target.Protocol)
 	}
 	if err := g.cfg.AuthorizeTarget(ctx, target); err != nil {
 		g.write(Frame{Type: FrameError, Payload: []byte(err.Error())})

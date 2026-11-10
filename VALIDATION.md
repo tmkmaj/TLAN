@@ -1,13 +1,16 @@
-# 验证记录（2026-10-18，最后更新 2026-10-22）
+# 验证记录（2026-10-18，最后更新 2026-11-10）
 
-## 应用流量转发（显式代理模式，2026-11-09）
+## 应用流量转发（显式代理模式，2026-11-10）
 
 - 新增 `internal/egress`（模型/校验/独立存储/DPAPI、TLNE v1 协议、两步密钥握手、目标前导、客户端与网关会话）与 `internal/egressgateway`（租约、策略、配额、Lease API、nftables/iptables NAT 生命周期）。
 - 新增独立二进制 `cmd/egress-gateway`（Linux 服务）与 `cmd/egress-helper`（Windows 回环 SOCKS5 显式代理，fail-closed）。
-- 客户端新增“应用流量转发”第三页：规则表、服务器设置、启停、复制代理地址；顶部明确标注“显式代理模式，透明 WFP 未启用”。
-- `build-windows-client.ps1` 已把 `runtime/egress/egress-helper.exe` 打包进客户端 ZIP。
-- 验证：`go test -mod=vendor ./... -count=1` 全部 ok（TEMP 指向工作区目录时）；`cmd/egress-gateway`、`cmd/egress-helper`、`internal/egress`、`internal/egressgateway` 测试通过；`net.Pipe` 客户端↔网关 TCP 端到端、握手拒绝与目标阻断通过；Linux 交叉构建通过；发布 EXE `--ui-smoke-test` PASS。
-- **未完成**：签名 WFP 透明捕获、真实 Linux NAT 验证、跨公网双机与长稳验收、租约 API 接入既有控制面（当前独立网关提供）。
+- 客户端新增“应用流量转发”第三页：规则表、服务器设置、启停、复制代理地址；顶部明确标注“显式代理模式，透明 WFP 未启用”。Egress 页已改为顶部对齐，最小窗口下空状态和规则表不会悬在窗口中部。
+- 侧栏 refinement：72px 宽度、44px 导航目标、46px 品牌容器；补齐选中/悬停/按下态、MSAA/UIA selected 状态、DPI 焦点环、高对比度系统配色与准确的可访问描述。实际截图见 `docs/screenshots/sidebar-refinement-2026-11-10.png`、`docs/screenshots/sidebar-focus-2026-11-10.png` 与 `docs/screenshots/egress-explicit-proxy-2026-11-10.png`。
+- 修复 TCP/UDP 协议绕过：TCP 流目标前导必须为 `tcp`，UDP 数据报前导必须为 `udp`；网关在拨号前拒绝不匹配，并有交叉回归测试。
+- 网关配置改为严格 YAML：`deploy/egress/egress-gateway.yaml.example`，默认路径和 systemd `ExecStart` 一致；`deny_private`/`deny_metadata` 强制为 true，IPv6 CLI 只接受 `block`。
+- 验证：`gofmt -l` 无输出；`go vet` 通过；定向测试与 `go test -mod=vendor ./... -count=1 -timeout 900s` 全部通过；YAML 示例严格加载测试 PASS；Linux 交叉构建通过；发布窗口 EXE `--ui-smoke-test` PASS。
+- **未完成**：签名 WFP 透明捕获、真实 Linux NAT 验证、跨公网双机与长稳验收、租约 API 接入既有控制面、自定义 DNS resolver、`max_rate_bps` 实际限速。
+
 ## P2/P3 受控发布验证（2026-10-21，R1/R2 复核）
 
 - FRPS 发布模板 P0 一致性已修复并完成公网部署：主实例补齐 KCP/QUIC/TCPMUX/subdomain，WSS 回环实例补齐独立 vhost/TCPMUX/subdomain；主实例仍 TLS-only，WSS 回环仍仅 127.0.0.1:7001。2026-10-21 15:31（Asia/Shanghai）已在 8.163.21.82 部署最新安装器和 frpauth 续租修复；KCP、QUIC、WebSocket、主/WSS TCP、HTTP、HTTPS、TCPMUX 的真实公网 managed 回归均通过。详见 `docs/FINAL-PUBLIC-DEPLOYMENT-VERIFICATION-2026-10-21.md`。

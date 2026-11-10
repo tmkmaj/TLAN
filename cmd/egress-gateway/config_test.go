@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -90,5 +91,74 @@ func TestConfigRejectsUnsupportedIPForwardDisable(t *testing.T) {
 	}
 	if _, err := loadConfig(path); err == nil || !strings.Contains(err.Error(), "enable_ip_forward") {
 		t.Fatalf("disabled forwarding error = %v", err)
+	}
+}
+
+func TestExampleConfigLoads(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "deploy", "egress", "egress-gateway.yaml.example"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(data)
+	if runtime.GOOS == "windows" {
+		root := filepath.ToSlash(t.TempDir())
+		content = strings.ReplaceAll(content, "/var/lib/tlan-egress", root+"/state")
+		content = strings.ReplaceAll(content, "/etc/tlan-egress/", root+"/etc/")
+	}
+	path := filepath.Join(t.TempDir(), "egress-gateway.yaml")
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := loadConfig(path)
+	if err != nil {
+		t.Fatalf("example config rejected: %v", err)
+	}
+	if cfg.Egress.Interface == "" || cfg.Limits.MaxSessions == 0 || len(cfg.Policy.AllowCIDRs) == 0 {
+		t.Fatal("example config did not populate required gateway fields")
+	}
+}
+
+func TestConfigRejectsHardDenyOverrides(t *testing.T) {
+	materials := writeTestMaterials(t)
+	basePath := writeTestConfig(t, materials)
+	base, err := os.ReadFile(basePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name string
+		old  string
+		repl string
+	}{
+		{name: "private", old: "deny_private: true", repl: "deny_private: false"},
+		{name: "metadata", old: "deny_metadata: true", repl: "deny_metadata: false"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			data := strings.Replace(string(base), test.old, test.repl, 1)
+			path := filepath.Join(materials.dir, "hard-deny-"+test.name+".yml")
+			if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := loadConfig(path); err == nil {
+				t.Fatal("hard-deny override was accepted")
+			}
+		})
+	}
+}
+
+func TestConfigRejectsIPv6AllowPublic(t *testing.T) {
+	materials := writeTestMaterials(t)
+	basePath := writeTestConfig(t, materials)
+	data, err := os.ReadFile(basePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data = []byte(strings.Replace(string(data), `ipv6_policy: "block"`, `ipv6_policy: "allow_public"`, 1))
+	path := filepath.Join(materials.dir, "ipv6-allow-public.yml")
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadConfig(path); err == nil || !strings.Contains(err.Error(), "ipv6_policy") {
+		t.Fatalf("allow_public error = %v", err)
 	}
 }

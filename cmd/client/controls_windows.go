@@ -41,6 +41,15 @@ type paintedNavButton struct {
 	selectionKnown     bool
 	selectionAnimating bool
 }
+type themeLabelView struct {
+	Label
+	color func() walk.Color
+}
+
+type themedLabel struct {
+	*walk.Label
+	color func() walk.Color
+}
 
 type eyeButtonView struct {
 	PushButton
@@ -65,13 +74,60 @@ func actionButton(assign **walk.PushButton, text string, primary bool, width int
 	}
 	return actionView{PushButton: PushButton{AssignTo: assign, Text: text, MinSize: Size{Width: width, Height: 40}, MaxSize: maximum, OnClicked: clicked}, primary: primary}
 }
+func highContrastEnabled() bool {
+	var hc win.HIGHCONTRAST
+	hc.CbSize = uint32(unsafe.Sizeof(hc))
+	if !win.SystemParametersInfo(win.SPI_GETHIGHCONTRAST, hc.CbSize, unsafe.Pointer(&hc), 0) {
+		return false
+	}
+	return hc.DwFlags&win.HCF_HIGHCONTRASTON != 0
+}
+
+func navSystemColor(index int) walk.Color {
+	return walk.Color(win.GetSysColor(index))
+}
+
+func navButtonBorderColor(highlighted bool) walk.Color {
+	if highContrastEnabled() {
+		if highlighted {
+			return navSystemColor(win.COLOR_HIGHLIGHTTEXT)
+		}
+		return navSystemColor(win.COLOR_WINDOWTEXT)
+	}
+	return uiBlue
+}
+
+func navDisabledTextColor() walk.Color {
+	if highContrastEnabled() {
+		return navSystemColor(win.COLOR_GRAYTEXT)
+	}
+	return walk.RGB(168, 178, 194)
+}
+
+func navSecondaryTextColor() walk.Color {
+	if highContrastEnabled() {
+		return navSystemColor(win.COLOR_WINDOWTEXT)
+	}
+	return uiMuted
+}
+
 func navButton(assign **walk.PushButton, icon, accessibleName string, selected func() bool, clicked func()) navButtonView {
+	accessibility := Accessibility{Name: accessibleName, Description: "切换到" + accessibleName, Role: AccRolePagetab}
+	switch accessibleName {
+	case "更多操作":
+		accessibility.Description = "打开更多操作菜单"
+		accessibility.Role = AccRoleButtonMenu
+	case "版本信息":
+		accessibility.Description = "打开版本信息对话框"
+		accessibility.Role = AccRolePushbutton
+	}
 	return navButtonView{
-		PushButton: PushButton{AssignTo: assign, Text: accessibleName, MinSize: Size{Width: 42, Height: 42}, MaxSize: Size{Width: 42, Height: 42}, ToolTipText: accessibleName, OnClicked: clicked},
+		PushButton: PushButton{AssignTo: assign, Text: accessibleName, MinSize: Size{Width: 44, Height: 44}, MaxSize: Size{Width: 44, Height: 44}, ToolTipText: accessibleName, OnClicked: clicked, Accessibility: accessibility},
 		icon:       icon,
 		selected:   selected,
 	}
 }
+
 func eyeButton(assign **walk.PushButton, accessibleName string, open func() bool, clicked func()) eyeButtonView {
 	return eyeButtonView{
 		PushButton: PushButton{AssignTo: assign, Text: accessibleName, MinSize: Size{Width: 28, Height: 28}, MaxSize: Size{Width: 28, Height: 28}, ToolTipText: accessibleName, OnClicked: clicked, Accessibility: Accessibility{Name: accessibleName}},
@@ -183,37 +239,104 @@ func (v navButtonView) Create(builder *Builder) error {
 	b.GraphicsEffects().Clear()
 	return walk.InitWrapperWindow(&paintedNavButton{PushButton: b, icon: v.icon, selected: v.selected})
 }
+func (v themeLabelView) Create(builder *Builder) error {
+	var label *walk.Label
+	original := v.Label.AssignTo
+	v.Label.AssignTo = &label
+	if err := v.Label.Create(builder); err != nil {
+		return err
+	}
+	if original != nil {
+		*original = label
+	}
+	if v.color != nil {
+		label.SetTextColor(v.color())
+	}
+	return walk.InitWrapperWindow(&themedLabel{Label: label, color: v.color})
+}
+
+func (l *themedLabel) WndProc(hwnd win.HWND, msg uint32, w, lParam uintptr) uintptr {
+	if msg == win.WM_SYSCOLORCHANGE || msg == win.WM_THEMECHANGED {
+		if l.color != nil {
+			l.SetTextColor(l.color())
+		}
+	}
+	return l.Label.WndProc(hwnd, msg, w, lParam)
+}
+
 func (b *paintedNavButton) WndProc(hwnd win.HWND, msg uint32, w, l uintptr) uintptr {
 	if msg == win.WM_NOTIFY && l != 0 {
 		d := *(**win.NMCUSTOMDRAW)(unsafe.Pointer(&l))
 		if d.Hdr.Code == win.NM_CUSTOMDRAW && d.DwDrawStage == win.CDDS_PREPAINT {
 			b.animateSelection()
+			selected := b.selected != nil && b.selected()
+			hot := d.UItemState&win.CDIS_HOT != 0 && b.Enabled()
+			pressed := d.UItemState&win.CDIS_SELECTED != 0 && b.Enabled()
+			highlighted := selected || hot || pressed
+			highContrast := highContrastEnabled()
+			selectionFill := uiBlueHalo
 			bg, fg := uiSidebar, uiMuted
-			if b.selectionProgress > 0.01 {
-				fg = mixColor(uiMuted, uiBlue, b.selectionProgress)
-			}
-			if d.UItemState&win.CDIS_HOT != 0 && b.Enabled() {
-				bg, fg = uiBlueSoft, uiBlue
+			if highContrast {
+				bg = navSystemColor(win.COLOR_WINDOW)
+				fg = navSystemColor(win.COLOR_WINDOWTEXT)
+				selectionFill = bg
+				if highlighted {
+					bg = navSystemColor(win.COLOR_HIGHLIGHT)
+					fg = navSystemColor(win.COLOR_HIGHLIGHTTEXT)
+					selectionFill = bg
+				}
+			} else {
+				switch {
+				case selected && pressed:
+					selectionFill = uiBlueDeep
+					bg, fg = selectionFill, uiWhite
+				case selected && hot:
+					selectionFill = uiBlueBorder
+					bg, fg = selectionFill, uiBlueDeep
+				case selected:
+					bg, fg = selectionFill, uiBlueDeep
+				case pressed:
+					selectionFill = uiBlueBorder
+					bg, fg = selectionFill, uiBlueDeep
+				case hot:
+					bg, fg = uiBlueSoft, uiBlue
+				}
 			}
 			if !b.Enabled() {
-				fg = walk.RGB(190, 199, 214)
+				fg = navDisabledTextColor()
+				if highContrast {
+					bg = navSystemColor(win.COLOR_BTNFACE)
+				}
 			}
-			fillNative(d.Hdc, d.Rc, nativeBackground(b))
+			parentBackground := nativeBackground(b)
+			if highContrast {
+				parentBackground = navSystemColor(win.COLOR_WINDOW)
+			}
+			fillNative(d.Hdc, d.Rc, parentBackground)
 			canvas := newSmoothCanvas(d.Hdc)
 			r := d.Rc
 			r.Left += 3
 			r.Top += 3
 			r.Right -= 3
 			r.Bottom -= 3
-			canvas.rounded(r, walk.IntFrom96DPI(11, b.DPI()), bg, nil)
+			radius := walk.IntFrom96DPI(12, b.DPI())
+			canvas.rounded(r, radius, bg, nil)
 			if b.selectionProgress > 0.01 {
 				fill := r
 				fill.Right = fill.Left + int32(float64(r.Right-r.Left)*b.selectionProgress)
-				canvas.rounded(fill, walk.IntFrom96DPI(11, b.DPI()), uiBlueSoft, nil)
+				canvas.rounded(fill, radius, selectionFill, nil)
 			}
 			if b.Focused() {
-				border := uiBlueBorder
-				canvas.rounded(r, walk.IntFrom96DPI(11, b.DPI()), bg, &border)
+				border := navButtonBorderColor(highlighted)
+				stroke := float32(walk.IntFrom96DPI(1, b.DPI()))
+				inset := int32(walk.IntFrom96DPI(1, b.DPI()))
+				canvas.roundedStroke(r, radius, bg, 0, &border, stroke)
+				inner := r
+				inner.Left += inset
+				inner.Top += inset
+				inner.Right -= inset
+				inner.Bottom -= inset
+				canvas.roundedStroke(inner, radius-int(inset), bg, 0, &border, stroke)
 			}
 			canvas.navIcon(r, b.icon, fg)
 			canvas.dispose()

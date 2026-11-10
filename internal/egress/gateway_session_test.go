@@ -161,3 +161,92 @@ func TestGatewaySessionBlocksForbiddenTarget(t *testing.T) {
 		t.Fatal("session silently stopped instead of reporting the blocked stream")
 	}
 }
+
+func waitForGatewaySessionToStop(t *testing.T, session *Session) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		state := session.Snapshot().State
+		if state != StateRunning && state != StateDegraded {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("session remained in state %s", session.Snapshot().State)
+}
+
+func TestGatewaySessionRejectsUDPTargetOnTCPStream(t *testing.T) {
+	clientTransport, serverTransport := net.Pipe()
+	secret := DeriveSessionSecret("capability-one")
+	dialed := make(chan struct{}, 1)
+	gateway, err := NewGatewaySession(gatewayTestConfig(serverTransport, testSessionID(0x74), secret, func(context.Context, OpenTarget) (net.Conn, error) {
+		dialed <- struct{}{}
+		return nil, errors.New("must not dial mismatched protocol")
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() { _ = gateway.Serve(context.Background()) }()
+
+	client, err := NewSession(newClientSession(clientTransport, secret))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = client.Stop(context.Background()) }()
+	stream, err := client.OpenStream(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteTargetPreamble(stream, OpenTarget{Host: "example.com", Port: 80, Protocol: ProtocolUDP}); err != nil {
+		t.Fatal(err)
+	}
+	waitForGatewaySessionToStop(t, client)
+	select {
+	case <-dialed:
+		t.Fatal("gateway dialed a UDP target requested on a TCP stream")
+	default:
+	}
+}
+
+func TestGatewaySessionRejectsTCPTargetOnUDPDatagram(t *testing.T) {
+	clientTransport, serverTransport := net.Pipe()
+	secret := DeriveSessionSecret("capability-one")
+	udpDialed := make(chan struct{}, 1)
+	cfg := gatewayTestConfig(serverTransport, testSessionID(0x75), secret, func(context.Context, OpenTarget) (net.Conn, error) {
+		return nil, errors.New("unexpected TCP dial")
+	})
+	cfg.DialUDP = func(context.Context, OpenTarget) (net.Conn, error) {
+		udpDialed <- struct{}{}
+		return nil, errors.New("must not dial mismatched protocol")
+	}
+	gateway, err := NewGatewaySession(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() { _ = gateway.Serve(context.Background()) }()
+
+	client, err := NewSession(newClientSession(clientTransport, secret))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = client.Stop(context.Background()) }()
+	packet, err := EncodeDatagram(OpenTarget{Host: "example.com", Port: 53, Protocol: ProtocolTCP}, []byte("payload"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.SendDatagram(packet); err != nil {
+		t.Fatal(err)
+	}
+	waitForGatewaySessionToStop(t, client)
+	select {
+	case <-udpDialed:
+		t.Fatal("gateway dialed a TCP target requested as a UDP datagram")
+	default:
+	}
+}

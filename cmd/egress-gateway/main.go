@@ -223,6 +223,12 @@ func serveGateway(
 	if nat == nil || service == nil || issuer == nil || tlsConfig == nil || authenticator == nil {
 		return errors.New("gateway runtime dependencies are incomplete")
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return nil
+	}
 	capabilities, err := nat.DetectCapabilities(ctx)
 	if err != nil {
 		return fmt.Errorf("detect NAT capabilities: %w", err)
@@ -377,4 +383,3 @@ func acceptDataConnections(ctx context.Context, listener net.Listener, accept fu
 		accept(connection)
 	}
 }
-

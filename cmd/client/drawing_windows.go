@@ -136,6 +136,14 @@ func (c *smoothCanvas) rounded(r win.RECT, radius int, fill walk.Color, border *
 	c.roundedAlpha(r, radius, fill, 255, border)
 }
 func (c *smoothCanvas) roundedAlpha(r win.RECT, radius int, fill walk.Color, alpha uint8, border *walk.Color) {
+	c.roundedAlphaStroke(r, radius, fill, alpha, border, 1)
+}
+
+func (c *smoothCanvas) roundedStroke(r win.RECT, radius int, fill walk.Color, alpha uint8, border *walk.Color, penWidth float32) {
+	c.roundedAlphaStroke(r, radius, fill, alpha, border, penWidth)
+}
+
+func (c *smoothCanvas) roundedAlphaStroke(r win.RECT, radius int, fill walk.Color, alpha uint8, border *walk.Color, penWidth float32) {
 	var path uintptr
 	c.call(gpPath, 0, uintptr(unsafe.Pointer(&path)))
 	if path == 0 {
@@ -166,7 +174,7 @@ func (c *smoothCanvas) roundedAlpha(r win.RECT, radius int, fill walk.Color, alp
 		c.call(gpFillPath, c.graphics, brush, path)
 	}
 	if border != nil {
-		pen := c.pen(*border, 1)
+		pen := c.pen(*border, penWidth)
 		if pen != 0 {
 			defer gpDeletePen.Call(pen)
 			c.call(gpDrawPath, c.graphics, pen, path)
@@ -329,6 +337,9 @@ func fillNative(dc win.HDC, r win.RECT, color walk.Color) {
 }
 func nativeBackground(w walk.Widget) walk.Color {
 	for p := w.Parent(); p != nil; {
+		if b, ok := p.Background().(*walk.SystemColorBrush); ok {
+			return b.Color()
+		}
 		if b, ok := p.Background().(*walk.SolidColorBrush); ok {
 			return b.Color()
 		}

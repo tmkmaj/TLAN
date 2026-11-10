@@ -780,7 +780,7 @@ func runUITest(path string) {
 		os.WriteFile(path, []byte("FAIL: "+err.Error()), 0600)
 		os.Exit(1)
 	}
-	os.WriteFile(path, []byte("PASS: integrated Mesh workspace, FRP page, 应用流量转发 page (explicit-proxy banner), tray actions, close policy, version control, power-off transition, member/rule tables and antialiased drawing calls; no network or adapter created\n"), 0600)
+	os.WriteFile(path, []byte("PASS: integrated Mesh workspace, FRP page, 应用流量转发 page (explicit-proxy banner and top-aligned layout), tray actions, close policy, version control, power-off transition, member/rule tables, navigation accessibility states and antialiased drawing calls; no network or adapter created\n"), 0600)
 }
 func runAdapterTest(path string) {
 	os.WriteFile(path, []byte("RUNNING\n"), 0600)
