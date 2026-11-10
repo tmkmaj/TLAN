@@ -38,7 +38,6 @@ const (
 	pageJoin = iota
 	pagePower
 	pageFRP
-	pageEgress
 	pageAdmin
 )
 
@@ -259,8 +258,6 @@ func (a *desktop) build() error {
 		connectedArea,
 	}}
 	frpPage := a.buildFRPPage()
-	a.egress = newEgressPanel(a)
-	egressPage := a.egress.view()
 	a.admin = newAdminPanel(a)
 	adminPage := a.admin.view()
 
@@ -294,11 +291,6 @@ func (a *desktop) build() error {
 		VSpacer{Size: 6},
 		navButton(&a.railFRP, "frp", "内网穿透", func() bool { return a.page == pageFRP && a.railSelection == 0 }, a.openFRP),
 		VSpacer{Size: 6},
-		navButton(&a.railEgress, "egress", "应用流量转发", func() bool { return a.page == pageEgress && a.railSelection == 0 }, func() {
-			a.railSelection = 0
-			a.invalidateRail()
-			a.showPage(pageEgress)
-		}),
 		VSpacer{Size: 6},
 		adminNav,
 		VSpacer{StretchFactor: 1},
@@ -310,7 +302,7 @@ func (a *desktop) build() error {
 		VSpacer{Size: 10},
 		themeLabelView{Label: Label{Text: appVersion, TextColor: navSecondaryTextColor(), Font: Font{PointSize: 8}, TextAlignment: AlignCenter, NoPrefix: true}, color: navSecondaryTextColor},
 	}}
-	contentHost := Composite{StretchFactor: 1, Background: SolidColorBrush{Color: uiBackground}, Layout: VBox{MarginsZero: true, SpacingZero: true, Alignment: AlignHNearVNear}, Children: []Widget{powerPage, frpPage, egressPage, adminPage}}
+	contentHost := Composite{StretchFactor: 1, Background: SolidColorBrush{Color: uiBackground}, Layout: VBox{MarginsZero: true, SpacingZero: true, Alignment: AlignHNearVNear}, Children: []Widget{powerPage, frpPage, adminPage}}
 	railDivider := Composite{MinSize: Size{Width: 1}, MaxSize: Size{Width: 1}, Background: SystemColorBrush{Color: walk.SysColorBtnFace}}
 	shellPage := Composite{AssignTo: &a.shellPage, Visible: false, StretchFactor: 1, Background: SolidColorBrush{Color: uiBackground}, Layout: HBox{MarginsZero: true, SpacingZero: true, Alignment: AlignHNearVNear}, Children: []Widget{rail, railDivider, contentHost}}
 
@@ -389,7 +381,6 @@ func (a *desktop) invalidateRail() {
 	}
 	setState(a.railPower, navState(a.page == pagePower && a.railSelection == 0))
 	setState(a.railFRP, navState(a.page == pageFRP && a.railSelection == 0))
-	setState(a.railEgress, navState(a.page == pageEgress && a.railSelection == 0))
 	setState(a.railAdmin, navState(a.page == pageAdmin && a.railSelection == 0))
 	setState(a.railVersion, walk.AccStateFocusable)
 	setState(a.railMore, walk.AccStateFocusable|walk.AccStateHasPopup)
@@ -447,7 +438,6 @@ func (a *desktop) showPage(page int) {
 	a.shellPage.SetVisible(shellVisible)
 	a.powerPage.SetVisible(shellVisible && page == pagePower)
 	a.frpPage.SetVisible(shellVisible && page == pageFRP)
-	a.egress.page.SetVisible(shellVisible && page == pageEgress)
 	if a.admin != nil && a.admin.page != nil {
 		a.admin.page.SetVisible(shellVisible && page == pageAdmin)
 	}
@@ -465,10 +455,6 @@ func (a *desktop) showPage(page int) {
 			a.frpToggleButton.SetFocus()
 		}
 		a.refreshFRP()
-	case pageEgress:
-		if a.egress != nil {
-			a.egress.refresh()
-		}
 	case pageAdmin:
 		if a.admin != nil {
 			a.admin.refreshData()

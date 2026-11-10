@@ -2,6 +2,7 @@
 
 ## 应用流量转发（显式代理模式，2026-11-10）
 
+- **迁移说明（2026-11-10）**：应用流量转发/Egress 已从本仓库移出，独立软件位于 `D:\TmkTrafficSandbox`。主仓库不再包含该 GUI、Windows helper、Linux gateway、部署目录和打包步骤；以下条目保留为迁移前的实现与验证记录。
 - 新增 `internal/egress`（模型/校验/独立存储/DPAPI、TLNE v1 协议、两步密钥握手、目标前导、客户端与网关会话）与 `internal/egressgateway`（租约、策略、配额、Lease API、nftables/iptables NAT 生命周期）。
 - 新增独立二进制 `cmd/egress-gateway`（Linux 服务）与 `cmd/egress-helper`（Windows 回环 SOCKS5 显式代理，fail-closed）。
 - 客户端新增“应用流量转发”第三页：规则表、服务器设置、启停、复制代理地址；顶部明确标注“显式代理模式，透明 WFP 未启用”。Egress 页已改为顶部对齐，最小窗口下空状态和规则表不会悬在窗口中部。

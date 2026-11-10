@@ -12,7 +12,6 @@ import (
 	"github.com/lxn/win"
 	"github.com/private-radminlan/lanmesh/internal/clientapi"
 	"github.com/private-radminlan/lanmesh/internal/clientidentity"
-	"github.com/private-radminlan/lanmesh/internal/egress"
 	frpctl "github.com/private-radminlan/lanmesh/internal/frp"
 )
 
@@ -61,7 +60,7 @@ func checkDesktopUI() error {
 		return nil
 	}
 	assertPage := func(want int) error {
-		for i, page := range []*walk.Composite{a.joinPage, a.powerPage, a.frpPage, a.egress.page, a.admin.page} {
+		for i, page := range []*walk.Composite{a.joinPage, a.powerPage, a.frpPage, a.admin.page} {
 			// IsWindowVisible also considers the hidden root window, so check
 			// each page's own native visibility flag instead.
 			visible := win.GetWindowLong(page.Handle(), win.GWL_STYLE)&win.WS_VISIBLE != 0
@@ -119,16 +118,6 @@ func checkDesktopUI() error {
 	if a.frpRules.CurrentIndex() != -1 {
 		a.frpRules.SetCurrentIndex(-1)
 	}
-	if a.egress == nil || a.railEgress == nil || a.egress.toggle == nil || a.egress.rules == nil || a.egress.modeLabel == nil {
-		return fmt.Errorf("egress page controls were not initialized")
-	}
-	a.showPage(pageEgress)
-	if err := assertPage(pageEgress); err != nil {
-		return err
-	}
-	if !strings.Contains(a.egress.modeLabel.Text(), "显式代理") {
-		return fmt.Errorf("egress page must label the explicit proxy limitation")
-	}
 	a.setAdminMode(true, "Tmkmaj233")
 	if !a.railAdmin.Visible() || a.adminAPI == nil {
 		return fmt.Errorf("admin mode did not reveal the management panel entry")
@@ -149,12 +138,6 @@ func checkDesktopUI() error {
 		return fmt.Errorf("admin member actions did not reflect blocked state")
 	}
 	a.setAdminMode(false, "")
-	a.egress.model.setRows([][]string{{"示例应用", `C:\Example\app.exe`, "否", "已停止"}})
-	a.egress.rules.SetVisible(true)
-	a.egress.empty.SetVisible(false)
-	if len(a.egress.model.rows) != 1 {
-		return fmt.Errorf("egress rule table did not render the fixture rule")
-	}
 	a.showPage(pagePower)
 	if err := assertPage(pagePower); err != nil {
 		return err
@@ -168,7 +151,7 @@ func checkDesktopUI() error {
 	defer c.dispose()
 	border := uiBlue
 	c.rounded(win.RECT{Right: 340, Bottom: 56}, 16, uiWhite, &border)
-	for _, kind := range []string{"power", "frp", "egress", "admin", "network", "more"} {
+	for _, kind := range []string{"power", "frp", "admin", "network", "more"} {
 		c.navIcon(win.RECT{Right: 42, Bottom: 42}, kind, uiBlue)
 	}
 	for state := 0; state <= 2; state++ {
@@ -240,18 +223,7 @@ func runUIPreview(mode string) {
 		a.frpToggleButton.SetText("停止穿透")
 		a.frpLogs.SetText(strings.Join(a.frpSnapshot.Logs, "\r\n"))
 		a.showPage(pageFRP)
-	} else if mode == "egress" {
-		if a.egress != nil && a.egress.controller != nil {
-			profile := a.egress.controller.defaultProfile()
-			profile.Server.Endpoint = "egress.example.test"
-			profile.Server.ServerName = "egress.example.test"
-			profile.Rules = []egress.AppRule{
-				{ID: "rule-browser", Name: "工作浏览器", ExePath: `C:\Program Files\Example\browser.exe`, IncludeChildren: true, Enabled: true, Protocols: []egress.Protocol{egress.ProtocolTCP, egress.ProtocolUDP}},
-				{ID: "rule-chat", Name: "聊天客户端", ExePath: `C:\Apps\chat.exe`, Enabled: false, Protocols: []egress.Protocol{egress.ProtocolTCP}},
-			}
-			a.egress.controller.profile = profile
-			a.showPage(pageEgress)
-		}
+
 	} else if mode == "admin" {
 		a.setAdminMode(true, "Tmkmaj233")
 		a.admin.busy = true
