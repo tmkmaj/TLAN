@@ -68,8 +68,10 @@ type Engine struct {
 	relayRetries         map[string]relayRetryState
 	lastError            string
 	candidates           []core.Candidate
+	candidateMu          sync.Mutex
 	candidateFingerprint string
 	stunAvailable        bool
+	candidateRefreshing  bool
 	closed               bool
 	generation           uint64
 	generationMu         sync.Mutex
@@ -196,7 +198,7 @@ func Start(parent context.Context, options Options) (*Engine, error) {
 		return nil, closeStartError(e, err)
 	}
 	e.gatherCandidates()
-	if _, err = options.API.SetCandidates(core.NetworkID(options.Network.ID), options.Identity.DeviceID, e.candidates); err != nil {
+	if _, err = options.API.SetCandidates(core.NetworkID(options.Network.ID), options.Identity.DeviceID, e.candidatesForRequest()); err != nil {
 		return nil, closeStartError(e, err)
 	}
 	if err = e.syncPeers(); err != nil {

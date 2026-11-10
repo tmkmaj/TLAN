@@ -35,7 +35,7 @@ func (e *Engine) controlLoop() {
 			if e.refreshCandidatesIfNeeded(now, lastGather) {
 				lastGather = now
 			}
-			if _, err := e.options.API.SetCandidates(core.NetworkID(e.options.Network.ID), e.options.Identity.DeviceID, e.candidates); err != nil {
+			if _, err := e.options.API.SetCandidates(core.NetworkID(e.options.Network.ID), e.options.Identity.DeviceID, e.candidatesForRequest()); err != nil {
 				if e.handleControlError(err) {
 					return
 				}
@@ -118,12 +118,22 @@ func candidateFingerprint(interfaces []candidateInterfaceSnapshot, stunAvailable
 
 func (e *Engine) refreshCandidatesIfNeeded(now, lastGather time.Time) bool {
 	snapshot := e.candidateSnapshot()
+	e.candidateMu.Lock()
 	fingerprint := candidateFingerprint(snapshot, e.stunAvailable)
-	if now.Sub(lastGather) <= time.Minute && fingerprint == e.candidateFingerprint {
+	if (now.Sub(lastGather) <= time.Minute && fingerprint == e.candidateFingerprint) || e.candidateRefreshing {
+		e.candidateMu.Unlock()
 		return false
 	}
-	e.gatherCandidatesFromSnapshot(snapshot)
+	e.candidateRefreshing = true
+	e.candidateMu.Unlock()
+	go e.gatherCandidatesFromSnapshot(snapshot)
 	return true
+}
+
+func (e *Engine) candidatesForRequest() []core.Candidate {
+	e.candidateMu.Lock()
+	defer e.candidateMu.Unlock()
+	return append([]core.Candidate(nil), e.candidates...)
 }
 
 func (e *Engine) gatherCandidates() {
@@ -167,7 +177,10 @@ adapters:
 	if len(candidates) == 0 {
 		candidates = append(candidates, core.Candidate{Kind: core.CandidateHost, Transport: core.TransportUDP, Address: fmt.Sprintf("127.0.0.1:%d", port), Priority: 1})
 	}
+	e.candidateMu.Lock()
 	e.candidates = candidates
 	e.stunAvailable = stunAvailable
 	e.candidateFingerprint = candidateFingerprint(interfaces, stunAvailable)
+	e.candidateRefreshing = false
+	e.candidateMu.Unlock()
 }

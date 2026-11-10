@@ -2,6 +2,8 @@ package mesh
 
 import (
 	"net/netip"
+
+	"github.com/private-radminlan/lanmesh/core"
 	"testing"
 	"time"
 )
@@ -75,7 +77,17 @@ func TestCandidateFingerprintChangeTriggersImmediateRefresh(t *testing.T) {
 		t.Fatal("changed fingerprint did not trigger refresh")
 	}
 	want := netip.MustParseAddrPort("192.168.1.11:51820").String()
-	if len(engine.candidates) != 1 || engine.candidates[0].Address != want {
-		t.Fatalf("candidates = %+v, want address %s", engine.candidates, want)
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		engine.candidateMu.Lock()
+		candidates := append([]core.Candidate(nil), engine.candidates...)
+		engine.candidateMu.Unlock()
+		if len(candidates) == 1 && candidates[0].Address == want {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
+	engine.candidateMu.Lock()
+	defer engine.candidateMu.Unlock()
+	t.Fatalf("candidates = %+v, want address %s", engine.candidates, want)
 }
