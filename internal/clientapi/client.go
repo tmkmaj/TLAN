@@ -5,8 +5,9 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"io"
+	"math/rand"
 	"net/http"
 	"strings"
 	"time"
@@ -22,7 +23,14 @@ type Client struct {
 	Token   string
 	HTTP    *http.Client
 	Context context.Context
+
+	retryDelay func(attempt int) time.Duration
 }
+
+type networkRequestError struct{ err error }
+
+func (e *networkRequestError) Error() string { return "control service unavailable: " + e.err.Error() }
+func (e *networkRequestError) Unwrap() error { return e.err }
 
 type Network struct {
 	ID        string    `json:"id"`
@@ -248,23 +256,51 @@ func (c *Client) request(method, path string, body any, target any) error {
 	if c == nil || c.BaseURL == "" {
 		return fmt.Errorf("server URL is required")
 	}
-	var reader io.Reader
+	var encoded []byte
 	if body != nil {
-		encoded, err := json.Marshal(body)
+		var err error
+		encoded, err = json.Marshal(body)
 		if err != nil {
 			return err
 		}
-		reader = bytes.NewReader(encoded)
 	}
 	ctx := c.Context
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	httpClient := c.HTTP
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
+
+	retryable := requestRetryable(method, path)
+	var lastErr error
+	for attempt := 1; attempt <= 3; attempt++ {
+		err := c.doRequest(ctx, httpClient, method, path, encoded, body != nil, target)
+		if err == nil {
+			return nil
+		}
+		lastErr = err
+		if attempt == 3 || !retryable || !requestErrorRetryable(ctx, err) {
+			return err
+		}
+		if err := waitForRetry(ctx, c.retryDelayFor(attempt)); err != nil {
+			return fmt.Errorf("%w: %w", err, lastErr)
+		}
+	}
+	return lastErr
+}
+
+func (c *Client) doRequest(ctx context.Context, httpClient *http.Client, method, path string, encoded []byte, hasBody bool, target any) error {
+	reader := &bytes.Reader{}
+	if hasBody {
+		reader = bytes.NewReader(encoded)
+	}
 	req, err := http.NewRequestWithContext(ctx, method, c.BaseURL+path, reader)
 	if err != nil {
 		return err
 	}
-	if body != nil {
+	if hasBody {
 		req.Header.Set("Content-Type", "application/json")
 	}
 	if c.Token != "" {
@@ -274,13 +310,9 @@ func (c *Client) request(method, path string, body any, target any) error {
 			req.Header.Set("X-Admin-Token", c.Token)
 		}
 	}
-	httpClient := c.HTTP
-	if httpClient == nil {
-		httpClient = http.DefaultClient
-	}
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("control service unavailable: %w", err)
+		return &networkRequestError{err: err}
 	}
 	defer resp.Body.Close()
 	var envelope struct {
@@ -302,6 +334,61 @@ func (c *Client) request(method, path string, body any, target any) error {
 	return nil
 }
 
+func requestRetryable(method, path string) bool {
+	switch method {
+	case http.MethodGet, http.MethodHead:
+		return true
+	case http.MethodPost:
+		for _, suffix := range []string{"/heartbeat", "/candidates", "/forwarding"} {
+			if strings.HasSuffix(path, suffix) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func requestErrorRetryable(ctx context.Context, err error) bool {
+	if ctx.Err() != nil || errors.Is(err, context.Canceled) {
+		return false
+	}
+	var networkError *networkRequestError
+	if errors.As(err, &networkError) {
+		return true
+	}
+	var response *HTTPError
+	if !errors.As(err, &response) {
+		return false
+	}
+	switch response.StatusCode {
+	case http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		return true
+	default:
+		return false
+	}
+}
+
+func (c *Client) retryDelayFor(attempt int) time.Duration {
+	if c.retryDelay != nil {
+		return c.retryDelay(attempt)
+	}
+	base := 250 * time.Millisecond
+	if attempt > 1 {
+		base = 750 * time.Millisecond
+	}
+	return time.Duration(float64(base) * (0.8 + rand.Float64()*0.4))
+}
+
+func waitForRetry(ctx context.Context, delay time.Duration) error {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
 func (c *Client) CreateFRPLease(networkID, deviceID, serverID string, rules []frpauth.Rule) (frpauth.LeaseResponse, error) {
 	var response frpauth.LeaseResponse
 	body := struct {

@@ -36,6 +36,8 @@ type Options struct {
 	Cleaner    platform.Cleaner
 	Runner     platform.Runner
 	InstanceID string
+
+	candidateSnapshot func() []candidateInterfaceSnapshot
 }
 type PeerStatus struct {
 	Reachable          bool
@@ -51,32 +53,35 @@ type Status struct {
 	LastError               string
 }
 type Engine struct {
-	options          Options
-	native           tun.Device
-	plain            *tunnel
-	bind             *meshBind
-	wg               *device.Device
-	ctx              context.Context
-	cancel           context.CancelFunc
-	once             sync.Once
-	wgLoops          sync.WaitGroup
-	mu               sync.RWMutex
-	peers            map[string]clientapi.Device
-	dialing          map[string]bool
-	lastError        string
-	candidates       []core.Candidate
-	closed           bool
-	generation       uint64
-	generationMu     sync.Mutex
-	generationDone   chan struct{}
-	generationClosed bool
-	closeErr         error
-	instanceID       string
-	ledger           platform.ResourceLedger
-	cleaner          platform.Cleaner
-	recovery         platform.RecoveryStatus
-	transport        []platform.ResourceRecord
-	cleanupError     string
+	options              Options
+	native               tun.Device
+	plain                *tunnel
+	bind                 *meshBind
+	wg                   *device.Device
+	ctx                  context.Context
+	cancel               context.CancelFunc
+	once                 sync.Once
+	wgLoops              sync.WaitGroup
+	mu                   sync.RWMutex
+	peers                map[string]clientapi.Device
+	dialing              map[string]bool
+	relayRetries         map[string]relayRetryState
+	lastError            string
+	candidates           []core.Candidate
+	candidateFingerprint string
+	stunAvailable        bool
+	closed               bool
+	generation           uint64
+	generationMu         sync.Mutex
+	generationDone       chan struct{}
+	generationClosed     bool
+	closeErr             error
+	instanceID           string
+	ledger               platform.ResourceLedger
+	cleaner              platform.Cleaner
+	recovery             platform.RecoveryStatus
+	transport            []platform.ResourceRecord
+	cleanupError         string
 }
 
 func Start(parent context.Context, options Options) (*Engine, error) {
@@ -143,7 +148,7 @@ func Start(parent context.Context, options Options) (*Engine, error) {
 	recovery := ledger.Recover(instanceID, cleaner)
 	e := &Engine{
 		options: options, ctx: ctx, cancel: cancel,
-		peers: make(map[string]clientapi.Device), dialing: make(map[string]bool),
+		peers: make(map[string]clientapi.Device), dialing: make(map[string]bool), relayRetries: make(map[string]relayRetryState),
 		generation: 1, generationDone: make(chan struct{}),
 		instanceID: instanceID, ledger: ledger, cleaner: cleaner, recovery: recovery,
 	}

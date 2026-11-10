@@ -199,19 +199,19 @@ func (b *meshBind) removePeer(ip netip.Addr) {
 	}
 	delete(b.routes, ip)
 }
-func (b *meshBind) hasRelay(ip netip.Addr) bool {
+func (b *meshBind) hasRelay(ip netip.Addr, minRemaining time.Duration) bool {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 	r := b.routes[ip]
-	return r != nil && r.relay != nil && time.Until(r.relayExpiry) > 0
+	return r != nil && r.relay != nil && r.relayExpiry.After(time.Now().Add(minRemaining))
 }
-func (b *meshBind) attachRelay(ip netip.Addr, relay *network.StreamRelay, expiry time.Time) {
+func (b *meshBind) attachRelay(ip netip.Addr, relay *network.StreamRelay, expiry time.Time) bool {
 	b.mu.Lock()
 	r := b.routes[ip]
 	if r == nil || b.udp == nil {
 		b.mu.Unlock()
 		relay.Close()
-		return
+		return false
 	}
 	if r.relay != nil {
 		r.relay.Close()
@@ -242,6 +242,7 @@ func (b *meshBind) attachRelay(ip netip.Addr, relay *network.StreamRelay, expiry
 			}
 		}
 	}()
+	return true
 }
 func (b *meshBind) readUDP(u *net.UDPConn, done <-chan struct{}, in chan<- datagram) {
 	buffer := make([]byte, 65536)

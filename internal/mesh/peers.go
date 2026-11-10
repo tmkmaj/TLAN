@@ -14,6 +14,14 @@ import (
 	"github.com/private-radminlan/lanmesh/internal/network"
 )
 
+const relayRenewalMargin = 30 * time.Second
+const maxRelayBackoff = 30 * time.Second
+
+type relayRetryState struct {
+	failures    uint32
+	nextAttempt time.Time
+}
+
 func (e *Engine) syncPeers() error {
 	items, err := e.options.API.ListDevices(core.NetworkID(e.options.Network.ID))
 	if err != nil {
@@ -85,15 +93,20 @@ func (e *Engine) syncPeers() error {
 	}
 	e.mu.Lock()
 	var removed []clientapi.Device
+	var removedIDs []string
 	for id, peer := range e.peers {
 		if found[id] {
 			continue
 		}
 		removed = append(removed, peer)
+		removedIDs = append(removedIDs, id)
 		delete(e.peers, id)
 		generationChanged = true
 	}
 	e.mu.Unlock()
+	for _, id := range removedIDs {
+		e.clearRelayAttempt(id)
+	}
 	if generationChanged {
 		e.advanceGeneration()
 	}
@@ -107,11 +120,14 @@ func (e *Engine) syncPeers() error {
 	return nil
 }
 func (e *Engine) ensureRelay(peer clientapi.Device, ip netip.Addr) {
-	if e.bind.hasRelay(ip) {
+	if e.bind.hasRelay(ip, relayRenewalMargin) {
 		return
 	}
 	e.mu.Lock()
-	if e.dialing[peer.ID] || e.closed {
+	if e.dialing == nil {
+		e.dialing = make(map[string]bool)
+	}
+	if e.dialing[peer.ID] || e.closed || !e.relayAttemptAllowedLocked(peer.ID, time.Now()) {
 		e.mu.Unlock()
 		return
 	}
@@ -123,6 +139,7 @@ func (e *Engine) ensureRelay(peer clientapi.Device, ip netip.Addr) {
 		defer func() { e.mu.Lock(); delete(e.dialing, peer.ID); e.mu.Unlock() }()
 		ticket, err := e.options.API.CreateRelaySession(core.NetworkID(e.options.Network.ID), e.options.Identity.DeviceID, core.DeviceID(peer.ID), 5*time.Minute)
 		if err != nil {
+			e.relayAttemptFailed(peer.ID, time.Now())
 			e.setError(err)
 			return
 		}
@@ -130,9 +147,67 @@ func (e *Engine) ensureRelay(peer clientapi.Device, ip netip.Addr) {
 		defer cancel()
 		relay, err := network.DialHTTPRelayWithRoots(ctx, e.options.API.BaseURL, e.options.API.Token, network.RelayTicket{SessionID: ticket.SessionID, Source: ticket.Source, Target: ticket.Target, Secret: ticket.Secret, ExpiresAt: ticket.ExpiresAt}, e.options.Identity.DeviceID, e.options.TrustedRoots)
 		if err != nil {
+			e.relayAttemptFailed(peer.ID, time.Now())
 			e.setError(err)
 			return
 		}
-		e.bind.attachRelay(ip, relay, ticket.ExpiresAt)
+		if !e.bind.attachRelay(ip, relay, ticket.ExpiresAt) {
+			e.relayAttemptFailed(peer.ID, time.Now())
+			return
+		}
+		e.relayAttemptSucceeded(peer.ID)
 	}()
+}
+
+func relayBackoffDelay(failures uint32) time.Duration {
+	delay := time.Second
+	for i := uint32(1); i < failures; i++ {
+		if delay >= maxRelayBackoff {
+			return maxRelayBackoff
+		}
+		delay *= 2
+	}
+	if delay > maxRelayBackoff {
+		return maxRelayBackoff
+	}
+	return delay
+}
+
+func (e *Engine) relayAttemptAllowed(peerID string, now time.Time) bool {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.relayAttemptAllowedLocked(peerID, now)
+}
+
+func (e *Engine) relayAttemptAllowedLocked(peerID string, now time.Time) bool {
+	state, ok := e.relayRetries[peerID]
+	return !ok || !now.Before(state.nextAttempt)
+}
+
+func (e *Engine) relayAttemptFailed(peerID string, now time.Time) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.peers != nil {
+		if _, ok := e.peers[peerID]; !ok {
+			delete(e.relayRetries, peerID)
+			return
+		}
+	}
+	if e.relayRetries == nil {
+		e.relayRetries = make(map[string]relayRetryState)
+	}
+	state := e.relayRetries[peerID]
+	state.failures++
+	state.nextAttempt = now.Add(relayBackoffDelay(state.failures))
+	e.relayRetries[peerID] = state
+}
+
+func (e *Engine) relayAttemptSucceeded(peerID string) {
+	e.clearRelayAttempt(peerID)
+}
+
+func (e *Engine) clearRelayAttempt(peerID string) {
+	e.mu.Lock()
+	delete(e.relayRetries, peerID)
+	e.mu.Unlock()
 }
