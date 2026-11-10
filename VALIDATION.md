@@ -18,10 +18,11 @@
 - 认证边界：管理 listener 使用独立 handler，不挂载 `/api/v1/*`；登录使用 SHA-256 常量时间比较、按 TCP 对端 IP 的 5 次/15 分钟固定窗口、HttpOnly/SameSite=Strict `tlan_admin` Cookie、服务端哈希会话键、30 分钟滑动过期和最多 8 个会话；服务重启后旧 Cookie 失效。状态变更同时校验 CSRF 和同源 `Origin`，Host 必须匹配配置的 admin 地址或回环别名，不信任 `X-Forwarded-*`。
 - API：所有 `/admin/api/*` 响应使用 `{"ok":...}` 外壳并带 `request_id`；失败使用稳定错误码和不含底层详情的可读消息；新增 `GET /admin/api/session`，返回 CSRF、会话到期时间和服务启动时间。管理操作写入带 request_id、来源 IP、动作、网络/成员 ID 和结果的结构化日志。
 - 页面：内嵌单页，无外部 CDN；明文 HTTP 时登录页和管理页显示高风险横幅；白蓝视觉与客户端侧栏一致；概览、成员列表、连接状态三个区域；顶部显示控制面、Relay、Managed FRP 三个独立状态和会话到期时间；成员支持搜索、在线/拉黑筛选、重命名、断开、踢出、拉黑、解封；危险操作确认包含目标名称和成员 ID 后四位；窄屏表格切换为卡片。
+- 设置与主题（2026-11-10）：顶部“设置”入口显示服务端控制台版本（`v0.2.0`），并提供亮色/暗色风格切换；主题通过 `localStorage` 持久化，登录页沿用已保存主题，不写入管理令牌或服务端配置；亮暗两套主题均通过真实浏览器截图检查。
 - 状态一致性：断开/踢出/拉黑先关闭 Relay，再撤销 Managed FRP lease，并设置 Forwarding=false；踢出先撤销成员凭据；拉黑在存储事务中设置 blocked 并撤销凭据。成员列表/候选/认证/心跳过滤 blocked 设备。解封只清除 blocked，不恢复旧凭据。
 - 边界测试：普通成员凭据访问 `/admin/api/*` 返回 401；管理 listener 的 `/api/v1/*`、随机路径、编码穿越路径和静态文件路径返回统一 404；旧 YAML 缺少 `admin_*` 字段时管理页禁用且其他行为不变；端口占用、TLS 证书/私钥不配对和非回环明文未 opt-in 均被明确拒绝。
-- 验收证据：`gofmt -l` 无输出；`go vet -mod=vendor ./...` 通过；`go test -mod=vendor ./... -count=1 -timeout 900s` 全部通过；Linux amd64 交叉构建和单文件安装包重建通过，安装包 SHA-256 为 `cb65f4d926033e8be105c8de619d90922e0988c7bf9657a4c76b4b50ee009bd3`。
-- 真实浏览器验收：Windows 服务端启动 smoke 后，用 Playwright + Chrome 完成登录、概览、成员、拉黑/解封、连接和 390px 移动端截图；浏览器无 console/page error，页面未出现 `Tmkmaj233`。截图见 `docs/screenshots/admin-login-2026-11-10.png`、`admin-overview-2026-11-10.png`、`admin-members-2026-11-10.png`、`admin-members-blocked-2026-11-10.png`、`admin-connections-2026-11-10.png` 和 `admin-members-mobile-2026-11-10.png`。
+- 验收证据：`gofmt -l` 无输出；`go vet -mod=vendor ./...` 通过；`go test -mod=vendor ./... -count=1 -timeout 900s` 全部通过；Linux amd64 交叉构建和单文件安装包重建通过，安装包 SHA-256 为 `fd39ff9f515930bbad0043f5b78d1685b698f1c06b9f812567563dfb6c6fa0c5`。
+- 真实浏览器验收：Windows 服务端启动 smoke 后，用 Playwright + Chrome 完成登录、概览、成员、拉黑/解封、连接和 390px 移动端截图；浏览器无 console/page error，页面未出现 `Tmkmaj233`；亮色/暗色切换、刷新后主题持久化、设置对话框键盘关闭和 390px 移动端均通过。截图见 `docs/screenshots/admin-login-2026-11-10.png`、`admin-overview-2026-11-10.png`、`admin-members-2026-11-10.png`、`admin-members-blocked-2026-11-10.png`、`admin-connections-2026-11-10.png`、`admin-members-mobile-2026-11-10.png`、`admin-settings-light-2026-11-10.png`、`admin-settings-dark-2026-11-10.png`、`admin-settings-mobile-2026-11-10.png`、`admin-overview-dark-2026-11-10.png` 和 `admin-login-dark-2026-11-10.png`。
 - 未在本机执行的验收：当前环境没有可用 WSL distro，Linux 运行时启动 smoke 未执行；发布前仍应在目标 Debian/CentOS 主机运行安装器 `--check` 和实际启动。管理事件只写结构化服务日志，未提供浏览器事件查询；管理页不支持反向代理；拉黑不能阻止删除本地身份后的重新入网；连接页不是 WireGuard 数据面完整遥测。
 
 ## P2/P3 受控发布验证（2026-10-21，R1/R2 复核）

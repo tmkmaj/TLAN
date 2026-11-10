@@ -50,7 +50,7 @@ func TestAdminPageContainsRequiredUIAndNoSecrets(t *testing.T) {
 	pageBody, _ := io.ReadAll(pageResp.Body)
 	pageResp.Body.Close()
 	page := string(pageBody)
-	for _, want := range []string{"概览", "成员", "连接", "/admin/api/overview", "/admin/api/members", "/admin/api/session", "加入时间", "Forwarding", "Managed FRP", "重命名", "踢出", "拉黑", "解封"} {
+	for _, want := range []string{"概览", "成员", "连接", "/admin/api/overview", "/admin/api/members", "/admin/api/session", "加入时间", "Forwarding", "Managed FRP", "重命名", "踢出", "拉黑", "解封", "设置", "控制台版本", "亮暗风格", `data-theme-option="dark"`, "settings-version"} {
 		if !strings.Contains(page, want) {
 			t.Fatalf("authenticated page missing %q", want)
 		}

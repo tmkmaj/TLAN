@@ -199,7 +199,7 @@ server:
   admin_allow_insecure_http: false
 ```
 
-普通成员使用 `TmkNetwork` 入网，`Tmkmaj233` 原样作为管理令牌。管理页展示服务器与私人网络摘要、成员在线/心跳/Relay 状态、活跃 Relay 会话，并支持搜索、重命名、断开、踢出、拉黑和解封。管理 listener 只接受 `/admin`、`/admin/login`、`/admin/logout`、`/admin/api/session` 和 `/admin/api/*`，不提供普通控制 API；原始 `X-Admin-Token`/Bearer 只保留在原公网控制 API。管理 API 使用 `{"ok":...}` 外壳并返回 `request_id`；失败响应不包含底层错误或令牌。listener 校验 Host 与配置地址，状态变更请求校验同源 Origin，不信任 `X-Forwarded-*`。
+普通成员使用 `TmkNetwork` 入网，`Tmkmaj233` 原样作为管理令牌。管理页右上角的“设置”入口显示当前控制台版本，并提供亮色/暗色风格切换；主题偏好只保存在当前浏览器，不会写入管理令牌或服务端配置。管理页展示服务器与私人网络摘要、成员在线/心跳/Relay 状态、活跃 Relay 会话，并支持搜索、重命名、断开、踢出、拉黑和解封。管理 listener 只接受 `/admin`、`/admin/login`、`/admin/logout`、`/admin/api/session` 和 `/admin/api/*`，不提供普通控制 API；原始 `X-Admin-Token`/Bearer 只保留在原公网控制 API。管理 API 使用 `{"ok":...}` 外壳并返回 `request_id`；失败响应不包含底层错误或令牌。listener 校验 Host 与配置地址，状态变更请求校验同源 Origin，不信任 `X-Forwarded-*`。
 
 如果要从局域网设备直接访问，可把 `admin_listen` 改为服务器的内网地址，例如 `10.10.0.20:8081`，并只在内网防火墙中放行该端口。非回环且未配置 TLS 时，必须显式设置 `admin_allow_insecure_http: true`，否则服务拒绝启动；启用后启动日志会明确警告管理页为明文 HTTP。不要把该端口映射到公网。明文内网示例：
 
