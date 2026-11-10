@@ -18,8 +18,8 @@ func TestLoadOrCreateGeneratesOnceThenLoads(t *testing.T) {
 	if !created {
 		t.Fatal("first call did not report a newly generated configuration")
 	}
-	if len(first.Security.AdminToken) < 24 || len(first.Network.JoinCode) < 8 {
-		t.Fatal("generated secrets are too short")
+	if first.Security.AdminToken != "Tmkmaj233" || first.Network.JoinCode != "TmkNetwork" || first.Server.AdminListen != "127.0.0.1:8081" {
+		t.Fatalf("generated tokens/admin listener = %q/%q/%q", first.Security.AdminToken, first.Network.JoinCode, first.Server.AdminListen)
 	}
 	info, err := os.Stat(path)
 	if err != nil {
@@ -125,6 +125,7 @@ func TestValidationErrorsAreActionable(t *testing.T) {
 		want   string
 	}{
 		{"short admin token", func(c *Config) { c.Security.AdminToken = "short" }, "security.admin_token"},
+		{"unpaired admin TLS", func(c *Config) { c.Server.AdminTLSCert = "admin.crt" }, "server.admin_tls_cert"},
 		{"short join code", func(c *Config) { c.Network.JoinCode = "short" }, "network.join_code"},
 		{"invalid listener", func(c *Config) { c.Server.Listen = "8080" }, "server.listen"},
 		{"unpaired TLS", func(c *Config) { c.Server.TLSCert = "server.crt" }, "server.tls_cert"},
@@ -147,7 +148,7 @@ func TestValidationErrorsAreActionable(t *testing.T) {
 	}
 }
 
-func TestGeneratedSecretsAreRandom(t *testing.T) {
+func TestGeneratedTokensUseRequestedStableDefaults(t *testing.T) {
 	first, err := newDefault()
 	if err != nil {
 		t.Fatal(err)
@@ -156,14 +157,28 @@ func TestGeneratedSecretsAreRandom(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if first.Security.AdminToken == second.Security.AdminToken {
-		t.Fatal("administrator tokens were reused")
+	if first.Security.AdminToken != "Tmkmaj233" || second.Security.AdminToken != "Tmkmaj233" {
+		t.Fatalf("admin tokens = %q/%q", first.Security.AdminToken, second.Security.AdminToken)
 	}
-	if first.Network.JoinCode == second.Network.JoinCode {
-		t.Fatal("join codes were reused")
+	if first.Network.JoinCode != "TmkNetwork" || second.Network.JoinCode != "TmkNetwork" {
+		t.Fatalf("join codes = %q/%q", first.Network.JoinCode, second.Network.JoinCode)
 	}
 }
 
+func TestAdminListenerAndTLSValidation(t *testing.T) {
+	cfg, err := newDefault()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Server.AdminListen = "10.0.0.10:8081"
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("admin listener rejected: %v", err)
+	}
+	cfg.Server.AdminTLSCert = "admin.crt"
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "server.admin_tls_cert") {
+		t.Fatalf("unpaired admin TLS error = %v", err)
+	}
+}
 func TestFRPManagedConfigurationValidation(t *testing.T) {
 	cfg, err := newDefault()
 	if err != nil {

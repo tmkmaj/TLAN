@@ -106,13 +106,13 @@ chmod +x tmknetworklan-server
 ./tmknetworklan-server
 ```
 
-生成后的结构如下。两个令牌由程序使用系统随机源生成；`security.admin_token` 仅供你维护服务器，`network.join_code` 才分享给熟人。
+生成后的结构如下。默认 `network.join_code` 为 `TmkNetwork`，`security.admin_token` 为 `Tmkmaj233`；后者仅供你维护服务器，前者才分享给熟人。升级已有部署时不会静默覆盖原令牌，需要手工修改配置。
 
 ```yaml
 network:
   name: 我的私人网络
   cidr: 10.240.0.0/24
-  join_code: 首次启动随机生成
+  join_code: TmkNetwork
 server:
   listen: 127.0.0.1:8080
   stun_listen: :3478
@@ -121,13 +121,14 @@ server:
   relay_listen: ""
   relay_cert: ""
   relay_key: ""
+  admin_listen: "127.0.0.1:8081"`r`n  admin_tls_cert: ""`r`n  admin_tls_key: ""
 storage:
   data_dir: ./data
 security:
-  admin_token: 首次启动随机生成
+  admin_token: Tmkmaj233
 ```
 
-配置文件创建权限为 `0600`。加载时会严格检查字段名和取值范围：拼错字段、管理员令牌少于 24 字符、入网令牌不是 8–256 字节、非私人 IPv4 网段、TLS 证书与私钥不配对，都会阻止启动并指出具体字段。`storage.data_dir` 可使用相对当前工作目录的路径。
+配置文件创建权限为 `0600`。加载时会严格检查字段名和取值范围：拼错字段、管理员令牌不是 8–256 字节、入网令牌不是 8–256 字节、非私人 IPv4 网段、TLS 证书与私钥不配对，都会阻止启动并指出具体字段；管理监听器默认只绑定回环地址。`storage.data_dir` 可使用相对当前工作目录的路径。
 
 首次创建私人网络后，后续重启会保留网络、成员和虚拟 IP。修改 `network.join_code` 会更换新成员加入时使用的令牌，已签发的成员凭据仍有效；将其设为空字符串可禁止新成员加入。若当前目录已有旧版 `state.json`，首次生成配置会自动把 `data_dir` 设为 `.`，避免升级后产生空网络或重新分配 IP。
 

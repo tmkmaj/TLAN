@@ -37,13 +37,16 @@ type NetworkConfig struct {
 }
 
 type ServerConfig struct {
-	Listen      string `yaml:"listen"`
-	STUNListen  string `yaml:"stun_listen"`
-	TLSCert     string `yaml:"tls_cert"`
-	TLSKey      string `yaml:"tls_key"`
-	RelayListen string `yaml:"relay_listen"`
-	RelayCert   string `yaml:"relay_cert"`
-	RelayKey    string `yaml:"relay_key"`
+	AdminListen  string `yaml:"admin_listen,omitempty"`
+	AdminTLSCert string `yaml:"admin_tls_cert,omitempty"`
+	AdminTLSKey  string `yaml:"admin_tls_key,omitempty"`
+	Listen       string `yaml:"listen"`
+	STUNListen   string `yaml:"stun_listen"`
+	TLSCert      string `yaml:"tls_cert"`
+	TLSKey       string `yaml:"tls_key"`
+	RelayListen  string `yaml:"relay_listen"`
+	RelayCert    string `yaml:"relay_cert"`
+	RelayKey     string `yaml:"relay_key"`
 }
 
 type StorageConfig struct {
@@ -150,27 +153,20 @@ func LoadFile(path string) (Config, error) {
 }
 
 func newDefault() (Config, error) {
-	adminToken, err := randomToken(32)
-	if err != nil {
-		return Config{}, fmt.Errorf("generate administrator token: %w", err)
-	}
-	joinCode, err := randomToken(18)
-	if err != nil {
-		return Config{}, fmt.Errorf("generate join code: %w", err)
-	}
 	return Config{
 		Network: NetworkConfig{
 			Name:     "我的私人网络",
 			CIDR:     "10.240.0.0/24",
-			JoinCode: joinCode,
+			JoinCode: "TmkNetwork",
 		},
 		Server: ServerConfig{
-			Listen:     "127.0.0.1:8080",
-			STUNListen: ":3478",
+			Listen:      "127.0.0.1:8080",
+			STUNListen:  ":3478",
+			AdminListen: "127.0.0.1:8081",
 		},
 		Storage: StorageConfig{DataDir: "./data"},
 		Security: SecurityConfig{
-			AdminToken: adminToken,
+			AdminToken: "Tmkmaj233",
 		},
 		FRP: FRPConfig{
 			Mode:        "disabled",
@@ -260,6 +256,17 @@ func (c Config) Validate() error {
 	if (c.Server.TLSCert == "") != (c.Server.TLSKey == "") {
 		return errors.New("server.tls_cert and server.tls_key must be set together")
 	}
+	if c.Server.AdminListen != "" {
+		if err := validateHostPort("server.admin_listen", c.Server.AdminListen); err != nil {
+			return err
+		}
+	}
+	if (c.Server.AdminTLSCert == "") != (c.Server.AdminTLSKey == "") {
+		return errors.New("server.admin_tls_cert and server.admin_tls_key must be set together")
+	}
+	if c.Server.AdminTLSCert != "" && c.Server.AdminListen == "" {
+		return errors.New("server.admin_tls_cert requires server.admin_listen")
+	}
 	if (c.Server.RelayCert == "") != (c.Server.RelayKey == "") {
 		return errors.New("server.relay_cert and server.relay_key must be set together")
 	}
@@ -267,9 +274,10 @@ func (c Config) Validate() error {
 		return errors.New("storage.data_dir must not be empty")
 	}
 	tokenLength := len([]byte(c.Security.AdminToken))
-	if tokenLength < 24 || c.Security.AdminToken == "change-me" || strings.HasPrefix(c.Security.AdminToken, "REPLACE_") {
-		return errors.New("security.admin_token must be a random token of at least 24 characters")
+	if tokenLength < 8 || tokenLength > 256 || c.Security.AdminToken == "change-me" || strings.HasPrefix(c.Security.AdminToken, "REPLACE_") {
+		return errors.New("security.admin_token must contain 8-256 bytes")
 	}
+
 	if err := c.FRP.Validate(); err != nil {
 		return fmt.Errorf("frp: %w", err)
 	}
