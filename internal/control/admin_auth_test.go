@@ -27,6 +27,16 @@ func TestAdminAuthLoginSessionAndCSRF(t *testing.T) {
 	if len(cookies) != 1 || cookies[0].Name != adminSessionCookie || !cookies[0].HttpOnly || cookies[0].SameSite != http.SameSiteStrictMode {
 		t.Fatalf("login cookie = %#v", cookies)
 	}
+	auth.mu.Lock()
+	if _, ok := auth.sessions[cookies[0].Value]; ok {
+		auth.mu.Unlock()
+		t.Fatal("raw session id was stored in server memory")
+	}
+	if _, ok := auth.sessions[adminSessionKey(cookies[0].Value)]; !ok {
+		auth.mu.Unlock()
+		t.Fatal("hashed session key was not stored")
+	}
+	auth.mu.Unlock()
 	var loginPayload struct {
 		CsrfToken string `json:"csrf_token"`
 	}

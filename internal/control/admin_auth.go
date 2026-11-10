@@ -160,7 +160,7 @@ func (a *adminAuth) login(w http.ResponseWriter, r *http.Request) {
 		}
 		delete(a.sessions, oldestID)
 	}
-	a.sessions[sessionID] = adminSession{csrf: csrf, expiresAt: now.Add(adminSessionTTL), lastSeen: now}
+	a.sessions[adminSessionKey(sessionID)] = adminSession{csrf: csrf, expiresAt: now.Add(adminSessionTTL), lastSeen: now}
 	a.mu.Unlock()
 	a.resetLoginFailures(r)
 	http.SetCookie(w, &http.Cookie{
@@ -178,11 +178,16 @@ func (a *adminAuth) logout(w http.ResponseWriter, r *http.Request) {
 	}
 	if cookie, err := r.Cookie(adminSessionCookie); err == nil {
 		a.mu.Lock()
-		delete(a.sessions, cookie.Value)
+		delete(a.sessions, adminSessionKey(cookie.Value))
 		a.mu.Unlock()
 	}
 	http.SetCookie(w, &http.Cookie{Name: adminSessionCookie, Value: "", Path: "/admin", MaxAge: -1, HttpOnly: true, Secure: a.secure, SameSite: http.SameSiteStrictMode})
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func adminSessionKey(sessionID string) string {
+	sum := sha256.Sum256([]byte(sessionID))
+	return base64.RawURLEncoding.EncodeToString(sum[:])
 }
 
 func (a *adminAuth) authorize(r *http.Request) (string, string, bool) {
@@ -191,16 +196,17 @@ func (a *adminAuth) authorize(r *http.Request) (string, string, bool) {
 		return "", "", false
 	}
 	now := a.now()
+	sessionKey := adminSessionKey(cookie.Value)
 	a.mu.Lock()
-	session, ok := a.sessions[cookie.Value]
+	session, ok := a.sessions[sessionKey]
 	if ok && !now.Before(session.expiresAt) {
-		delete(a.sessions, cookie.Value)
+		delete(a.sessions, sessionKey)
 		ok = false
 	}
 	if ok {
 		session.lastSeen = now
 		session.expiresAt = now.Add(adminSessionTTL)
-		a.sessions[cookie.Value] = session
+		a.sessions[sessionKey] = session
 	}
 	a.mu.Unlock()
 	if !ok {
