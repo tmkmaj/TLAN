@@ -97,10 +97,10 @@ func (c *adminConsole) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	case r.URL.Path == "/admin" || r.URL.Path == "/admin/":
 		_, csrf, ok := c.auth.authorize(r)
 		if !ok {
-			writeAdminPage(w, false, "")
+			writeAdminPage(w, false, "", !c.auth.secure)
 			return
 		}
-		writeAdminPage(w, true, csrf)
+		writeAdminPage(w, true, csrf, !c.auth.secure)
 	case r.URL.Path == "/admin/login":
 		c.auth.login(w, r)
 	case r.URL.Path == "/admin/logout":

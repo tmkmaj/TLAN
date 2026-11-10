@@ -3,6 +3,7 @@ package control
 import (
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -37,6 +38,9 @@ func TestAdminPageContainsRequiredUIAndNoSecrets(t *testing.T) {
 	if strings.Contains(loginPage, "https://") || strings.Contains(loginPage, "http://") {
 		t.Fatal("login page contains an external URL")
 	}
+	if !strings.Contains(loginPage, "明文 HTTP 风险") {
+		t.Fatal("plaintext admin page did not show the high-risk warning")
+	}
 
 	client, _ := adminLoginClient(t, server.URL)
 	pageResp, err := client.Get(server.URL + "/admin")
@@ -56,5 +60,12 @@ func TestAdminPageContainsRequiredUIAndNoSecrets(t *testing.T) {
 	}
 	if strings.Contains(page, "https://") || strings.Contains(page, "http://") {
 		t.Fatal("authenticated page contains an external URL")
+	}
+}
+func TestAdminPageSecureModeOmitsInsecureWarning(t *testing.T) {
+	rec := httptest.NewRecorder()
+	writeAdminPage(rec, false, "", false)
+	if strings.Contains(rec.Body.String(), "明文 HTTP 风险") {
+		t.Fatal("secure admin page showed the plaintext warning")
 	}
 }

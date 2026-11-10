@@ -235,6 +235,9 @@ dialog { background: #fff; border-color: var(--line-strong); }
 .toast.error { border-color: #f3c4c4; color: #a61b1b; }
 .state-strip { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 18px; }
 .state-strip .pill { padding: 6px 10px; }
+.insecure-banner { display: flex; flex-direction: column; gap: 3px; margin: 0 0 18px; padding: 12px 14px; border: 1px solid #f2c78a; border-radius: 10px; background: #fff4e5; color: #7a4a00; font-size: 12px; line-height: 1.55; }
+.insecure-banner strong { font-size: 12px; }
+.insecure-banner span { color: #7a5a22; }
 @media (max-width: 760px) {
   .table-shell table { min-width: 0; }
   .table-shell thead { display: none; }
@@ -249,6 +252,7 @@ dialog { background: #fff; border-color: var(--line-strong); }
 <body>
 <main class="login-shell">
   <section class="login-card" aria-labelledby="login-title">
+__INSECURE_BANNER__
     <div class="brand">
       <span class="brand-mark" aria-hidden="true">T</span>
       <span class="brand-word">TLAN <span>/ OPS</span></span>
