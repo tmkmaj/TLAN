@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/private-radminlan/lanmesh/core"
 )
@@ -20,6 +21,7 @@ var ErrNotFound = errors.New("not found")
 var ErrInvalidPassword = errors.New("invalid network password")
 var ErrNetworkFull = errors.New("network address pool is full")
 var ErrConflict = errors.New("resource conflict")
+var ErrBlocked = errors.New("device is blocked")
 
 type State struct {
 	PrivateNetworkID  string                        `json:"private_network_id,omitempty"`
@@ -46,6 +48,7 @@ type Device struct {
 	JoinedAt   time.Time `json:"joined_at"`
 	LastSeen   time.Time `json:"last_seen"`
 	Online     bool      `json:"online"`
+	Blocked    bool      `json:"blocked,omitempty"`
 	Forwarding *bool     `json:"forwarding,omitempty"`
 }
 
@@ -57,6 +60,7 @@ type RegisteredDevice struct {
 	CreatedAt   time.Time           `json:"created_at"`
 	LastSeen    time.Time           `json:"last_seen"`
 	Online      bool                `json:"online"`
+	Blocked     bool                `json:"blocked,omitempty"`
 }
 
 type CandidateRecord struct {
@@ -254,12 +258,30 @@ func (s *Store) NetworkMembershipExists(networkID core.NetworkID, deviceID core.
 		s.mu.RUnlock()
 		return false
 	}
-	_, ok = network.Devices[deviceID.String()]
+	member, ok := network.Devices[deviceID.String()]
+	if !ok || member.Blocked {
+		s.mu.RUnlock()
+		return false
+	}
 	s.mu.RUnlock()
-	return ok
+	return true
+}
+
+func (s *Store) PrivateNetwork() (NetworkSummary, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	network, ok := s.data.Networks[s.data.PrivateNetworkID]
+	if !ok {
+		return NetworkSummary{}, ErrNotFound
+	}
+	return summarize(network), nil
 }
 
 func (s *Store) ListDevices(networkID string) ([]Device, error) {
+	return s.ListDevicesWithBlocked(networkID, false)
+}
+
+func (s *Store) ListDevicesWithBlocked(networkID string, includeBlocked bool) ([]Device, error) {
 	s.mu.RLock()
 	network, ok := s.data.Networks[networkID]
 	if !ok {
@@ -268,13 +290,106 @@ func (s *Store) ListDevices(networkID string) ([]Device, error) {
 	}
 	items := make([]Device, 0, len(network.Devices))
 	for _, device := range network.Devices {
-		device.Online = time.Since(device.LastSeen) < 30*time.Second && (device.Forwarding == nil || *device.Forwarding)
+		if device.Blocked && !includeBlocked {
+			continue
+		}
+		device.Online = !device.Blocked && time.Since(device.LastSeen) < 30*time.Second && (device.Forwarding == nil || *device.Forwarding)
 		items = append(items, cloneDevice(device))
 	}
 	s.mu.RUnlock()
 	sort.Slice(items, func(i, j int) bool { return items[i].JoinedAt.Before(items[j].JoinedAt) })
 	return items, nil
 }
+
+func validateMemberName(name string) (string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" || len([]byte(name)) > 128 || strings.ContainsFunc(name, unicode.IsControl) {
+		return "", errors.New("member name must contain 1-128 non-control characters")
+	}
+	return name, nil
+}
+
+func (s *Store) RenameDevice(networkID, deviceID, name string) (Device, error) {
+	name, err := validateMemberName(name)
+	if err != nil {
+		return Device{}, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	network, ok := s.data.Networks[networkID]
+	if !ok {
+		return Device{}, ErrNotFound
+	}
+	member, ok := network.Devices[deviceID]
+	if !ok {
+		return Device{}, ErrNotFound
+	}
+	member.Name = name
+	network.Devices[deviceID] = member
+	s.data.Networks[networkID] = network
+	if registered, ok := s.data.Devices[deviceID]; ok {
+		registered.DisplayName = name
+		s.data.Devices[deviceID] = registered
+	}
+	if err := s.persistLocked(); err != nil {
+		return Device{}, err
+	}
+	return cloneDevice(member), nil
+}
+
+func (s *Store) SetDeviceBlocked(networkID, deviceID string, blocked bool) (Device, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	network, ok := s.data.Networks[networkID]
+	if !ok {
+		return Device{}, ErrNotFound
+	}
+	member, ok := network.Devices[deviceID]
+	if !ok {
+		return Device{}, ErrNotFound
+	}
+	member.Blocked = blocked
+	if blocked {
+		member.Online = false
+		for hash, credential := range s.data.MemberCredentials {
+			if credential.NetworkID == networkID && credential.DeviceID == deviceID {
+				delete(s.data.MemberCredentials, hash)
+			}
+		}
+	}
+	network.Devices[deviceID] = member
+	s.data.Networks[networkID] = network
+	if registered, ok := s.data.Devices[deviceID]; ok {
+		registered.Blocked = blocked
+		if blocked {
+			registered.Online = false
+		}
+		s.data.Devices[deviceID] = registered
+	}
+	if err := s.persistLocked(); err != nil {
+		return Device{}, err
+	}
+	return cloneDevice(member), nil
+}
+
+func (s *Store) RevokeMemberCredentials(networkID, deviceID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	network, ok := s.data.Networks[networkID]
+	if !ok {
+		return ErrNotFound
+	}
+	if _, ok := network.Devices[deviceID]; !ok {
+		return ErrNotFound
+	}
+	for hash, credential := range s.data.MemberCredentials {
+		if credential.NetworkID == networkID && credential.DeviceID == deviceID {
+			delete(s.data.MemberCredentials, hash)
+		}
+	}
+	return s.persistLocked()
+}
+
 func (s *Store) RemoveDevice(networkID, deviceID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -343,6 +458,14 @@ func (s *Store) Heartbeat(deviceID core.DeviceID) (RegisteredDevice, error) {
 	if !ok {
 		return RegisteredDevice{}, ErrNotFound
 	}
+	if device.Blocked {
+		return RegisteredDevice{}, ErrBlocked
+	}
+	for _, network := range s.data.Networks {
+		if member, ok := network.Devices[deviceID.String()]; ok && member.Blocked {
+			return RegisteredDevice{}, ErrBlocked
+		}
+	}
 	device.LastSeen = time.Now().UTC()
 	device.Online = true
 	s.data.Devices[deviceID.String()] = device
@@ -368,9 +491,13 @@ func (s *Store) RegisteredDeviceExists(deviceID core.DeviceID) bool {
 		return false
 	}
 	s.mu.RLock()
-	_, ok := s.data.Devices[deviceID.String()]
+	device, ok := s.data.Devices[deviceID.String()]
+	if !ok || device.Blocked {
+		s.mu.RUnlock()
+		return false
+	}
 	s.mu.RUnlock()
-	return ok
+	return true
 }
 
 func candidateKey(networkID core.NetworkID, deviceID core.DeviceID) string {
@@ -394,14 +521,19 @@ func (s *Store) SetCandidates(networkID core.NetworkID, deviceID core.DeviceID, 
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, ok := s.data.Networks[networkID.String()]; !ok {
+	network, ok := s.data.Networks[networkID.String()]
+	if !ok {
 		return CandidateRecord{}, ErrNotFound
 	}
 	if _, ok := s.data.Devices[deviceID.String()]; !ok {
 		return CandidateRecord{}, ErrNotFound
 	}
-	if _, ok := s.data.Networks[networkID.String()].Devices[deviceID.String()]; !ok {
+	member, ok := network.Devices[deviceID.String()]
+	if !ok {
 		return CandidateRecord{}, ErrNotFound
+	}
+	if member.Blocked {
+		return CandidateRecord{}, ErrBlocked
 	}
 	record := CandidateRecord{DeviceID: deviceID, NetworkID: networkID, Candidates: append([]core.Candidate(nil), candidates...), UpdatedAt: time.Now().UTC()}
 	s.data.Candidates[candidateKey(networkID, deviceID)] = record
@@ -421,11 +553,8 @@ func (s *Store) GetCandidates(networkID core.NetworkID, deviceID core.DeviceID) 
 	s.mu.RLock()
 	network, networkOK := s.data.Networks[networkID.String()]
 	record, ok := s.data.Candidates[candidateKey(networkID, deviceID)]
-	if !networkOK {
-		s.mu.RUnlock()
-		return CandidateRecord{}, ErrNotFound
-	}
-	if _, member := network.Devices[deviceID.String()]; !member || !ok {
+	member, memberOK := network.Devices[deviceID.String()]
+	if !networkOK || !memberOK || !ok || member.Blocked {
 		s.mu.RUnlock()
 		return CandidateRecord{}, ErrNotFound
 	}

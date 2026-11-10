@@ -77,6 +77,12 @@ func (s *Store) EnrollPrivate(req core.RegisterDeviceRequest, code string) (Netw
 		return NetworkSummary{}, Device{}, "", ErrInvalidPassword
 	}
 	id := req.DeviceID.String()
+	if registered, ok := s.data.Devices[id]; ok && registered.Blocked {
+		return NetworkSummary{}, Device{}, "", ErrBlocked
+	}
+	if member, ok := n.Devices[id]; ok && member.Blocked {
+		return NetworkSummary{}, Device{}, "", ErrBlocked
+	}
 	if existing, ok := s.data.Devices[id]; ok && existing.Identity.WireGuardPublicKey != req.WireGuardPublicKey {
 		return NetworkSummary{}, Device{}, "", ErrConflict
 	}
@@ -150,7 +156,13 @@ func (s *Store) AuthenticateMember(token string) (MemberCredential, bool) {
 	if !ok {
 		return c, false
 	}
-	_, ok = n.Devices[c.DeviceID]
+	member, ok := n.Devices[c.DeviceID]
+	if !ok || member.Blocked {
+		return c, false
+	}
+	if registered, ok := s.data.Devices[c.DeviceID]; ok && registered.Blocked {
+		return c, false
+	}
 	return c, ok
 }
 func (s *Store) NetworkSummary(id string) (NetworkSummary, error) {
