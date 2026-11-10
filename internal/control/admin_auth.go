@@ -190,6 +190,27 @@ func adminSessionKey(sessionID string) string {
 	return base64.RawURLEncoding.EncodeToString(sum[:])
 }
 
+func (a *adminAuth) sessionInfo(r *http.Request) (string, time.Time, bool) {
+	cookie, err := r.Cookie(adminSessionCookie)
+	if err != nil || cookie.Value == "" {
+		return "", time.Time{}, false
+	}
+	key := adminSessionKey(cookie.Value)
+	now := a.now()
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	session, ok := a.sessions[key]
+	if !ok || !now.Before(session.expiresAt) {
+		if ok {
+			delete(a.sessions, key)
+		}
+		return "", time.Time{}, false
+	}
+	session.lastSeen = now
+	session.expiresAt = now.Add(adminSessionTTL)
+	a.sessions[key] = session
+	return session.csrf, session.expiresAt, true
+}
 func (a *adminAuth) authorize(r *http.Request) (string, string, bool) {
 	cookie, err := r.Cookie(adminSessionCookie)
 	if err != nil || cookie.Value == "" {

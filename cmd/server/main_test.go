@@ -1,6 +1,7 @@
 package main
 
 import (
+	"net"
 	"strings"
 	"testing"
 
@@ -61,5 +62,38 @@ func TestIsLoopbackAddress(t *testing.T) {
 		if got := isLoopbackAddress(test.address); got != test.want {
 			t.Errorf("isLoopbackAddress(%q) = %v, want %v", test.address, got, test.want)
 		}
+	}
+}
+func TestAdminListenerRequiresInsecureOptIn(t *testing.T) {
+	cfg := config.Config{}
+	cfg.Server.AdminListen = "0.0.0.0:0"
+	if _, _, err := adminListener(cfg); err == nil || !strings.Contains(err.Error(), "admin_allow_insecure_http") {
+		t.Fatalf("non-loopback plaintext error = %v", err)
+	}
+}
+
+func TestAdminListenerAllowsExplicitInsecureOptIn(t *testing.T) {
+	cfg := config.Config{}
+	cfg.Server.AdminListen = "0.0.0.0:0"
+	cfg.Server.AdminAllowInsecureHTTP = true
+	listener, secure, err := adminListener(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	if secure {
+		t.Fatal("explicit plaintext listener reported TLS")
+	}
+}
+func TestAdminListenerReportsAddressInUse(t *testing.T) {
+	blocker, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer blocker.Close()
+	cfg := config.Config{}
+	cfg.Server.AdminListen = blocker.Addr().String()
+	if _, _, err := adminListener(cfg); err == nil || !strings.Contains(err.Error(), "listen for admin console") {
+		t.Fatalf("address-in-use error = %v", err)
 	}
 }

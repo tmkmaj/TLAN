@@ -130,13 +130,19 @@ func run() error {
 			}
 		}()
 	}
-	service := &control.Server{Store: store, AdminToken: cfg.Security.AdminToken, Relay: relay, FRP: frpStore, DisableEnrollment: cfg.Network.JoinCode == "", StartedAt: time.Now().UTC()}
 	adminNet, adminTLS, err := adminListener(cfg)
 	if err != nil {
 		return err
 	}
 	if adminNet != nil {
 		defer adminNet.Close()
+	}
+	service := &control.Server{
+		Store: store, AdminToken: cfg.Security.AdminToken, Relay: relay, FRP: frpStore,
+		DisableEnrollment: cfg.Network.JoinCode == "", StartedAt: time.Now().UTC(),
+		ControlListen: cfg.Server.Listen, ControlTLS: cfg.Server.TLSCert != "",
+		AdminListen: cfg.Server.AdminListen, AdminTLS: adminTLS,
+		DataDirSummary: dataDirSummary(cfg.Storage.DataDir),
 	}
 	controlServer := &http.Server{Addr: cfg.Server.Listen, Handler: service.Handler(), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second, IdleTimeout: 90 * time.Second, MaxHeaderBytes: 32 * 1024}
 	// TLSNextProto disables HTTP/2 for the native HTTP/1.1 Upgrade relay.
@@ -155,7 +161,7 @@ func run() error {
 	var adminDone <-chan error
 	if adminNet != nil {
 		adminServer = &http.Server{
-			Handler:           service.AdminHandler(cfg.Security.AdminToken, adminTLS),
+			Handler:           service.AdminHandlerForListen(cfg.Security.AdminToken, adminTLS, cfg.Server.AdminListen),
 			ReadHeaderTimeout: 10 * time.Second,
 			ReadTimeout:       30 * time.Second,
 			IdleTimeout:       90 * time.Second,
@@ -231,6 +237,9 @@ func adminListener(cfg config.Config) (net.Listener, bool, error) {
 	}
 	if certPath == "" {
 		if !isLoopbackAddress(address) {
+			if !cfg.Server.AdminAllowInsecureHTTP {
+				return nil, false, fmt.Errorf("server.admin_allow_insecure_http must be true to bind %s without TLS", address)
+			}
 			log.Printf("warning: admin console is listening on %s without TLS; restrict it to a private network and firewall", address)
 		}
 		listener, err := net.Listen("tcp", address)
@@ -319,4 +328,12 @@ func serveRelay(ctx context.Context, listener net.Listener, broker *network.Rela
 			c.Close()
 		}
 	}
+}
+
+func dataDirSummary(dir string) string {
+	base := filepath.Base(filepath.Clean(dir))
+	if base == "." || base == string(filepath.Separator) {
+		return "."
+	}
+	return base
 }

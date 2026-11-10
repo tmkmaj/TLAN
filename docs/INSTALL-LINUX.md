@@ -76,6 +76,8 @@ STUN：8.163.21.82:3478
 
 在服务器本机用编辑器查看 `/var/lib/lanmesh/tnlan-config.yml`，只把 `network.join_code` 分享给成员。不要公开整个配置文件，尤其是 `security.admin_token`。
 
+管理控制台默认只监听 `127.0.0.1:8081`。在服务器本机或通过 SSH 隧道访问 `http://127.0.0.1:8081/admin`，使用 `security.admin_token`（默认 `Tmkmaj233`）登录。不要把 8081 加入公网安全组；如需局域网设备直接访问，把 `server.admin_listen` 改为服务器内网 IP，并在未配置 TLS 时显式设置 `server.admin_allow_insecure_http: true`，同时只在内网防火墙放行。
+
 ## 安装位置与升级行为
 
 | 内容 | 位置 |

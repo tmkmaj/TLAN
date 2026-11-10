@@ -11,6 +11,19 @@
 - 验证：`gofmt -l` 无输出；`go vet` 通过；定向测试与 `go test -mod=vendor ./... -count=1 -timeout 900s` 全部通过；YAML 示例严格加载测试 PASS；Linux 交叉构建通过；发布窗口 EXE `--ui-smoke-test` PASS。
 - **未完成**：签名 WFP 透明捕获、真实 Linux NAT 验证、跨公网双机与长稳验收、租约 API 接入既有控制面、自定义 DNS resolver、`max_rate_bps` 实际限速。
 
+## 内网管理控制台（2026-11-10，按 admin-console-design 复核）
+
+- 固定令牌：普通入网令牌 `TmkNetwork`，管理令牌 `Tmkmaj233` 原样生效；配置校验允许 8–256 字节管理令牌，短令牌启动时输出明文警告。
+- 独立 admin listener：默认 `127.0.0.1:8081`，空值禁用；支持 `admin_tls_cert/key`。非回环且未配置 TLS 时必须显式 `admin_allow_insecure_http: true`，否则配置校验拒绝启动；启用后启动日志警告限制内网和防火墙访问。
+- 认证边界：管理 listener 使用独立 handler，不挂载 `/api/v1/*`；登录使用 SHA-256 常量时间比较、按 TCP 对端 IP 的 5 次/15 分钟固定窗口、HttpOnly/SameSite=Strict `tlan_admin` Cookie、服务端哈希会话键、30 分钟滑动过期和最多 8 个会话；服务重启后旧 Cookie 失效。状态变更同时校验 CSRF 和同源 `Origin`，Host 必须匹配配置的 admin 地址或回环别名，不信任 `X-Forwarded-*`。
+- API：所有 `/admin/api/*` 响应使用 `{"ok":...}` 外壳并带 `request_id`；失败使用稳定错误码和不含底层详情的可读消息；新增 `GET /admin/api/session`，返回 CSRF、会话到期时间和服务启动时间。管理操作写入带 request_id、来源 IP、动作、网络/成员 ID 和结果的结构化日志。
+- 页面：内嵌单页，无外部 CDN；白蓝视觉与客户端侧栏一致；概览、成员列表、连接状态三个区域；顶部显示控制面、Relay、Managed FRP 三个独立状态和会话到期时间；成员支持搜索、在线/拉黑筛选、重命名、断开、踢出、拉黑、解封；危险操作确认包含目标名称和成员 ID 后四位；窄屏表格切换为卡片。
+- 状态一致性：断开/踢出/拉黑先关闭 Relay，再撤销 Managed FRP lease，并设置 Forwarding=false；踢出先撤销成员凭据；拉黑在存储事务中设置 blocked 并撤销凭据。成员列表/候选/认证/心跳过滤 blocked 设备。解封只清除 blocked，不恢复旧凭据。
+- 边界测试：普通成员凭据访问 `/admin/api/*` 返回 401；管理 listener 的 `/api/v1/*`、随机路径、编码穿越路径和静态文件路径返回统一 404；旧 YAML 缺少 `admin_*` 字段时管理页禁用且其他行为不变；端口占用、TLS 证书/私钥不配对和非回环明文未 opt-in 均被明确拒绝。
+- 验收证据：`gofmt -l` 无输出；`go vet -mod=vendor ./...` 通过；`go test -mod=vendor ./... -count=1 -timeout 900s` 全部通过；Linux amd64 交叉构建和单文件安装包重建通过，安装包 SHA-256 为 `19dec4e43f858b12d2aa83a84336db3b6f500a866c5b5ea97d72d29311f8a1f4`。
+- 真实浏览器验收：Windows 服务端启动 smoke 后，用 Playwright + Chrome 完成登录、概览、成员、拉黑/解封、连接和 390px 移动端截图；浏览器无 console/page error，页面未出现 `Tmkmaj233`。截图见 `docs/screenshots/admin-login-2026-11-10.png`、`admin-overview-2026-11-10.png`、`admin-members-2026-11-10.png`、`admin-members-blocked-2026-11-10.png`、`admin-connections-2026-11-10.png` 和 `admin-members-mobile-2026-11-10.png`。
+- 未在本机执行的验收：当前环境没有可用 WSL distro，Linux 运行时启动 smoke 未执行；发布前仍应在目标 Debian/CentOS 主机运行安装器 `--check` 和实际启动。管理事件只写结构化服务日志，未提供浏览器事件查询；管理页不支持反向代理；拉黑不能阻止删除本地身份后的重新入网；连接页不是 WireGuard 数据面完整遥测。
+
 ## P2/P3 受控发布验证（2026-10-21，R1/R2 复核）
 
 - FRPS 发布模板 P0 一致性已修复并完成公网部署：主实例补齐 KCP/QUIC/TCPMUX/subdomain，WSS 回环实例补齐独立 vhost/TCPMUX/subdomain；主实例仍 TLS-only，WSS 回环仍仅 127.0.0.1:7001。2026-10-21 15:31（Asia/Shanghai）已在 8.163.21.82 部署最新安装器和 frpauth 续租修复；KCP、QUIC、WebSocket、主/WSS TCP、HTTP、HTTPS、TCPMUX 的真实公网 managed 回归均通过。详见 `docs/FINAL-PUBLIC-DEPLOYMENT-VERIFICATION-2026-10-21.md`。
@@ -109,11 +122,11 @@
 
 ## 服务端 YAML 配置
 
-- 服务端只从当前目录读取 `tnlan-config.yml`；文件不存在时生成随机管理员令牌、随机入网令牌和全部默认配置，文件权限为 `0600`，随后以退出码 0 结束。
+- 服务端只从当前目录读取 `tnlan-config.yml`；文件不存在时生成默认固定 `TmkNetwork`/`Tmkmaj233`、默认回环管理监听和全部默认配置，文件权限为 `0600`，随后以退出码 0 结束。
 - 实际冷启动验证：第一次运行退出码为 0，只生成 YAML；第二次运行读取同一文件，成功创建数据目录并开始监听控制端口与 STUN。
-- YAML 加载启用未知字段和多文档拒绝；管理员令牌、入网令牌、私人 CIDR、监听地址、TLS 配对和数据目录均在监听端口前校验。
+- YAML 加载启用未知字段和多文档拒绝；管理员令牌、入网令牌、私人 CIDR、控制/管理监听地址、管理明文 opt-in、TLS 配对和数据目录均在监听端口前校验。
 - 已有旧版 `state.json` 时，首次生成的 `data_dir` 自动设为 `.`，避免升级后创建空网络或重新分配成员 IP。
-- 配置生成、重复启动不覆盖、非法配置不覆盖、字段校验、令牌随机性及旧状态目录继承测试通过。
+- 配置生成、重复启动不覆盖、非法配置不覆盖、字段校验、固定令牌默认值及旧状态目录继承测试通过。
 
 ## TmkNetworkLAN 品牌更新
 
@@ -185,4 +198,3 @@
 - `scripts/verify-build-baseline.ps1` 已在 `go1.27.2 windows/amd64` 实际运行通过，并验证固定 FRPC/FRPS/Wintun SHA-256。
 - F-01 至 F-06 已整理为 `frp_audit_regression` 可选回归套件。截至本轮复核，F-01、F-02、F-04、F-05、F-06 已通过，F-03 仍失败且不能被默认绿灯掩盖；F-03 属于 R2 的路由/出口约束工作。命令和平台分类见 `docs/R0-BUILD-AND-TEST-BASELINE.md`。
 - CI 新增 Windows 与 Linux 双平台任务。2026-10-21 已建立首个 Git 提交基线；`dist/`、`.tmp-*`、运行配置、日志和凭据目录保持忽略，后续变更可通过 Git diff 审查。
-

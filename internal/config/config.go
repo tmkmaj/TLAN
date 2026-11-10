@@ -37,16 +37,17 @@ type NetworkConfig struct {
 }
 
 type ServerConfig struct {
-	AdminListen  string `yaml:"admin_listen,omitempty"`
-	AdminTLSCert string `yaml:"admin_tls_cert,omitempty"`
-	AdminTLSKey  string `yaml:"admin_tls_key,omitempty"`
-	Listen       string `yaml:"listen"`
-	STUNListen   string `yaml:"stun_listen"`
-	TLSCert      string `yaml:"tls_cert"`
-	TLSKey       string `yaml:"tls_key"`
-	RelayListen  string `yaml:"relay_listen"`
-	RelayCert    string `yaml:"relay_cert"`
-	RelayKey     string `yaml:"relay_key"`
+	AdminListen            string `yaml:"admin_listen,omitempty"`
+	AdminTLSCert           string `yaml:"admin_tls_cert,omitempty"`
+	AdminTLSKey            string `yaml:"admin_tls_key,omitempty"`
+	AdminAllowInsecureHTTP bool   `yaml:"admin_allow_insecure_http"`
+	Listen                 string `yaml:"listen"`
+	STUNListen             string `yaml:"stun_listen"`
+	TLSCert                string `yaml:"tls_cert"`
+	TLSKey                 string `yaml:"tls_key"`
+	RelayListen            string `yaml:"relay_listen"`
+	RelayCert              string `yaml:"relay_cert"`
+	RelayKey               string `yaml:"relay_key"`
 }
 
 type StorageConfig struct {
@@ -266,6 +267,9 @@ func (c Config) Validate() error {
 	}
 	if c.Server.AdminTLSCert != "" && c.Server.AdminListen == "" {
 		return errors.New("server.admin_tls_cert requires server.admin_listen")
+	}
+	if c.Server.AdminListen != "" && c.Server.AdminTLSCert == "" && !loopbackHostPort(c.Server.AdminListen) && !c.Server.AdminAllowInsecureHTTP {
+		return errors.New("server.admin_allow_insecure_http must be true to bind a non-loopback admin listener without TLS")
 	}
 	if (c.Server.RelayCert == "") != (c.Server.RelayKey == "") {
 		return errors.New("server.relay_cert and server.relay_key must be set together")
@@ -693,4 +697,17 @@ func (c Config) EnsureDataDir() error {
 		return fmt.Errorf("create data directory: %w", err)
 	}
 	return nil
+}
+
+func loopbackHostPort(address string) bool {
+	host, _, err := net.SplitHostPort(strings.TrimSpace(address))
+	if err != nil {
+		return false
+	}
+	host = strings.Trim(host, "[]")
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }

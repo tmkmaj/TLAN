@@ -171,8 +171,12 @@ func TestAdminListenerAndTLSValidation(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg.Server.AdminListen = "10.0.0.10:8081"
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "admin_allow_insecure_http") {
+		t.Fatalf("non-loopback plaintext admin listener error = %v", err)
+	}
+	cfg.Server.AdminAllowInsecureHTTP = true
 	if err := cfg.Validate(); err != nil {
-		t.Fatalf("admin listener rejected: %v", err)
+		t.Fatalf("explicit insecure admin listener rejected: %v", err)
 	}
 	cfg.Server.AdminTLSCert = "admin.crt"
 	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "server.admin_tls_cert") {
@@ -286,4 +290,69 @@ func writeConfig(t *testing.T, cfg Config) string {
 		t.Fatal(err)
 	}
 	return path
+}
+func TestDocumentedAdminConfigExampleLoads(t *testing.T) {
+	const example = `network:
+  name: "我的私人网络"
+  cidr: "10.240.0.0/24"
+  join_code: "TmkNetwork"
+server:
+  listen: "127.0.0.1:8080"
+  stun_listen: ":3478"
+  admin_listen: "127.0.0.1:8081"
+  admin_tls_cert: ""
+  admin_tls_key: ""
+  admin_allow_insecure_http: false
+storage:
+  data_dir: "./data"
+security:
+  admin_token: "Tmkmaj233"
+frp:
+  mode: "disabled"
+  core_version: "0.71.1"
+`
+	path := filepath.Join(t.TempDir(), FileName)
+	if err := os.WriteFile(path, []byte(example), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Network.JoinCode != "TmkNetwork" || cfg.Security.AdminToken != "Tmkmaj233" || cfg.Server.AdminListen != "127.0.0.1:8081" {
+		t.Fatalf("loaded admin example = %q/%q/%q", cfg.Network.JoinCode, cfg.Security.AdminToken, cfg.Server.AdminListen)
+	}
+}
+func TestLegacyConfigWithoutAdminFieldsDisablesAdminConsole(t *testing.T) {
+	const legacy = `network:
+  name: "旧部署"
+  cidr: "10.240.0.0/24"
+  join_code: "TmkNetwork"
+server:
+  listen: "127.0.0.1:8080"
+  stun_listen: ":3478"
+  tls_cert: ""
+  tls_key: ""
+  relay_listen: ""
+  relay_cert: ""
+  relay_key: ""
+storage:
+  data_dir: "./data"
+security:
+  admin_token: "Tmkmaj233"
+frp:
+  mode: "disabled"
+  core_version: "0.71.1"
+`
+	path := filepath.Join(t.TempDir(), FileName)
+	if err := os.WriteFile(path, []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Server.AdminListen != "" || cfg.Server.AdminAllowInsecureHTTP {
+		t.Fatalf("legacy admin defaults = %q/%v", cfg.Server.AdminListen, cfg.Server.AdminAllowInsecureHTTP)
+	}
 }

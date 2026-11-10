@@ -704,3 +704,25 @@ func TestPolicyReconciliationPreservesServiceAuthorizations(t *testing.T) {
 		t.Fatalf("service authorizations after reconciliation = %+v", services)
 	}
 }
+func TestActiveLeaseCountFiltersNetworkAndDevice(t *testing.T) {
+	store, _ := testStore(t)
+	lease, err := store.Issue("net-a", "dev-a", "frps-managed-1", testRules())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := store.ActiveLeaseCount("net-a", "dev-a"); got != 1 {
+		t.Fatalf("device lease count = %d, want 1", got)
+	}
+	if got := store.ActiveLeaseCount("net-a", ""); got != 1 {
+		t.Fatalf("network lease count = %d, want 1", got)
+	}
+	if got := store.ActiveLeaseCount("net-b", ""); got != 0 {
+		t.Fatalf("other network lease count = %d, want 0", got)
+	}
+	if err := store.Revoke(lease.LeaseID, "net-a", "dev-a"); err != nil {
+		t.Fatal(err)
+	}
+	if got := store.ActiveLeaseCount("net-a", "dev-a"); got != 0 {
+		t.Fatalf("revoked lease count = %d, want 0", got)
+	}
+}

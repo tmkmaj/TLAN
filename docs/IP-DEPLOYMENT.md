@@ -39,6 +39,8 @@ server:
 
 上面是字段片段，不是完整配置文件。不要删除 `stun_listen` 等已有配置，也不要重新生成网络或成员数据。若此前 Go 程序直接监听 8443，必须先移到本机 8080，才能把 8443 交给 Caddy。
 
+管理控制台字段与 Caddy 无关：保留 `server.admin_listen`、`admin_tls_cert/key` 和 `admin_allow_insecure_http`。默认管理页只供本机/SSH 隧道使用，不要把管理端口映射到公网。
+
 ```sh
 sudo systemctl start tmknetworklan
 curl --noproxy '*' -fsS --max-time 10 http://127.0.0.1:8080/health

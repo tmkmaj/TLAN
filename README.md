@@ -121,7 +121,10 @@ server:
   relay_listen: ""
   relay_cert: ""
   relay_key: ""
-  admin_listen: "127.0.0.1:8081"`r`n  admin_tls_cert: ""`r`n  admin_tls_key: ""
+  admin_listen: "127.0.0.1:8081"
+  admin_tls_cert: ""
+  admin_tls_key: ""
+  admin_allow_insecure_http: false
 storage:
   data_dir: ./data
 security:
@@ -174,6 +177,51 @@ Caddy 提供包含 IP SAN 的受信任 HTTPS 证书，并代理控制 API 与 HT
 
 使用 Caddy 时，YAML 保持 `server.listen: 127.0.0.1:8080`，`server.tls_cert` 和 `server.tls_key` 留空。如果自行管理受信任的 IP 证书，也可同时设置这两个字段，并把 `server.listen` 改为 `:8443`，由 Go 直接提供 HTTPS，此时证书更新后需重启后端，且不能再让 Caddy 占用同一端口。服务端本身不创建虚拟网卡，普通高端口运行无需 root 或 `CAP_NET_ADMIN`。
 
+## 内网管理控制台
+
+管理页由独立的 admin listener 提供，默认只绑定回环地址，不与公网 Caddy 的 `8443` 控制入口共享路由。通过 SSH 隧道访问最稳妥：
+
+```sh
+ssh -L 8081:127.0.0.1:8081 user@server
+```
+
+然后在浏览器打开 `http://127.0.0.1:8081/admin`。默认配置块如下；已有 `tnlan-config.yml` 不会被程序静默覆盖，请手工确认两个令牌和 admin 配置：
+
+```yaml
+network:
+  join_code: "TmkNetwork"
+security:
+  admin_token: "Tmkmaj233"
+server:
+  admin_listen: "127.0.0.1:8081"
+  admin_tls_cert: ""
+  admin_tls_key: ""
+  admin_allow_insecure_http: false
+```
+
+普通成员使用 `TmkNetwork` 入网，`Tmkmaj233` 原样作为管理令牌。管理页展示服务器与私人网络摘要、成员在线/心跳/Relay 状态、活跃 Relay 会话，并支持搜索、重命名、断开、踢出、拉黑和解封。管理 listener 只接受 `/admin`、`/admin/login`、`/admin/logout`、`/admin/api/session` 和 `/admin/api/*`，不提供普通控制 API；原始 `X-Admin-Token`/Bearer 只保留在原公网控制 API。管理 API 使用 `{"ok":...}` 外壳并返回 `request_id`；失败响应不包含底层错误或令牌。listener 校验 Host 与配置地址，状态变更请求校验同源 Origin，不信任 `X-Forwarded-*`。
+
+如果要从局域网设备直接访问，可把 `admin_listen` 改为服务器的内网地址，例如 `10.10.0.20:8081`，并只在内网防火墙中放行该端口。非回环且未配置 TLS 时，必须显式设置 `admin_allow_insecure_http: true`，否则服务拒绝启动；启用后启动日志会明确警告管理页为明文 HTTP。不要把该端口映射到公网。明文内网示例：
+
+```yaml
+server:
+  admin_listen: "10.10.0.20:8081"
+  admin_allow_insecure_http: true
+```
+
+需要 TLS 时设置成对的管理证书：
+
+```yaml
+server:
+  admin_listen: "10.10.0.20:8081"
+  admin_tls_cert: "/etc/tmknetworklan/admin.crt"
+  admin_tls_key: "/etc/tmknetworklan/admin.key"
+  admin_allow_insecure_http: false
+```
+
+管理页使用服务端会话 Cookie（`tlan_admin`，HttpOnly、SameSite=Strict、Path=/admin，TLS 时 Secure）和 `X-CSRF-Token`；登录失败按 TCP 对端 IP 限速 5 次/15 分钟，服务重启后旧会话失效。管理令牌不会写入页面、Cookie、URL 或日志。`Tmkmaj233` 是固定短口令，生产环境仍必须依赖内网、SSH 隧道、TLS 和防火墙降低暴露面。
+
+**拉黑边界**：拉黑作用于已知的 Device ID、公钥和控制面记录，并撤销全部成员凭据；被封禁设备不能继续 enroll、heartbeat 或出现在其他成员的候选列表中。但客户端删除本地身份并重新生成身份后，仍可能用 `TmkNetwork` 重新入网。需要重装级限制时，应另做服务器邀请/批准名单。
 ## systemd
 
 将新二进制放在 `/opt/tmknetworklan/tmknetworklan-server`。发布包的 `tmknetworklan.service` 使用原来的 `lanmesh` 服务账户和 `/var/lib/lanmesh` 状态目录，并以该目录作为工作目录；配置文件位于 `/var/lib/lanmesh/tnlan-config.yml`。已有旧服务升级时先停止旧 unit，再启动新 unit，避免两个进程同时监听端口。
@@ -194,7 +242,7 @@ sudo journalctl -u tmknetworklan -f
 
 服务器保存入网口令的 PBKDF2-SHA256 验证值和成员凭据的哈希，不保存客户端私钥。普通成员不能创建网络、操作其他设备的心跳或电源、删除其他成员，也不能以其他设备身份连接 HTTPS 中继。管理员 API 仍使用单独的管理令牌。
 
-Windows 私钥与保存的成员凭据由当前用户的 DPAPI 保护。已有 LANMesh 安装继续使用 `%APPDATA%/LANMesh/`，以保留设备身份、IP 和成员令牌；全新安装使用 `%APPDATA%/TmkNetworkLAN/`。入网口令不保存。移除成员会删除对应成员凭据；持有共享入网口令的设备仍可重新申请加入，永久封禁另属后续管理功能。
+Windows 私钥与保存的成员凭据由当前用户的 DPAPI 保护。已有 LANMesh 安装继续使用 `%APPDATA%/LANMesh/`，以保留设备身份、IP 和成员令牌；全新安装使用 `%APPDATA%/TmkNetworkLAN/`。入网口令不保存。管理员可在内网管理控制台撤销凭据、断开连接或拉黑已知设备身份。拉黑只对已知 Device ID/公钥生效；客户端删除本地身份并重新生成身份后，仍可能使用共享入网令牌重新加入。要阻止重装重入，需要额外的服务器邀请或批准名单。
 
 ## 数据通道与边界
 
@@ -257,12 +305,3 @@ go test -mod=vendor ./internal/frp -run TestLiveFRPTCPUDP -v
 
 
 开发者可运行 `TmkNetworkLAN.exe --ui-smoke-test 报告绝对路径` 验证原生控件初始化，不创建网卡；`--adapter-smoke-test` 则显式创建并清理测试 Wintun 网卡。`--server`、`--stun` 和 `--identity` 参数用于开发调试，普通用户不需要使用。
-
-
-
-
-
-
-
-
-

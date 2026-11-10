@@ -2,6 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
+<link rel="icon" href="data:,">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
 <meta name="csrf-token" content="__CSRF_TOKEN__">
@@ -19,7 +20,7 @@
   --muted: #8da0b2;
   --faint: #65778a;
   --accent: #67e8c4;
-  --accent-strong: #32d3a8;
+  --accent-strong: #1d4ed8;
   --accent-ink: #062019;
   --amber: #fbbf24;
   --danger: #fb7185;
@@ -56,7 +57,7 @@ button:disabled { cursor: wait; opacity: .62; }
   width: 32px; height: 32px; display: grid; place-items: center;
   border-radius: 9px; background: var(--accent); color: var(--accent-ink);
   font-weight: 800; letter-spacing: -.05em;
-  box-shadow: 0 0 0 1px rgba(103, 232, 196, .3), 0 8px 24px rgba(50, 211, 168, .18);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .14);
 }
 .brand-word { font-family: var(--font-mono); font-size: 13px; font-weight: 600; letter-spacing: .12em; }
 .brand-word span { color: var(--faint); font-weight: 400; }
@@ -72,20 +73,20 @@ button:disabled { cursor: wait; opacity: .62; }
   background: linear-gradient(90deg, rgba(103, 232, 196, .12), rgba(103, 232, 196, .03));
   border-color: rgba(103, 232, 196, .16); color: var(--text);
 }
-.nav-index { font-family: var(--font-mono); font-size: 10px; color: var(--faint); letter-spacing: .08em; }
+.nav-index { font-family: var(--font-mono); font-size: 11px; color: var(--faint); letter-spacing: .08em; }
 .nav-item.is-active .nav-index { color: var(--accent); }
 .nav-item span:last-child { font-size: 13px; font-weight: 600; }
 .rail-footer { margin-top: auto; padding-top: 18px; border-top: 1px solid var(--line); }
-.system-state { display: flex; align-items: center; gap: 8px; color: var(--muted); font-family: var(--font-mono); font-size: 10px; letter-spacing: .06em; }
-.status-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 12px rgba(103, 232, 196, .8); flex: 0 0 auto; }
-.status-dot.warn { background: var(--amber); box-shadow: 0 0 12px rgba(251, 191, 36, .7); }
-.rail-footer p { margin: 12px 0 0; color: var(--faint); font-family: var(--font-mono); font-size: 9px; letter-spacing: .12em; }
+.system-state { display: flex; align-items: center; gap: 8px; color: var(--muted); font-family: var(--font-mono); font-size: 11px; letter-spacing: .06em; }
+.status-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); box-shadow: 0 1px 2px rgba(22, 163, 74, .25); flex: 0 0 auto; }
+.status-dot.warn { background: var(--amber); box-shadow: 0 1px 2px rgba(217, 119, 6, .25); }
+.rail-footer p { margin: 12px 0 0; color: var(--faint); font-family: var(--font-mono); font-size: 10px; letter-spacing: .12em; }
 .main { min-width: 0; padding: 30px clamp(20px, 4vw, 52px) 56px; }
 .topbar { display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; margin-bottom: 28px; }
 .eyebrow { color: var(--accent); font-family: var(--font-mono); font-size: 10px; letter-spacing: .18em; }
 .topbar h1 { margin: 7px 0 0; font-size: clamp(26px, 3vw, 38px); line-height: 1; letter-spacing: -.05em; }
 .topbar-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
-.last-refresh { color: var(--faint); font-family: var(--font-mono); font-size: 10px; margin-right: 6px; }
+.last-refresh { color: var(--faint); font-family: var(--font-mono); font-size: 11px; margin-right: 6px; }
 .primary-button, .secondary-button, .ghost-button {
   border-radius: 9px; padding: 10px 14px; font-size: 12px; font-weight: 600;
   border: 1px solid transparent; transition: background .15s ease, border-color .15s ease, transform .15s ease;
@@ -132,26 +133,26 @@ h3 { margin: 26px 0 10px; font-size: 13px; letter-spacing: .04em; color: var(--m
 .search-field { position: relative; flex: 1 1 280px; }
 .search-field input { width: 100%; border: 1px solid var(--line); border-radius: 9px; background: rgba(8, 13, 18, .75); color: var(--text); padding: 10px 12px 10px 34px; font-size: 12px; }
 .search-field input::placeholder { color: var(--faint); }
-.search-field input:focus { border-color: rgba(103, 232, 196, .5); outline: none; box-shadow: 0 0 0 3px rgba(103, 232, 196, .07); }
+.search-field input:focus { border-color: #8db4f8; outline: none; box-shadow: 0 0 0 3px rgba(37, 99, 235, .10); }
 .search-glyph { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: var(--faint); font-size: 16px; line-height: 1; pointer-events: none; }
 .segmented { display: flex; padding: 3px; border: 1px solid var(--line); border-radius: 10px; background: rgba(8, 13, 18, .7); }
 .segment { border: 0; border-radius: 7px; background: transparent; color: var(--muted); padding: 7px 12px; font-size: 11px; }
 .segment:hover { color: var(--text); }
 .segment.is-active { background: var(--surface-3); color: var(--text); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .05); }
-.member-summary { color: var(--faint); font-family: var(--font-mono); font-size: 10px; white-space: nowrap; }
+.member-summary { color: var(--faint); font-family: var(--font-mono); font-size: 11px; white-space: nowrap; }
 .table-shell { overflow: auto; border: 1px solid var(--line); border-radius: var(--radius); background: rgba(11, 17, 24, .7); }
 table { width: 100%; min-width: 760px; border-collapse: collapse; }
-th { position: sticky; top: 0; z-index: 1; padding: 12px 14px; border-bottom: 1px solid var(--line); background: rgba(12, 18, 25, .94); color: var(--faint); font-size: 10px; font-weight: 600; letter-spacing: .09em; text-align: left; text-transform: uppercase; }
+th { position: sticky; top: 0; z-index: 1; padding: 12px 14px; border-bottom: 1px solid var(--line); background: rgba(12, 18, 25, .94); color: var(--faint); font-size: 11px; font-weight: 600; letter-spacing: .09em; text-align: left; text-transform: uppercase; }
 td { padding: 14px; border-bottom: 1px solid rgba(180, 210, 235, .07); font-size: 12px; vertical-align: middle; }
 tbody tr:last-child td { border-bottom: 0; }
 tbody tr:hover { background: rgba(103, 232, 196, .025); }
 .member-cell { display: flex; align-items: center; gap: 11px; min-width: 180px; }
 .avatar { width: 34px; height: 34px; flex: 0 0 auto; display: grid; place-items: center; border: 1px solid rgba(103, 232, 196, .12); border-radius: 10px; background: linear-gradient(145deg, rgba(103, 232, 196, .16), rgba(103, 232, 196, .04)); color: var(--accent); font-family: var(--font-mono); font-size: 11px; font-weight: 700; }
 .member-name { font-weight: 600; }
-.member-id { margin-top: 3px; color: var(--faint); font-family: var(--font-mono); font-size: 9px; }
+.member-id { margin-top: 3px; color: var(--faint); font-family: var(--font-mono); font-size: 11px; }
 .ip { color: #cbd8e3; font-family: var(--font-mono); font-size: 12px; }
 .muted { color: var(--muted); }
-.pill { display: inline-flex; align-items: center; gap: 6px; padding: 4px 8px; border-radius: 999px; background: rgba(141, 160, 178, .1); color: var(--muted); font-size: 10px; font-weight: 600; white-space: nowrap; }
+.pill { display: inline-flex; align-items: center; gap: 6px; padding: 4px 8px; border-radius: 999px; background: rgba(141, 160, 178, .1); color: var(--muted); font-size: 11px; font-weight: 600; white-space: nowrap; }
 .pill::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
 .pill-online { background: rgba(103, 232, 196, .1); color: var(--accent); }
 .pill-warn { background: rgba(251, 191, 36, .1); color: var(--amber); }
@@ -200,6 +201,135 @@ dialog::backdrop { background: rgba(3, 6, 9, .72); backdrop-filter: blur(4px); }
 }
 @media (max-width: 520px) { .metrics { grid-template-columns: 1fr; } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; } }
+
+/* White-blue client theme: consistent with the Windows client sidebar. */
+:root {
+  color-scheme: light;
+  --bg: #f3f7fc;
+  --surface: #ffffff;
+  --surface-2: #f8fafd;
+  --surface-3: #eef5ff;
+  --line: #dbe5f0;
+  --line-strong: #c7d6e8;
+  --text: #132a46;
+  --muted: #526b84;
+  --faint: #5d7088;
+  --accent: #2563eb;
+  --accent-strong: #1d4ed8;
+  --accent-ink: #ffffff;
+  --amber: #b45309;
+  --danger: #dc2626;
+  --danger-soft: #fef2f2;
+  --shadow: 0 18px 45px rgba(0, 0, 0, .10);
+}
+body {
+  background:
+    radial-gradient(900px 620px at 10% -10%, rgba(37, 99, 235, .08), transparent 60%),
+    linear-gradient(180deg, #f7faff, #eef5fc);
+  color: var(--text);
+}
+::selection { background: #cfe0ff; color: var(--text); }
+* { scrollbar-color: #b6c9df transparent; scrollbar-width: thin; }
+.brand-mark { background: var(--accent); color: #fff; box-shadow: 0 8px 18px rgba(0, 0, 0, .16); }
+.brand-word { color: var(--text); }
+.brand-word span { color: var(--faint); }
+.status-dot { background: #16a34a; box-shadow: 0 1px 2px rgba(22, 163, 74, .25); }
+.status-dot.warn { background: #d97706; box-shadow: 0 1px 2px rgba(217, 119, 6, .25); }
+.primary-button { background: var(--accent); color: #fff; box-shadow: 0 8px 18px rgba(0, 0, 0, .14); }
+.primary-button:hover { background: var(--accent-strong); }
+.secondary-button { background: #fff; border-color: var(--line); color: var(--text); }
+.secondary-button:hover { background: #f5f9ff; border-color: var(--line-strong); }
+.ghost-button { color: var(--muted); }
+.ghost-button:hover { background: #f1f6fd; color: var(--text); }
+.login-card { background: #fff; border-color: var(--line); box-shadow: var(--shadow); }
+.login-card::before { background: linear-gradient(90deg, transparent, var(--accent), transparent); }
+.login-card h1 { margin-top: 32px; color: var(--text); }
+.lede { color: var(--muted); }
+label, .dialog-label { color: var(--muted); }
+input, .dialog-input, .search-field input { background: #fff; border-color: var(--line-strong); color: var(--text); }
+input::placeholder, .dialog-input::placeholder, .search-field input::placeholder { color: var(--faint); }
+input:focus, .dialog-input:focus, .search-field input:focus { border-color: #8db4f8; box-shadow: 0 0 0 3px rgba(37, 99, 235, .10); }
+.ghost-icon { color: var(--muted); }
+.ghost-icon:hover { color: var(--text); background: #f1f6fd; }
+.login-notes { border-top-color: var(--line); color: var(--faint); }
+.login-notes code { color: var(--muted); }
+.login-foot { color: var(--faint); }
+.form-error { background: #fef2f2; color: #a61b1b; border-color: #f3c4c4; }
+.rail { background: rgba(255, 255, 255, .94); border-right-color: var(--line); backdrop-filter: blur(14px); }
+.nav-item:hover { background: #f1f6fd; color: var(--text); }
+.nav-item.is-active { background: #eaf2ff; border-color: #cfe0ff; color: var(--accent-strong); }
+.nav-index, .nav-icon { color: var(--faint); }
+.nav-item.is-active .nav-index, .nav-item.is-active .nav-icon { color: var(--accent); }
+.nav-icon { width: 18px; height: 18px; flex: 0 0 auto; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.rail-footer { border-top-color: var(--line); }
+.system-state { color: var(--muted); }
+.rail-footer p { color: var(--faint); }
+.topbar h1 { margin-top: 0; color: var(--text); }
+.last-refresh { color: var(--faint); }
+.metric { background: #fff; border-color: var(--line); box-shadow: 0 8px 24px rgba(0, 0, 0, .05); }
+.metric::after { background: radial-gradient(circle, rgba(37, 99, 235, .08), transparent 70%); }
+.metric-label { color: var(--muted); }
+.metric strong { color: var(--text); }
+.metric-foot { color: var(--faint); }
+.card { background: #fff; border-color: var(--line); box-shadow: 0 8px 24px rgba(0, 0, 0, .05); }
+.card h3, h3 { color: var(--muted); }
+.detail-list dt { color: var(--faint); }
+.detail-list dd { color: var(--text); }
+.notice { border-color: #f2d49b; background: #fffaf0; }
+.notice strong { color: #8a5a00; }
+.notice p { color: #7d6438; }
+.notice.accent { border-color: #cfe0ff; background: #f4f8ff; }
+.notice.accent strong { color: var(--accent-strong); }
+.notice.accent p { color: #4b6482; }
+.search-field input { background: #fff; border-color: var(--line); color: var(--text); }
+.search-glyph { color: var(--faint); }
+.segmented { background: #fff; border-color: var(--line); }
+.segment { color: var(--muted); }
+.segment:hover { color: var(--text); }
+.segment.is-active { background: #eaf2ff; color: var(--accent-strong); box-shadow: none; }
+.member-summary { color: var(--faint); }
+.table-shell { background: #fff; border-color: var(--line); }
+th { background: #f4f8fd; color: #586b82; border-bottom-color: var(--line); }
+td { border-bottom-color: #edf2f8; color: var(--text); }
+tbody tr:hover { background: #f7fbff; }
+.avatar { background: #eaf2ff; border-color: #d5e4fb; color: var(--accent-strong); }
+.member-name { color: var(--text); }
+.member-id { color: var(--faint); }
+.ip { color: #24435f; }
+.muted { color: var(--muted); }
+.pill { background: #eef3f9; color: #586b82; }
+.pill-online { background: #e9f9f1; color: #087f5b; }
+.pill-warn { background: #fff6e5; color: #9a5b00; }
+.pill-danger { background: #fef2f2; color: #c02626; }
+.actions { gap: 5px; }
+.text-button { color: #5f7188; }
+.text-button:hover { background: #f1f6fd; border-color: var(--line); color: var(--text); }
+.text-button.danger { color: #c02626; }
+.text-button.danger:hover { background: #fef2f2; border-color: #f3c4c4; }
+.text-button.accent { color: var(--accent-strong); }
+.empty-state { color: var(--muted); }
+.empty-state strong { color: var(--text); }
+.table-footnote { color: var(--faint); }
+.alert { background: #fef2f2; color: #a61b1b; border-color: #f3c4c4; }
+dialog { background: #fff; border-color: var(--line-strong); }
+.dialog-close { color: var(--muted); }
+.dialog-close:hover { background: #f1f6fd; color: var(--text); }
+.dialog-error { color: #a61b1b; }
+.toast { background: #fff; border-color: var(--line-strong); color: var(--text); box-shadow: var(--shadow); }
+.toast.success { border-color: #bde8d4; }
+.toast.error { border-color: #f3c4c4; color: #a61b1b; }
+.state-strip { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 18px; }
+.state-strip .pill { padding: 6px 10px; }
+@media (max-width: 760px) {
+  .table-shell table { min-width: 0; }
+  .table-shell thead { display: none; }
+  .table-shell tbody tr { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 14px; padding: 14px; border-bottom: 1px solid var(--line); }
+  .table-shell tbody td { display: block; padding: 0; border: 0; }
+  .table-shell tbody td::before { content: attr(data-label); display: block; margin-bottom: 3px; color: var(--faint); font-size: 9px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; }
+  .table-shell tbody td:first-child { grid-column: 1 / -1; }
+  .table-shell tbody td:last-child { grid-column: 1 / -1; }
+  .text-button { padding: 8px 10px; }
+}
 </style>
 </head>
 <body>
@@ -210,9 +340,9 @@ dialog::backdrop { background: rgba(3, 6, 9, .72); backdrop-filter: blur(4px); }
       <span class="brand-word">TLAN <span>/ OPS</span></span>
     </div>
     <nav class="nav" aria-label="控制台面板">
-      <button class="nav-item is-active" type="button" data-panel="overview"><span class="nav-index">01</span><span>概览</span></button>
-      <button class="nav-item" type="button" data-panel="members"><span class="nav-index">02</span><span>成员</span></button>
-      <button class="nav-item" type="button" data-panel="connections"><span class="nav-index">03</span><span>连接</span></button>
+      <button class="nav-item is-active" type="button" data-panel="overview"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg><span>概览</span></button>
+      <button class="nav-item" type="button" data-panel="members"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3"/><path d="M3 20c0-3 2.5-5 6-5s6 2 6 5"/><path d="M16 5a3 3 0 0 1 0 6"/><path d="M18 15c2 .7 3 2.3 3 5"/></svg><span>成员</span></button>
+      <button class="nav-item" type="button" data-panel="connections"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7 0l2-2a5 5 0 0 0-7-7l-1 1"/><path d="M14 11a5 5 0 0 0-7 0l-2 2a5 5 0 0 0 7 7l1-1"/></svg><span>连接</span></button>
     </nav>
     <div class="rail-footer">
       <div class="system-state"><span class="status-dot" id="rail-status-dot" aria-hidden="true"></span><span id="rail-status-text">连接中</span></div>
@@ -222,11 +352,11 @@ dialog::backdrop { background: rgba(3, 6, 9, .72); backdrop-filter: blur(4px); }
   <main class="main">
     <header class="topbar">
       <div>
-        <div class="eyebrow">PRIVATE NETWORK / CONTROL PLANE</div>
         <h1 id="page-title">概览</h1>
       </div>
       <div class="topbar-actions">
         <span class="last-refresh" id="last-refresh">尚未刷新</span>
+        <span class="last-refresh" id="session-expiry">会话读取中</span>
         <button id="refresh-button" class="secondary-button" type="button">刷新</button>
         <button id="logout-button" class="ghost-button" type="button">退出登录</button>
       </div>
@@ -240,30 +370,41 @@ dialog::backdrop { background: rgba(3, 6, 9, .72); backdrop-filter: blur(4px); }
         </div>
         <span class="pill pill-online" id="overview-health">读取中</span>
       </div>
+      <div class="state-strip" aria-label="控制面状态">
+        <span class="pill pill-online" id="state-control">控制面在线</span>
+        <span class="pill" id="state-relay">Relay 读取中</span>
+        <span class="pill" id="state-frp">Managed FRP 读取中</span>
+      </div>
       <div class="metrics">
-        <article class="metric"><span class="metric-label">成员总数</span><strong id="metric-members">—</strong><span class="metric-foot">已登记设备</span></article>
-        <article class="metric"><span class="metric-label">在线成员</span><strong id="metric-online">—</strong><span class="metric-foot">30 秒内心跳</span></article>
-        <article class="metric"><span class="metric-label">已拉黑</span><strong id="metric-blocked">—</strong><span class="metric-foot">持久封禁记录</span></article>
-        <article class="metric"><span class="metric-label">Relay 会话</span><strong id="metric-relay">—</strong><span class="metric-foot">当前活跃连接</span></article>
+        <article class="metric"><span class="metric-label">成员总数</span><strong id="metric-members">–</strong><span class="metric-foot">已登记设备</span></article>
+        <article class="metric"><span class="metric-label">在线成员</span><strong id="metric-online">–</strong><span class="metric-foot">30 秒内心跳</span></article>
+        <article class="metric"><span class="metric-label">已拉黑</span><strong id="metric-blocked">–</strong><span class="metric-foot">持久封禁记录</span></article>
+        <article class="metric"><span class="metric-label">Relay 会话</span><strong id="metric-relay">–</strong><span class="metric-foot">当前活跃连接</span></article>
       </div>
       <div class="card-grid">
         <article class="card">
           <h3>服务状态</h3>
           <dl class="detail-list">
-            <dt>服务</dt><dd id="overview-service">—</dd>
-            <dt>版本</dt><dd id="overview-version">—</dd>
-            <dt>运行时间</dt><dd id="overview-uptime">—</dd>
-            <dt>Relay</dt><dd id="overview-relay">—</dd>
-            <dt>FRP</dt><dd id="overview-frp">—</dd>
+            <dt>服务</dt><dd id="overview-service">–</dd>
+            <dt>版本</dt><dd id="overview-version">–</dd>
+            <dt>运行时间</dt><dd id="overview-uptime">–</dd>
+            <dt>Relay</dt><dd id="overview-relay">–</dd>
+            <dt>FRP</dt><dd id="overview-frp">–</dd>
+            <dt>控制监听</dt><dd id="overview-control-listen">–</dd>
+            <dt>控制 TLS</dt><dd id="overview-control-tls">–</dd>
+            <dt>管理监听</dt><dd id="overview-admin-listen">–</dd>
+            <dt>管理 TLS</dt><dd id="overview-admin-tls">–</dd>
+            <dt>数据目录</dt><dd id="overview-data-dir">–</dd>
+            <dt>Managed lease</dt><dd id="overview-frp-leases">–</dd>
           </dl>
         </article>
         <article class="card">
           <h3>私人网络</h3>
           <dl class="detail-list">
-            <dt>网络名称</dt><dd id="overview-network">—</dd>
-            <dt>CIDR</dt><dd id="overview-cidr">—</dd>
-            <dt>网络 ID</dt><dd id="overview-network-id">—</dd>
-            <dt>已登记设备</dt><dd id="overview-devices">—</dd>
+            <dt>网络名称</dt><dd id="overview-network">–</dd>
+            <dt>CIDR</dt><dd id="overview-cidr">–</dd>
+            <dt>网络 ID</dt><dd id="overview-network-id">–</dd>
+            <dt>已登记设备</dt><dd id="overview-devices">–</dd>
           </dl>
         </article>
       </div>
@@ -280,7 +421,7 @@ dialog::backdrop { background: rgba(3, 6, 9, .72); backdrop-filter: blur(4px); }
     <section id="panel-members" class="panel" aria-labelledby="members-title">
       <div class="section-head">
         <div>
-          <h2 id="members-title">成员</h2>
+          <h2 id="members-title">成员列表</h2>
           <p>搜索成员，管理连接和入网状态。操作会立即作用于当前控制面。</p>
         </div>
         <span class="member-summary" id="member-summary">读取中</span>
@@ -299,7 +440,7 @@ dialog::backdrop { background: rgba(3, 6, 9, .72); backdrop-filter: blur(4px); }
       </div>
       <div class="table-shell">
         <table>
-          <thead><tr><th>成员</th><th>虚拟 IP</th><th>连接</th><th>最后心跳</th><th>Relay</th><th>操作</th></tr></thead>
+          <thead><tr><th>成员</th><th>虚拟 IP</th><th>连接</th><th>最后心跳</th><th>加入时间</th><th>转发</th><th>中继 / FRP</th><th>操作</th></tr></thead>
           <tbody id="members-body"></tbody>
         </table>
         <div id="members-empty" class="empty-state" hidden><strong>没有匹配的成员</strong>调整搜索条件或筛选器后再试。</div>
@@ -310,7 +451,7 @@ dialog::backdrop { background: rgba(3, 6, 9, .72); backdrop-filter: blur(4px); }
     <section id="panel-connections" class="panel" aria-labelledby="connections-title">
       <div class="section-head">
         <div>
-          <h2 id="connections-title">连接</h2>
+          <h2 id="connections-title">连接状态</h2>
           <p>成员心跳和 Relay 会话的控制面观察结果。</p>
         </div>
       </div>
@@ -372,15 +513,15 @@ dialog::backdrop { background: rgba(3, 6, 9, .72); backdrop-filter: blur(4px); }
     });
   }
   function formatTime(value) {
-    if (!value || value.indexOf('0001-') === 0) { return '—'; }
+    if (!value || value.indexOf('0001-') === 0) { return '–'; }
     var date = new Date(value);
-    if (isNaN(date.getTime())) { return '—'; }
+    if (isNaN(date.getTime())) { return '–'; }
     return new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).format(date);
   }
   function formatRelative(value) {
     if (!value || value.indexOf('0001-') === 0) { return '从未'; }
     var date = new Date(value);
-    if (isNaN(date.getTime())) { return '—'; }
+    if (isNaN(date.getTime())) { return '–'; }
     var seconds = Math.max(0, Math.floor((Date.now() - date.getTime()) / 1000));
     if (seconds < 60) { return seconds + ' 秒前'; }
     var minutes = Math.floor(seconds / 60);
@@ -419,7 +560,7 @@ dialog::backdrop { background: rgba(3, 6, 9, .72); backdrop-filter: blur(4px); }
     byId('refresh-button').disabled = busy;
     byId('refresh-button').textContent = busy ? '刷新中…' : '刷新';
   }
-  async function api(path, options) {
+    async function api(path, options) {
     options = options || {};
     var method = options.method || 'GET';
     var headers = {};
@@ -435,32 +576,51 @@ dialog::backdrop { background: rgba(3, 6, 9, .72); backdrop-filter: blur(4px); }
     var text = await response.text();
     var payload = null;
     if (text) {
-      try { payload = JSON.parse(text); } catch (err) { payload = { error: text }; }
+      try { payload = JSON.parse(text); } catch (err) { payload = { error: { message: text } }; }
+    }
+    if (payload && typeof payload === 'object' && Object.prototype.hasOwnProperty.call(payload, 'ok')) {
+      if (!payload.ok) {
+        var apiError = new Error(payload.error && payload.error.message ? payload.error.message : '请求失败');
+        apiError.requestId = payload.request_id || '';
+        throw apiError;
+      }
+      return payload.data;
     }
     if (!response.ok) {
-      var message = payload && (payload.error || payload.message) ? (payload.error || payload.message) : '请求失败 (' + response.status + ')';
-      throw new Error(message);
+      var legacyMessage = payload && (payload.error || payload.message) ? (payload.error.message || payload.error || payload.message) : '请求失败 (' + response.status + ')';
+      throw new Error(legacyMessage);
     }
     return payload;
   }
-  function renderOverview() {
+    function renderOverview() {
     var data = state.overview;
     if (!data) { return; }
     var network = data.network || {};
-    setText('metric-members', data.member_count == null ? '—' : data.member_count);
-    setText('metric-online', data.online_count == null ? '—' : data.online_count);
-    setText('metric-blocked', data.blocked_count == null ? '—' : data.blocked_count);
-    setText('metric-relay', data.relay_sessions == null ? '—' : data.relay_sessions);
-    setText('overview-service', data.service || '—');
-    setText('overview-version', data.version || '—');
+    setText('metric-members', data.member_count == null ? '–' : data.member_count);
+    setText('metric-online', data.online_count == null ? '–' : data.online_count);
+    setText('metric-blocked', data.blocked_count == null ? '–' : data.blocked_count);
+    setText('metric-relay', data.relay_sessions == null ? '–' : data.relay_sessions);
+    setText('overview-service', data.service || '–');
+    setText('overview-version', data.version || '–');
     setText('overview-uptime', formatUptime(data.uptime_seconds));
     setText('overview-relay', data.relay_status === 'enabled' ? '已启用' : '未启用');
     setText('overview-frp', data.frp_status === 'enabled' ? '已启用' : '未启用');
-    setText('overview-network', network.name || '—');
-    setText('overview-cidr', network.cidr || '—');
-    setText('overview-network-id', network.id || '—');
-    setText('overview-devices', network.devices == null ? (data.member_count == null ? '—' : data.member_count) : network.devices);
+    setText('overview-control-listen', data.control_listen || '–');
+    setText('overview-control-tls', data.control_tls ? '已启用' : '未启用');
+    setText('overview-admin-listen', data.admin_listen || '–');
+    setText('overview-admin-tls', data.admin_tls ? '已启用' : '未启用');
+    setText('overview-data-dir', data.data_dir_summary || '–');
+    setText('overview-frp-leases', data.frp_lease_count == null ? '–' : data.frp_lease_count + ' 条');
+    setText('overview-network', network.name || '–');
+    setText('overview-cidr', network.cidr || '–');
+    setText('overview-network-id', network.id || '–');
+    setText('overview-devices', network.devices == null ? (data.member_count == null ? '–' : data.member_count) : network.devices);
     setText('overview-health', '控制面在线');
+    setText('state-control', '控制面在线');
+    setText('state-relay', data.relay_status === 'enabled' ? 'Relay 已启用' : 'Relay 未启用');
+    setText('state-frp', data.frp_status === 'enabled' ? ('Managed FRP · ' + (data.frp_lease_count || 0) + ' 条 lease') : 'Managed FRP 未启用');
+    byId('state-relay').className = 'pill ' + (data.relay_status === 'enabled' ? 'pill-online' : 'pill-warn');
+    byId('state-frp').className = 'pill ' + (data.frp_status === 'enabled' ? 'pill-online' : 'pill-warn');
     setText('rail-status-text', '控制面在线');
     byId('rail-status-dot').classList.remove('warn');
   }
@@ -473,7 +633,7 @@ dialog::backdrop { background: rgba(3, 6, 9, .72); backdrop-filter: blur(4px); }
       return [member.name, member.virtual_ip, member.id].join(' ').toLowerCase().indexOf(query) !== -1;
     });
   }
-  function renderMembers() {
+    function renderMembers() {
     var body = byId('members-body');
     var rows = filteredMembers();
     setText('member-summary', '共 ' + state.members.length + ' 名成员 · 显示 ' + rows.length + ' 名');
@@ -486,7 +646,11 @@ dialog::backdrop { background: rgba(3, 6, 9, .72); backdrop-filter: blur(4px); }
     body.innerHTML = rows.map(function (member) {
       var name = member.name || '未命名设备';
       var status = member.blocked ? '<span class="pill pill-danger">已拉黑</span>' : (member.online ? '<span class="pill pill-online">在线</span>' : '<span class="pill">离线</span>');
-      var relay = Number(member.relay_count) > 0 ? '<span class="pill pill-warn">' + escapeHTML(member.relay_count) + ' 个</span>' : '<span class="muted">—</span>';
+      var forwarding = member.forwarding === true ? '<span class="pill pill-online">开启</span>' : member.forwarding === false ? '<span class="pill">关闭</span>' : '<span class="muted">–</span>';
+      var services = [];
+      if (Number(member.relay_count) > 0) { services.push('<span class="pill pill-warn">Relay ' + escapeHTML(member.relay_count) + '</span>'); }
+      if (Number(member.frp_leases) > 0) { services.push('<span class="pill pill-online">FRP ' + escapeHTML(member.frp_leases) + '</span>'); }
+      if (services.length === 0) { services.push('<span class="muted">–</span>'); }
       var actions = '<div class="actions">' +
         '<button class="text-button" type="button" data-action="rename" data-id="' + escapeHTML(member.id) + '" data-name="' + escapeHTML(name) + '">重命名</button>' +
         '<button class="text-button" type="button" data-action="disconnect" data-id="' + escapeHTML(member.id) + '" data-name="' + escapeHTML(name) + '">断开</button>' +
@@ -496,12 +660,14 @@ dialog::backdrop { background: rgba(3, 6, 9, .72); backdrop-filter: blur(4px); }
           : '<button class="text-button danger" type="button" data-action="ban" data-id="' + escapeHTML(member.id) + '" data-name="' + escapeHTML(name) + '">拉黑</button>') +
         '</div>';
       return '<tr>' +
-        '<td><div class="member-cell"><span class="avatar" aria-hidden="true">' + initials(member) + '</span><div><div class="member-name">' + escapeHTML(name) + '</div><div class="member-id">' + escapeHTML(member.id) + '</div></div></div></td>' +
-        '<td><span class="ip">' + escapeHTML(member.virtual_ip || '—') + '</span></td>' +
-        '<td>' + status + '</td>' +
-        '<td><span class="muted">' + escapeHTML(formatRelative(member.last_seen)) + '</span><br><span class="member-id">' + escapeHTML(formatTime(member.last_seen)) + '</span></td>' +
-        '<td>' + relay + '</td>' +
-        '<td>' + actions + '</td>' +
+        '<td data-label="成员"><div class="member-cell"><span class="avatar" aria-hidden="true">' + initials(member) + '</span><div><div class="member-name">' + escapeHTML(name) + '</div><div class="member-id">' + escapeHTML(member.id) + '</div></div></div></td>' +
+        '<td data-label="虚拟 IP"><span class="ip">' + escapeHTML(member.virtual_ip || '–') + '</span></td>' +
+        '<td data-label="连接">' + status + '</td>' +
+        '<td data-label="最后心跳"><span class="muted">' + escapeHTML(formatRelative(member.last_seen)) + '</span><br><span class="member-id">' + escapeHTML(formatTime(member.last_seen)) + '</span></td>' +
+        '<td data-label="加入时间"><span class="muted">' + escapeHTML(formatTime(member.joined_at)) + '</span></td>' +
+        '<td data-label="转发">' + forwarding + '</td>' +
+        '<td data-label="中继 / FRP">' + services.join(' ') + '</td>' +
+        '<td data-label="操作">' + actions + '</td>' +
         '</tr>';
     }).join('');
   }
@@ -511,7 +677,7 @@ dialog::backdrop { background: rgba(3, 6, 9, .72); backdrop-filter: blur(4px); }
     }
     return id;
   }
-  function renderSessions() {
+    function renderSessions() {
     var body = byId('relay-body');
     if (state.sessions.length === 0) {
       body.innerHTML = '';
@@ -520,12 +686,12 @@ dialog::backdrop { background: rgba(3, 6, 9, .72); backdrop-filter: blur(4px); }
       byId('relay-empty').hidden = true;
       body.innerHTML = state.sessions.map(function (session) {
         return '<tr>' +
-          '<td><span class="member-id">' + escapeHTML(session.session_id) + '</span></td>' +
-          '<td><div class="member-name">' + escapeHTML(memberName(session.source)) + '</div><div class="member-id">' + escapeHTML(session.source) + '</div></td>' +
-          '<td><div class="member-name">' + escapeHTML(memberName(session.target)) + '</div><div class="member-id">' + escapeHTML(session.target) + '</div></td>' +
-          '<td><span class="muted">' + escapeHTML(formatTime(session.created_at)) + '</span></td>' +
-          '<td><span class="muted">' + escapeHTML(formatRelative(session.last_activity)) + '</span></td>' +
-          '<td><span class="pill pill-online">' + escapeHTML(session.attached_peers) + '</span></td>' +
+          '<td data-label="Session"><span class="member-id">' + escapeHTML(session.session_id) + '</span></td>' +
+          '<td data-label="Source"><div class="member-name">' + escapeHTML(memberName(session.source)) + '</div><div class="member-id">' + escapeHTML(session.source) + '</div></td>' +
+          '<td data-label="Target"><div class="member-name">' + escapeHTML(memberName(session.target)) + '</div><div class="member-id">' + escapeHTML(session.target) + '</div></td>' +
+          '<td data-label="建立时间"><span class="muted">' + escapeHTML(formatTime(session.created_at)) + '</span></td>' +
+          '<td data-label="最近活动"><span class="muted">' + escapeHTML(formatRelative(session.last_activity)) + '</span></td>' +
+          '<td data-label="Peers"><span class="pill pill-online">' + escapeHTML(session.attached_peers) + '</span></td>' +
           '</tr>';
       }).join('');
     }
@@ -541,7 +707,7 @@ dialog::backdrop { background: rgba(3, 6, 9, .72); backdrop-filter: blur(4px); }
     byId('connections-empty').hidden = true;
     body.innerHTML = state.members.map(function (member) {
       var status = member.blocked ? '<span class="pill pill-danger">已拉黑</span>' : (member.online ? '<span class="pill pill-online">在线</span>' : '<span class="pill">离线</span>');
-      var relay = Number(member.relay_count) > 0 ? '<span class="pill pill-warn">' + escapeHTML(member.relay_count) + ' 个</span>' : '<span class="muted">—</span>';
+      var relay = Number(member.relay_count) > 0 ? '<span class="pill pill-warn">' + escapeHTML(member.relay_count) + ' 个</span>' : '<span class="muted">–</span>';
       return '<tr><td><div class="member-name">' + escapeHTML(member.name || '未命名设备') + '</div><div class="member-id">' + escapeHTML(member.virtual_ip || member.id) + '</div></td>' +
         '<td>' + status + '</td><td><span class="muted">' + escapeHTML(formatRelative(member.last_seen)) + '</span></td><td>' + relay + '</td></tr>';
     }).join('');
@@ -567,11 +733,15 @@ dialog::backdrop { background: rgba(3, 6, 9, .72); backdrop-filter: blur(4px); }
     state.sessions = payload.sessions || [];
     renderSessions();
   }
+  async function loadSession() {
+    var data = await api('/admin/api/session');
+    if (data && data.expires_at) { setText('session-expiry', '会话至 ' + formatTime(data.expires_at)); }
+  }
   async function refreshAll() {
     setBusy(true);
     showGlobalError('');
     try {
-      await Promise.all([loadOverview(), loadMembers(), loadSessions()]);
+      await Promise.all([loadOverview(), loadMembers(), loadSessions(), loadSession()]);
       setText('last-refresh', '更新于 ' + formatTime(new Date().toISOString()));
     } catch (err) {
       showGlobalError(err.message || '刷新失败');
@@ -630,18 +800,24 @@ dialog::backdrop { background: rgba(3, 6, 9, .72); backdrop-filter: blur(4px); }
       toast('成员名称已更新。', 'success');
       await refreshAll();
     } catch (err) {
-      byId('rename-error').textContent = err.message || '重命名失败。';
+      var renameMessage = err.message || '重命名失败。';
+      if (err.requestId) { renameMessage += '（请求 ID: ' + err.requestId + '）'; }
+      byId('rename-error').textContent = renameMessage;
       byId('rename-error').hidden = false;
     }
   }
-  async function runMemberAction(action, id) {
+      async function runMemberAction(action, id, name) {
+    var current = state.members.filter(function (item) { return item.id === id; })[0];
+    var target = (name || '未命名设备') + ' · ' + String(id).slice(-4);
+    var stateText = current ? (current.blocked ? '已拉黑' : (current.online ? '在线' : '离线')) : '未知';
+    var forwardingText = current && current.forwarding === true ? 'Forwarding 开启' : 'Forwarding 关闭或未知';
     var prompts = {
-      disconnect: '断开该成员的当前 Relay 连接？成员仍可自动重连。',
-      kick: '踢出该成员？将撤销全部成员凭据，但成员仍可使用普通令牌重新加入。',
-      ban: '拉黑该成员？将撤销当前连接和全部凭据，并阻止已知设备身份再次入网。清除本地身份后仍可能重新入网。',
-      unban: '解除该成员的拉黑状态？旧凭据不会恢复，成员需要重新入网。'
+      disconnect: '断开 ' + target + ' 的当前 Relay 连接？\n当前状态：' + stateText + '，' + forwardingText + '。成员仍可自动重连。',
+      kick: '踢出 ' + target + '？\n当前状态：' + stateText + '，' + forwardingText + '。将撤销全部成员凭据，成员仍可使用普通令牌重新加入。',
+      ban: '拉黑 ' + target + '？\n当前状态：' + stateText + '，' + forwardingText + '。将撤销全部凭据并阻止已知设备身份再次入网；清除本地身份后仍可能重新入网。',
+      unban: '解除 ' + target + ' 的拉黑状态？\n当前状态：已拉黑。旧凭据不会恢复，成员需要重新入网。'
     };
-    if (!window.confirm(prompts[action] || '执行该操作？')) { return; }
+    if (!window.confirm(prompts[action] || '对 ' + target + ' 执行该操作？')) { return; }
     try {
       await api('/admin/api/members/' + encodeURIComponent(id) + '/' + action, { method: 'POST' });
       var messages = {
@@ -653,7 +829,10 @@ dialog::backdrop { background: rgba(3, 6, 9, .72); backdrop-filter: blur(4px); }
       toast(messages[action] || '操作完成。', 'success');
       await refreshAll();
     } catch (err) {
-      toast(err.message || '操作失败。', 'error');
+      var message = err.message || '操作失败。';
+      if (err.requestId) { message += '（请求 ID: ' + err.requestId + '）'; }
+      toast(message, 'error');
+      await refreshAll();
     }
   }
   async function logout() {
@@ -681,7 +860,7 @@ dialog::backdrop { background: rgba(3, 6, 9, .72); backdrop-filter: blur(4px); }
     var id = button.getAttribute('data-id');
     var name = button.getAttribute('data-name') || id;
     if (action === 'rename') { openRename(id, name); return; }
-    runMemberAction(action, id);
+    runMemberAction(action, id, name);
   });
   byId('refresh-button').addEventListener('click', function () { refreshAll(); });
   byId('logout-button').addEventListener('click', function () { logout(); });

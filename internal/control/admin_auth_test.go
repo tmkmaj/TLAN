@@ -108,3 +108,23 @@ func TestAdminAuthLogoutAndExpiry(t *testing.T) {
 		t.Fatal("logout did not invalidate session")
 	}
 }
+func TestAdminAuthSessionInfo(t *testing.T) {
+	auth := newAdminAuth("Tmkmaj233", false)
+	rec := httptest.NewRecorder()
+	auth.login(rec, adminLoginRequest(`{"token":"Tmkmaj233"}`))
+	cookie := rec.Result().Cookies()[0]
+	req := httptest.NewRequest(http.MethodGet, "/admin/api/session", nil)
+	req.AddCookie(cookie)
+	csrf, expiresAt, ok := auth.sessionInfo(req)
+	if !ok || csrf == "" || expiresAt.IsZero() {
+		t.Fatalf("session info = %q/%v/%v", csrf, expiresAt, ok)
+	}
+}
+func TestAdminClientIPIgnoresForwardedFor(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/admin/login", nil)
+	req.RemoteAddr = "192.0.2.10:12345"
+	req.Header.Set("X-Forwarded-For", "203.0.113.9")
+	if got := adminClientIP(req); got != "192.0.2.10" {
+		t.Fatalf("client IP = %q, want TCP peer", got)
+	}
+}

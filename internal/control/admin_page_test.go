@@ -19,6 +19,12 @@ func TestAdminPageContainsRequiredUIAndNoSecrets(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("login page status = %d", resp.StatusCode)
 	}
+	if resp.Header.Get("Cache-Control") != "no-store" {
+		t.Fatalf("login page cache-control = %q", resp.Header.Get("Cache-Control"))
+	}
+	if !strings.Contains(resp.Header.Get("Content-Security-Policy"), "default-src 'self'") {
+		t.Fatalf("login page CSP = %q", resp.Header.Get("Content-Security-Policy"))
+	}
 	loginPage := string(loginBody)
 	for _, want := range []string{"管理令牌", "/admin/login", "tlan_admin"} {
 		if !strings.Contains(loginPage, want) {
@@ -40,12 +46,15 @@ func TestAdminPageContainsRequiredUIAndNoSecrets(t *testing.T) {
 	pageBody, _ := io.ReadAll(pageResp.Body)
 	pageResp.Body.Close()
 	page := string(pageBody)
-	for _, want := range []string{"概览", "成员", "连接", "/admin/api/overview", "/admin/api/members", "重命名", "踢出", "拉黑", "解封"} {
+	for _, want := range []string{"概览", "成员", "连接", "/admin/api/overview", "/admin/api/members", "/admin/api/session", "加入时间", "Forwarding", "Managed FRP", "重命名", "踢出", "拉黑", "解封"} {
 		if !strings.Contains(page, want) {
 			t.Fatalf("authenticated page missing %q", want)
 		}
 	}
 	if strings.Contains(page, "Tmkmaj233") {
 		t.Fatal("authenticated page leaked admin token")
+	}
+	if strings.Contains(page, "https://") || strings.Contains(page, "http://") {
+		t.Fatal("authenticated page contains an external URL")
 	}
 }

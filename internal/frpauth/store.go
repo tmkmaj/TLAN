@@ -437,6 +437,26 @@ func (s *Store) activeAt(record leaseRecord, now time.Time) bool {
 // Issue creates a short-lived lease after checking member ownership and all
 // server-side port/domain/proxy-name conflicts. The returned capability is the
 // only time the plaintext credential is available.
+// ActiveLeaseCount returns the number of unexpired, unrevoked leases matching
+// the optional network and device filters. Empty filters match all records.
+func (s *Store) ActiveLeaseCount(networkID, deviceID string) int {
+	now := s.now().UTC()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	count := 0
+	for _, record := range s.leases {
+		if networkID != "" && record.NetworkID != networkID {
+			continue
+		}
+		if deviceID != "" && record.DeviceID != deviceID {
+			continue
+		}
+		if s.activeAt(record, now) {
+			count++
+		}
+	}
+	return count
+}
 func (s *Store) Issue(networkID, deviceID, serverID string, rules []Rule) (LeaseResponse, error) {
 	if err := validateNetworkDevice(networkID, deviceID); err != nil {
 		return LeaseResponse{}, err

@@ -27,6 +27,11 @@ type Server struct {
 	Store             *storage.Store
 	AdminToken        string
 	StartedAt         time.Time
+	ControlListen     string
+	ControlTLS        bool
+	AdminListen       string
+	AdminTLS          bool
+	DataDirSummary    string
 	Relay             *network.RelayBroker
 	FRP               *frpauth.Store
 	relayMu           sync.Mutex
