@@ -26,6 +26,7 @@ type Server struct {
 	joinSlotsOnce     sync.Once
 	Store             *storage.Store
 	AdminToken        string
+	StartedAt         time.Time
 	Relay             *network.RelayBroker
 	FRP               *frpauth.Store
 	relayMu           sync.Mutex
