@@ -72,6 +72,7 @@ type Engine struct {
 	candidateFingerprint string
 	stunAvailable        bool
 	candidateRefreshing  bool
+	repairing            bool
 	closed               bool
 	generation           uint64
 	generationMu         sync.Mutex

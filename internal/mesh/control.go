@@ -13,6 +13,7 @@ import (
 
 	"github.com/private-radminlan/lanmesh/core"
 	"github.com/private-radminlan/lanmesh/internal/clientapi"
+	"github.com/private-radminlan/lanmesh/internal/platform"
 )
 
 func (e *Engine) controlLoop() {
@@ -20,6 +21,7 @@ func (e *Engine) controlLoop() {
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 	lastGather := time.Now()
+	lastAdapterRepair := time.Now()
 	for {
 		select {
 		case <-e.ctx.Done():
@@ -32,6 +34,10 @@ func (e *Engine) controlLoop() {
 				continue
 			}
 			now := time.Now()
+			if now.Sub(lastAdapterRepair) >= 30*time.Second {
+				lastAdapterRepair = now
+				e.repairTunnel()
+			}
 			if e.refreshCandidatesIfNeeded(now, lastGather) {
 				lastGather = now
 			}
@@ -134,6 +140,32 @@ func (e *Engine) candidatesForRequest() []core.Candidate {
 	e.candidateMu.Lock()
 	defer e.candidateMu.Unlock()
 	return append([]core.Candidate(nil), e.candidates...)
+}
+
+func (e *Engine) repairTunnel() {
+	e.mu.Lock()
+	if e.repairing || e.closed {
+		e.mu.Unlock()
+		return
+	}
+	e.repairing = true
+	e.wgLoops.Add(1)
+	e.mu.Unlock()
+	go func() {
+		defer e.wgLoops.Done()
+		defer func() {
+			e.mu.Lock()
+			e.repairing = false
+			e.mu.Unlock()
+		}()
+		tunnel, ok := e.native.(*platform.IPTunnel)
+		if !ok || tunnel == nil {
+			return
+		}
+		if err := tunnel.Repair(); err != nil {
+			e.setError(fmt.Errorf("mesh adapter repair: %w", err))
+		}
+	}()
 }
 
 func (e *Engine) gatherCandidates() {

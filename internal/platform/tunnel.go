@@ -24,12 +24,20 @@ type TunnelOptions struct {
 type IPTunnel struct {
 	tun.Device
 	cleanup       func() error
+	repair        func() error
 	cleanupBefore func() error
 	cleanupAfter  func() error
 	ledger        ResourceLedger
 	resources     []ResourceRecord
 	closeOnce     sync.Once
 	closeErr      error
+}
+
+func (t *IPTunnel) Repair() error {
+	if t == nil || t.repair == nil {
+		return nil
+	}
+	return t.repair()
 }
 
 func (t *IPTunnel) Close() error {

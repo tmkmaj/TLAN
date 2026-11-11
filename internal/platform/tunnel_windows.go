@@ -218,13 +218,69 @@ func openTunnel(name string, address netip.Prefix, mtu int, options TunnelOption
 		}
 		return errors.Join(errs...)
 	}
+	repair := func() error {
+		iface, err := net.InterfaceByName(name)
+		if err != nil {
+			return fmt.Errorf("mesh adapter %q is missing: %w", name, err)
+		}
+		// Fast path: while the adapter still owns its assigned address there is
+		// nothing to heal, so the periodic check stays one cheap lookup.
+		if addrs, err := iface.Addrs(); err == nil && addressPresent(addrs, address.Addr()) {
+			return nil
+		}
+		// Windows re-created the adapter (driver update, PnP restart, reinstall)
+		// and every piece of configuration below was lost along with it.
+		for _, prefix := range []string{"255.255.255.255/32", "224.0.0.0/4"} {
+			script := "$route=Get-NetRoute -InterfaceAlias " + psQuote(name) + " -DestinationPrefix " + psQuote(prefix) + " -PolicyStore ActiveStore -ErrorAction SilentlyContinue; if ($null -eq $route) { New-NetRoute -InterfaceAlias " + psQuote(name) + " -DestinationPrefix " + psQuote(prefix) + " -RouteMetric 5 -PolicyStore ActiveStore -ErrorAction Stop | Out-Null } else { $route | Set-NetRoute -RouteMetric 5 -ErrorAction Stop | Out-Null }"
+			if err := firewallScriptWithRunner(options.Runner, script); err != nil {
+				return fmt.Errorf("repair route %s: %w", prefix, err)
+			}
+		}
+		steps := [][]string{
+			{"interface", "ipv4", "set", "address", "name=" + name, "source=static", "address=" + address.Addr().String(), "mask=" + mask, "gateway=none", "store=active"},
+			{"interface", "ipv4", "set", "subinterface", name, "mtu=" + strconv.Itoa(mtu), "store=active"},
+			{"interface", "ipv4", "set", "interface", name, "metric=5", "forwarding=disabled"},
+		}
+		for _, args := range steps {
+			if err := commandWindowsWithRunner(options.Runner, "netsh.exe", args...); err != nil {
+				return fmt.Errorf("repair adapter %q: %w", name, err)
+			}
+		}
+		script := "$rule=Get-NetFirewallRule -Name " + psQuote(firewallName) + " -ErrorAction SilentlyContinue; if ($null -eq $rule) { New-NetFirewallRule -Name " + psQuote(firewallName) + " -DisplayName " + psQuote(firewallName) + " -Direction Inbound -Action Allow -Profile Any -InterfaceAlias " + psQuote(name) + " -RemoteAddress " + psQuote(address.Masked().String()) + " -ErrorAction Stop | Out-Null } else { Set-NetFirewallRule -Name " + psQuote(firewallName) + " -Enabled True -Action Allow -Profile Any -ErrorAction Stop | Out-Null }"
+		if err := firewallScriptWithRunner(options.Runner, script); err != nil {
+			return fmt.Errorf("repair firewall rule %q: %w", firewallName, err)
+		}
+		return nil
+	}
+
 	return &IPTunnel{
+		repair:        repair,
 		Device:        device,
 		cleanupBefore: cleanupBefore,
 		cleanupAfter:  cleanupAfter,
 		ledger:        options.Ledger,
 		resources:     append([]ResourceRecord(nil), records...),
 	}, nil
+}
+
+// addressPresent reports whether want is assigned to an interface, ignoring
+// IPv4-mapped IPv6 forms that Go can report for a v4 address.
+func addressPresent(addrs []net.Addr, want netip.Addr) bool {
+	for _, addr := range addrs {
+		var ip net.IP
+		switch value := addr.(type) {
+		case *net.IPNet:
+			ip = value.IP
+		case *net.IPAddr:
+			ip = value.IP
+		default:
+			continue
+		}
+		if parsed, ok := netip.AddrFromSlice(ip); ok && parsed.Unmap() == want {
+			return true
+		}
+	}
+	return false
 }
 
 func psQuote(value string) string { return "'" + strings.ReplaceAll(value, "'", "''") + "'" }
