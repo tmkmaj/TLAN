@@ -141,10 +141,23 @@ func (e *Engine) gatherCandidates() {
 }
 
 func (e *Engine) gatherCandidatesFromSnapshot(interfaces []candidateInterfaceSnapshot) {
-	e.bind.mu.RLock()
-	port := e.bind.port
-	e.bind.mu.RUnlock()
+	ports := e.bind.ports()
+	if len(ports) == 0 {
+		ports = []uint16{e.bind.port}
+	}
 	var candidates []core.Candidate
+	seen := make(map[string]bool)
+	addCandidate := func(candidate core.Candidate) {
+		if len(candidates) >= 32 || candidate.Address == "" {
+			return
+		}
+		key := string(candidate.Kind) + "|" + string(candidate.Transport) + "|" + candidate.Address
+		if seen[key] {
+			return
+		}
+		seen[key] = true
+		candidates = append(candidates, candidate)
+	}
 adapters:
 	for _, adapter := range interfaces {
 		if !adapter.Up {
@@ -155,7 +168,9 @@ adapters:
 			if err != nil || !ip.Is4() || !ip.IsGlobalUnicast() || e.plain.prefix.Contains(ip) {
 				continue
 			}
-			candidates = append(candidates, core.Candidate{Kind: core.CandidateHost, Transport: core.TransportUDP, Address: netip.AddrPortFrom(ip, port).String(), Priority: 100})
+			for _, port := range ports {
+				addCandidate(core.Candidate{Kind: core.CandidateHost, Transport: core.TransportUDP, Address: netip.AddrPortFrom(ip, port).String(), Priority: 100})
+			}
 			if len(candidates) >= 32 {
 				break adapters
 			}
@@ -164,18 +179,27 @@ adapters:
 	stunAvailable := false
 	if e.options.STUNServer != "" {
 		ctx, cancel := context.WithTimeout(e.ctx, 3*time.Second)
-		mapped, err := e.bind.probeSTUN(ctx, e.options.STUNServer)
+		mappedPorts, err := e.bind.probeSTUNPorts(ctx, e.options.STUNServer)
 		cancel()
-		if err == nil {
+		if err == nil && len(mappedPorts) > 0 {
 			stunAvailable = true
-			candidates = append(candidates, core.Candidate{Kind: core.CandidateServerReflexive, Transport: core.TransportUDP, Address: mapped.String(), Priority: 200})
-		} else {
+			for _, mapped := range mappedPorts {
+				addCandidate(core.Candidate{Kind: core.CandidateServerReflexive, Transport: core.TransportUDP, Address: mapped.String(), Priority: 200})
+				for offset := uint16(1); offset <= meshPredictedPorts; offset++ {
+					if uint32(mapped.Port())+uint32(offset) > 65535 {
+						break
+					}
+					predicted := netip.AddrPortFrom(mapped.Addr(), mapped.Port()+offset)
+					addCandidate(core.Candidate{Kind: core.CandidateServerReflexive, Transport: core.TransportUDP, Address: predicted.String(), Priority: 150})
+				}
+			}
+		} else if err != nil {
 			e.setError(fmt.Errorf("STUN: %w", err))
 		}
 	}
 	// No active physical interface is still a valid relay-only configuration.
 	if len(candidates) == 0 {
-		candidates = append(candidates, core.Candidate{Kind: core.CandidateHost, Transport: core.TransportUDP, Address: fmt.Sprintf("127.0.0.1:%d", port), Priority: 1})
+		candidates = append(candidates, core.Candidate{Kind: core.CandidateHost, Transport: core.TransportUDP, Address: fmt.Sprintf("127.0.0.1:%d", ports[0]), Priority: 1})
 	}
 	e.candidateMu.Lock()
 	e.candidates = candidates

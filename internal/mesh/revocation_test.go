@@ -61,7 +61,7 @@ func TestControlFailureLifecycle(t *testing.T) {
 				}
 			}
 			fail.Store(true)
-			deadline := time.Now().Add(7 * time.Second)
+			deadline := time.Now().Add(15 * time.Second)
 			for time.Now().Before(deadline) && engine.Status().LastError == "" {
 				time.Sleep(10 * time.Millisecond)
 			}

@@ -30,15 +30,16 @@ func (e *endpoint) DstIP() netip.Addr   { return e.address.Addr() }
 func (e *endpoint) SrcIP() netip.Addr   { return netip.Addr{} }
 
 type peerRoute struct {
-	key         []byte
-	candidates  []netip.AddrPort
-	direct      netip.AddrPort
-	lastDirect  time.Time
-	nonce       [8]byte
-	pingStarted time.Time
-	rtt         time.Duration
-	relay       *network.StreamRelay
-	relayExpiry time.Time
+	key          []byte
+	candidates   []netip.AddrPort
+	direct       netip.AddrPort
+	directSocket int
+	lastDirect   time.Time
+	nonce        [8]byte
+	pingStarted  time.Time
+	rtt          time.Duration
+	relay        *network.StreamRelay
+	relayExpiry  time.Time
 }
 type datagram struct {
 	data []byte
@@ -47,6 +48,7 @@ type datagram struct {
 type stunReply struct {
 	packet []byte
 	source netip.AddrPort
+	socket int
 }
 
 // meshBind multiplexes STUN, authenticated connectivity checks and encrypted
@@ -59,6 +61,7 @@ type meshBind struct {
 	private   []byte
 	relayOnly bool
 	udp       *net.UDPConn
+	extra     []*net.UDPConn
 	port      uint16
 	done      chan struct{}
 	in        chan datagram
@@ -79,28 +82,44 @@ func (b *meshBind) Open(port uint16) ([]conn.ReceiveFunc, uint16, error) {
 	if b.udp != nil {
 		return nil, 0, conn.ErrBindAlreadyOpen
 	}
-	u, err := net.ListenUDP("udp4", &net.UDPAddr{Port: int(port)})
-	if err != nil {
-		return nil, 0, err
+	sockets := make([]*net.UDPConn, 0, meshBindPortCount)
+	for index := 0; index < meshBindPortCount; index++ {
+		listenPort := 0
+		if index == 0 {
+			listenPort = int(port)
+		}
+		u, err := net.ListenUDP("udp4", &net.UDPAddr{Port: listenPort})
+		if err != nil {
+			for _, opened := range sockets {
+				_ = opened.Close()
+			}
+			return nil, 0, err
+		}
+		sockets = append(sockets, u)
 	}
-	b.udp = u
-	b.port = uint16(u.LocalAddr().(*net.UDPAddr).Port)
+	b.udp = sockets[0]
+	b.extra = append([]*net.UDPConn(nil), sockets[1:]...)
+	b.port = uint16(b.udp.LocalAddr().(*net.UDPAddr).Port)
 	b.done = make(chan struct{})
 	b.in = make(chan datagram, 1024)
 	done, in := b.done, b.in
-	go b.readUDP(u, done, in)
-	go b.checkLoop(u, done)
-	receive := func(packets [][]byte, sizes []int, eps []conn.Endpoint) (int, error) {
-		select {
-		case <-done:
-			return 0, net.ErrClosed
-		case packet := <-in:
-			sizes[0] = copy(packets[0], packet.data)
-			eps[0] = &endpoint{netip.AddrPortFrom(packet.peer, 1)}
-			return 1, nil
-		}
+	receivers := make([]conn.ReceiveFunc, 0, len(sockets))
+	for index, u := range sockets {
+		index, u := index, u
+		go b.readUDP(u, done, in, index)
+		go b.checkLoop(u, done)
+		receivers = append(receivers, func(packets [][]byte, sizes []int, eps []conn.Endpoint) (int, error) {
+			select {
+			case <-done:
+				return 0, net.ErrClosed
+			case packet := <-in:
+				sizes[0] = copy(packets[0], packet.data)
+				eps[0] = &endpoint{netip.AddrPortFrom(packet.peer, 1)}
+				return 1, nil
+			}
+		})
 	}
-	return []conn.ReceiveFunc{receive}, b.port, nil
+	return receivers, b.port, nil
 }
 func (b *meshBind) Close() error {
 	b.mu.Lock()
@@ -109,15 +128,24 @@ func (b *meshBind) Close() error {
 		return nil
 	}
 	close(b.done)
-	err := b.udp.Close()
+	var errs []error
+	if err := b.udp.Close(); err != nil {
+		errs = append(errs, err)
+	}
+	for _, u := range b.extra {
+		if err := u.Close(); err != nil {
+			errs = append(errs, err)
+		}
+	}
 	b.udp = nil
+	b.extra = nil
 	for _, r := range b.routes {
 		if r.relay != nil {
 			r.relay.Close()
 			r.relay = nil
 		}
 	}
-	return err
+	return errors.Join(errs...)
 }
 func (b *meshBind) SetMark(uint32) error { return nil }
 func (b *meshBind) BatchSize() int       { return 1 }
@@ -128,21 +156,45 @@ func (b *meshBind) ParseEndpoint(value string) (conn.Endpoint, error) {
 	}
 	return &endpoint{p}, nil
 }
+
+const (
+	directRTTPreference = 180 * time.Millisecond
+	meshBindPortCount   = 3
+	meshPredictedPorts  = 3
+)
+
+// directPreferred keeps both paths alive and prefers a fresh, low-RTT direct
+// path. A relay is used immediately while the direct probe is still warming up
+// or when the direct path is measured as high latency.
+func (r *peerRoute) directPreferred(now time.Time, relayAvailable bool) bool {
+	if r == nil || !r.direct.IsValid() || now.Sub(r.lastDirect) >= 10*time.Second {
+		return false
+	}
+	if !relayAvailable {
+		return true
+	}
+	return r.rtt <= 0 || r.rtt <= directRTTPreference
+}
+
 func (b *meshBind) Send(bufs [][]byte, ep conn.Endpoint) error {
 	b.mu.RLock()
 	r := b.routes[ep.DstIP()]
-	u := b.udp
-	if r == nil || u == nil {
+	primary := b.udp
+	extra := append([]*net.UDPConn(nil), b.extra...)
+	if r == nil || primary == nil {
 		b.mu.RUnlock()
 		return nil
 	}
-	direct, fresh, relay := r.direct, time.Since(r.lastDirect) < 10*time.Second, r.relay
+	sockets := append([]*net.UDPConn{primary}, extra...)
+	direct, directSocket, relay := r.direct, r.directSocket, r.relay
+	useDirect := r.directPreferred(time.Now(), relay != nil) && !b.relayOnly
 	candidates := append([]netip.AddrPort(nil), r.candidates...)
 	b.mu.RUnlock()
 	for _, packet := range bufs {
-		if fresh && direct.IsValid() && !b.relayOnly {
-			_, _ = u.WriteToUDPAddrPort(packet, direct)
-			continue
+		if useDirect && directSocket >= 0 && directSocket < len(sockets) {
+			if _, err := sockets[directSocket].WriteToUDPAddrPort(packet, direct); err == nil {
+				continue
+			}
 		}
 		if relay != nil {
 			if err := relay.Send(packet); err == nil {
@@ -152,8 +204,10 @@ func (b *meshBind) Send(bufs [][]byte, ep conn.Endpoint) error {
 		if b.relayOnly {
 			continue
 		}
-		for _, address := range candidates {
-			_, _ = u.WriteToUDPAddrPort(packet, address)
+		for _, u := range sockets {
+			for _, address := range candidates {
+				_, _ = u.WriteToUDPAddrPort(packet, address)
+			}
 		}
 	}
 	return nil
@@ -244,7 +298,7 @@ func (b *meshBind) attachRelay(ip netip.Addr, relay *network.StreamRelay, expiry
 	}()
 	return true
 }
-func (b *meshBind) readUDP(u *net.UDPConn, done <-chan struct{}, in chan<- datagram) {
+func (b *meshBind) readUDP(u *net.UDPConn, done <-chan struct{}, in chan<- datagram, socketIndex int) {
 	buffer := make([]byte, 65536)
 	for {
 		n, addr, err := u.ReadFromUDPAddrPort(buffer)
@@ -261,7 +315,7 @@ func (b *meshBind) readUDP(u *net.UDPConn, done <-chan struct{}, in chan<- datag
 			b.mu.RUnlock()
 			if pending != nil {
 				select {
-				case pending <- stunReply{append([]byte(nil), packet...), addr}:
+				case pending <- stunReply{packet: append([]byte(nil), packet...), source: addr, socket: socketIndex}:
 				default:
 				}
 			}
@@ -271,13 +325,13 @@ func (b *meshBind) readUDP(u *net.UDPConn, done <-chan struct{}, in chan<- datag
 			if b.relayOnly {
 				continue
 			}
-			b.handleProbe(u, packet, addr)
+			b.handleProbeOn(u, packet, addr, socketIndex)
 			continue
 		}
 		var peer netip.Addr
 		b.mu.RLock()
 		for ip, r := range b.routes {
-			if r.direct == addr {
+			if r.direct == addr || containsAddrPort(r.candidates, addr) {
 				peer = ip
 				break
 			}
@@ -335,12 +389,25 @@ func (b *meshBind) checkLoop(u *net.UDPConn, done <-chan struct{}) {
 		}
 	}
 }
+func containsAddrPort(values []netip.AddrPort, target netip.AddrPort) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
+}
+
 func signProbe(packet, key []byte) {
 	hash := hmac.New(sha256.New, key)
 	hash.Write(packet[:25])
 	copy(packet[25:], hash.Sum(nil)[:16])
 }
 func (b *meshBind) handleProbe(u *net.UDPConn, packet []byte, addr netip.AddrPort) {
+	b.handleProbeOn(u, packet, addr, 0)
+}
+
+func (b *meshBind) handleProbeOn(u *net.UDPConn, packet []byte, addr netip.AddrPort, socketIndex int) {
 	peer := netip.AddrFrom4([4]byte(packet[5:9]))
 	stamp := int64(binary.BigEndian.Uint64(packet[9:17]))
 	if delta := time.Now().Unix() - stamp; delta > 10 || delta < -10 {
@@ -360,6 +427,7 @@ func (b *meshBind) handleProbe(u *net.UDPConn, packet []byte, addr netip.AddrPor
 	}
 	if packet[4] == 2 && hmac.Equal(packet[17:25], r.nonce[:]) {
 		r.direct = addr
+		r.directSocket = socketIndex
 		r.lastDirect = time.Now()
 		r.rtt = time.Since(r.pingStarted)
 		b.mu.Unlock()
@@ -377,9 +445,19 @@ func (b *meshBind) handleProbe(u *net.UDPConn, packet []byte, addr netip.AddrPor
 	_, _ = u.WriteToUDPAddrPort(reply, addr)
 }
 
-// probeSTUN uses the active WireGuard UDP port; probing a temporary socket
-// would advertise a different NAT mapping and silently break hole punching.
+// probeSTUN uses the active primary WireGuard UDP port; probing a temporary
+// socket would advertise a different NAT mapping and silently break punching.
 func (b *meshBind) probeSTUN(ctx context.Context, server string) (netip.AddrPort, error) {
+	b.mu.RLock()
+	u := b.udp
+	b.mu.RUnlock()
+	return b.probeSTUNOn(ctx, server, u, 0)
+}
+
+func (b *meshBind) probeSTUNOn(ctx context.Context, server string, u *net.UDPConn, socketIndex int) (netip.AddrPort, error) {
+	if u == nil {
+		return netip.AddrPort{}, net.ErrClosed
+	}
 	host, portValue, err := net.SplitHostPort(server)
 	if err != nil {
 		return netip.AddrPort{}, err
@@ -409,13 +487,9 @@ func (b *meshBind) probeSTUN(ctx context.Context, server string) (netip.AddrPort
 	}
 	response := make(chan stunReply, 1)
 	b.mu.Lock()
-	u := b.udp
 	b.stun[id] = response
 	b.mu.Unlock()
 	defer func() { b.mu.Lock(); delete(b.stun, id); b.mu.Unlock() }()
-	if u == nil {
-		return netip.AddrPort{}, net.ErrClosed
-	}
 	packet := make([]byte, 20)
 	binary.BigEndian.PutUint16(packet, 1)
 	binary.BigEndian.PutUint32(packet[4:], 0x2112a442)
@@ -427,9 +501,65 @@ func (b *meshBind) probeSTUN(ctx context.Context, server string) (netip.AddrPort
 	case <-ctx.Done():
 		return netip.AddrPort{}, ctx.Err()
 	case reply := <-response:
-		if reply.source != address.AddrPort() {
+		if reply.socket != socketIndex || reply.source != address.AddrPort() {
 			return netip.AddrPort{}, fmt.Errorf("unexpected STUN source")
 		}
 		return network.DecodeSTUNMappedAddress(reply.packet, id)
 	}
+}
+
+func (b *meshBind) ports() []uint16 {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	ports := make([]uint16, 0, 1+len(b.extra))
+	if b.udp != nil {
+		ports = append(ports, b.port)
+	}
+	for _, u := range b.extra {
+		if u == nil {
+			continue
+		}
+		if addr, ok := u.LocalAddr().(*net.UDPAddr); ok && addr.Port > 0 {
+			ports = append(ports, uint16(addr.Port))
+		}
+	}
+	return ports
+}
+
+func (b *meshBind) probeSTUNPorts(ctx context.Context, server string) ([]netip.AddrPort, error) {
+	b.mu.RLock()
+	sockets := append([]*net.UDPConn{b.udp}, b.extra...)
+	b.mu.RUnlock()
+	type result struct {
+		address netip.AddrPort
+		err     error
+	}
+	results := make(chan result, len(sockets))
+	for index, u := range sockets {
+		if u == nil {
+			results <- result{err: net.ErrClosed}
+			continue
+		}
+		index, u := index, u
+		go func() {
+			address, err := b.probeSTUNOn(ctx, server, u, index)
+			results <- result{address: address, err: err}
+		}()
+	}
+	var mapped []netip.AddrPort
+	var firstErr error
+	for range sockets {
+		result := <-results
+		if result.err != nil {
+			if firstErr == nil {
+				firstErr = result.err
+			}
+			continue
+		}
+		mapped = append(mapped, result.address)
+	}
+	if len(mapped) == 0 && firstErr != nil {
+		return nil, firstErr
+	}
+	return mapped, nil
 }

@@ -27,6 +27,17 @@ func TestSTUNUsesActiveWireGuardPort(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer b.Close()
+	ports := b.ports()
+	if len(ports) != meshBindPortCount {
+		t.Fatalf("opened %d UDP ports, want %d", len(ports), meshBindPortCount)
+	}
+	seen := map[uint16]bool{}
+	for _, candidatePort := range ports {
+		if candidatePort == 0 || seen[candidatePort] {
+			t.Fatalf("duplicate or zero UDP port in %v", ports)
+		}
+		seen[candidatePort] = true
+	}
 	socket, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
 	if err != nil {
 		t.Fatal(err)
