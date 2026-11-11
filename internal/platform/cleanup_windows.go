@@ -40,7 +40,7 @@ func cleanupResource(record ResourceRecord, runner Runner) error {
 	case ResourceBroadcastRoute, ResourceMulticastRoute:
 		return cleanupRoute(record, runner)
 	case ResourceFirewallRule:
-		return cleanupFirewallRule(record, runner)
+		return cleanupFirewallRule(record)
 	default:
 		return fmt.Errorf("%w: %s", ErrResourceUnsupported, record.Type)
 	}
@@ -126,25 +126,26 @@ func cleanupRoute(record ResourceRecord, runner Runner) error {
 	return deleteIPv4Route(runner, record.Name, prefix.String())
 }
 
-func cleanupFirewallRule(record ResourceRecord, runner Runner) error {
-	query := "$rules=@(Get-NetFirewallRule -Name " + psQuote(record.Name) +
-		" -ErrorAction SilentlyContinue); if ($rules.Count -eq 0) { exit 0 }; $rules | Select-Object -ExpandProperty InstanceID"
-	output, err := runPowerShell(runner, query)
+func cleanupFirewallRule(record ResourceRecord) error {
+	expected, err := normalizePrefixText(record.Prefix)
+	if err != nil {
+		return fmt.Errorf("%w: invalid firewall prefix %q", ErrResourceNotOwned, record.Prefix)
+	}
+	// The rule is identified by the name this instance created and confirmed by
+	// the remote address it was scoped to, so a rule that merely reuses the name
+	// is never deleted.
+	state, err := firewall.Lookup(record.Name)
 	if err != nil {
 		return fmt.Errorf("query firewall rule %q: %w", record.Name, err)
 	}
-	values := nonEmptyLines(output)
-	if len(values) == 0 {
+	if !state.Found {
 		return nil
 	}
-	if len(values) != 1 {
-		return fmt.Errorf("%w: firewall rule %q is ambiguous", ErrResourceNotOwned, record.Name)
+	actual, err := normalizePrefixText(state.Remote)
+	if err != nil || actual != expected {
+		return fmt.Errorf("%w: firewall rule %q remote addresses %q do not match %q", ErrResourceNotOwned, record.Name, state.Remote, record.Prefix)
 	}
-	ruleID, err := normalizeFirewallRuleID(values[0])
-	if err != nil || !sameFirewallRuleID(ruleID, record.ResourceID) {
-		return fmt.Errorf("%w: firewall rule %q identity does not match", ErrResourceNotOwned, record.Name)
-	}
-	if _, err := runPowerShell(runner, "Remove-NetFirewallRule -Name "+psQuote(record.Name)+" -Confirm:$false -ErrorAction Stop | Out-Null"); err != nil {
+	if err := firewall.Remove(record.Name); err != nil {
 		return fmt.Errorf("remove firewall rule %q: %w", record.Name, err)
 	}
 	return nil
@@ -164,31 +165,6 @@ func verifyAdapterParent(record ResourceRecord) (bool, error) {
 	return true, nil
 }
 
-func normalizeFirewallRuleID(value string) (string, error) {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return "", errors.New("empty firewall rule identity")
-	}
-	if guid, err := normalizeGUID(value); err == nil {
-		return guid, nil
-	}
-	if !validExactName(value) || len(value) > 256 {
-		return "", errors.New("invalid firewall rule identity")
-	}
-	return value, nil
-}
-
-func sameFirewallRuleID(a, b string) bool {
-	first, err := normalizeFirewallRuleID(a)
-	if err != nil {
-		return false
-	}
-	second, err := normalizeFirewallRuleID(b)
-	if err != nil {
-		return false
-	}
-	return strings.EqualFold(first, second)
-}
 func normalizeGUID(value string) (string, error) {
 	value = strings.TrimSpace(value)
 	if value == "" {

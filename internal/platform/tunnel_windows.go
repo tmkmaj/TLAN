@@ -17,10 +17,6 @@ import (
 	"golang.zx2c4.com/wireguard/tun"
 )
 
-func commandWindows(program string, args ...string) error {
-	return commandWindowsWithRunner(SystemRunner{}, program, args...)
-}
-
 func commandWindowsWithRunner(runner Runner, program string, args ...string) error {
 	_, err := commandOutputWithRunner(runner, program, args...)
 	return err
@@ -181,17 +177,19 @@ func openTunnel(name string, address netip.Prefix, mtu int, options TunnelOption
 
 	// Scope the inbound exception to this virtual interface, including broadcast
 	// destinations; never disable the firewall or open the physical interface.
-	firewallScript := "New-NetFirewallRule -Name " + psQuote(firewallName) + " -DisplayName " + psQuote(firewallName) + " -Direction Inbound -Action Allow -Profile Any -InterfaceAlias " + psQuote(name) + " -RemoteAddress " + psQuote(address.Masked().String()) + " -ErrorAction Stop | Out-Null"
-	if err := firewallScriptWithRunner(options.Runner, firewallScript); err != nil {
+	// The rule is added before it is recorded so a ledger write failure still
+	// rolls the live rule back.
+	if err := firewall.Add(firewallSpec{
+		Name:        firewallName,
+		Description: firewallName,
+		Interfaces:  []string{name},
+		Remote:      address.Masked().String(),
+	}); err != nil {
 		return nil, rollback(err)
 	}
-	ruleID, err := firewallRuleID(options.Runner, firewallName)
+	firewallRecord, err := NewResourceRecord(options.InstanceID, ResourceFirewallRule, firewallName, address.Masked().String(), firewallName)
 	if err != nil {
-		_ = firewallScriptWithRunner(options.Runner, "Remove-NetFirewallRule -Name "+psQuote(firewallName)+" -Confirm:$false -ErrorAction Stop | Out-Null")
-		return nil, rollback(err)
-	}
-	firewallRecord, err := NewResourceRecord(options.InstanceID, ResourceFirewallRule, firewallName, address.Masked().String(), ruleID)
-	if err != nil {
+		_ = firewall.Remove(firewallName)
 		return nil, rollback(err)
 	}
 	firewallRecord.ParentID = interfaceGUID
@@ -236,8 +234,7 @@ func openTunnel(name string, address netip.Prefix, mtu int, options TunnelOption
 		// Windows re-created the adapter (driver update, PnP restart, reinstall)
 		// and every piece of configuration below was lost along with it.
 		for _, prefix := range []string{"255.255.255.255/32", "224.0.0.0/4"} {
-			script := "$route=Get-NetRoute -InterfaceAlias " + psQuote(name) + " -DestinationPrefix " + psQuote(prefix) + " -PolicyStore ActiveStore -ErrorAction SilentlyContinue; if ($null -eq $route) { New-NetRoute -InterfaceAlias " + psQuote(name) + " -DestinationPrefix " + psQuote(prefix) + " -RouteMetric 5 -PolicyStore ActiveStore -ErrorAction Stop | Out-Null } else { $route | Set-NetRoute -RouteMetric 5 -ErrorAction Stop | Out-Null }"
-			if err := firewallScriptWithRunner(options.Runner, script); err != nil {
+			if err := ensureIPv4Route(options.Runner, name, prefix, 5); err != nil {
 				return fmt.Errorf("repair route %s: %w", prefix, err)
 			}
 		}
@@ -251,8 +248,13 @@ func openTunnel(name string, address netip.Prefix, mtu int, options TunnelOption
 				return fmt.Errorf("repair adapter %q: %w", name, err)
 			}
 		}
-		script := "$rule=Get-NetFirewallRule -Name " + psQuote(firewallName) + " -ErrorAction SilentlyContinue; if ($null -eq $rule) { New-NetFirewallRule -Name " + psQuote(firewallName) + " -DisplayName " + psQuote(firewallName) + " -Direction Inbound -Action Allow -Profile Any -InterfaceAlias " + psQuote(name) + " -RemoteAddress " + psQuote(address.Masked().String()) + " -ErrorAction Stop | Out-Null } else { Set-NetFirewallRule -Name " + psQuote(firewallName) + " -Enabled True -Action Allow -Profile Any -ErrorAction Stop | Out-Null }"
-		if err := firewallScriptWithRunner(options.Runner, script); err != nil {
+		_ = firewall.Remove(firewallName)
+		if err := firewall.Add(firewallSpec{
+			Name:        firewallName,
+			Description: firewallName,
+			Interfaces:  []string{name},
+			Remote:      address.Masked().String(),
+		}); err != nil {
 			return fmt.Errorf("repair firewall rule %q: %w", firewallName, err)
 		}
 		return nil
@@ -307,24 +309,4 @@ func waitForAdapterGUID(name string) (string, error) {
 		return "", lastErr
 	}
 	return "", fmt.Errorf("Wintun adapter %q was not visible after creation", name)
-}
-func firewallScript(script string) error {
-	return firewallScriptWithRunner(SystemRunner{}, script)
-}
-
-func firewallScriptWithRunner(runner Runner, script string) error {
-	_, err := runPowerShell(runner, script)
-	return err
-}
-
-func firewallRuleID(runner Runner, name string) (string, error) {
-	output, err := runPowerShell(runner, "Get-NetFirewallRule -Name "+psQuote(name)+" -ErrorAction Stop | Select-Object -ExpandProperty InstanceID")
-	if err != nil {
-		return "", fmt.Errorf("read firewall rule identity: %w", err)
-	}
-	values := nonEmptyLines(output)
-	if len(values) != 1 {
-		return "", fmt.Errorf("firewall rule %q did not return exactly one identity", name)
-	}
-	return normalizeFirewallRuleID(values[0])
 }

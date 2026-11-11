@@ -61,41 +61,89 @@ func decodePowerShellCommand(args []string) string {
 	return ""
 }
 
-func TestWindowsCleanupFirewallRequiresExactInstanceID(t *testing.T) {
-	record := makeOwnedRecord(t, "instance", ResourceFirewallRule, "LANMesh-LANMesh", "10.44.0.0/24", "{11111111-1111-1111-1111-111111111111}", "{22222222-2222-2222-2222-222222222222}")
-	runner := &fakeWindowsRunner{handle: func(script string) ([]byte, error) {
-		switch {
-		case strings.Contains(script, "Get-NetFirewallRule"):
-			return []byte("{11111111-1111-1111-1111-111111111111}\r\n"), nil
-		case strings.Contains(script, "Remove-NetFirewallRule"):
-			return nil, nil
-		default:
-			t.Fatalf("unexpected script: %s", script)
-			return nil, nil
-		}
-	}}
-	if err := CleanupResourceWithRunner(record, runner); err != nil {
+type fakeFirewall struct {
+	rules   map[string]firewallState
+	added   []firewallSpec
+	removed []string
+}
+
+func (f *fakeFirewall) Add(spec firewallSpec) error {
+	f.added = append(f.added, spec)
+	return nil
+}
+
+func (f *fakeFirewall) Lookup(name string) (firewallState, error) {
+	return f.rules[name], nil
+}
+
+func (f *fakeFirewall) Remove(name string) error {
+	f.removed = append(f.removed, name)
+	return nil
+}
+
+func stubFirewall(t *testing.T, replacement firewallControl) {
+	t.Helper()
+	previous := firewall
+	firewall = replacement
+	t.Cleanup(func() { firewall = previous })
+}
+
+func TestWindowsCleanupFirewallRemovesOwnedRule(t *testing.T) {
+	record := makeOwnedRecord(t, "instance", ResourceFirewallRule, "LANMesh-LANMesh", "10.44.0.0/24", "LANMesh-LANMesh", "{22222222-2222-2222-2222-222222222222}")
+	fake := &fakeFirewall{rules: map[string]firewallState{"LANMesh-LANMesh": {Found: true, Remote: "10.44.0.0/24"}}}
+	stubFirewall(t, fake)
+	if err := CleanupResourceWithRunner(record, &fakeWindowsRunner{}); err != nil {
 		t.Fatal(err)
 	}
-	if len(runner.scripts) != 2 || !strings.Contains(runner.scripts[1], "Remove-NetFirewallRule") {
-		t.Fatalf("cleanup scripts = %#v", runner.scripts)
-	}
-	if strings.Contains(strings.Join(runner.scripts, "\n"), "*") {
-		t.Fatal("cleanup used a wildcard")
+	if len(fake.removed) != 1 || fake.removed[0] != "LANMesh-LANMesh" {
+		t.Fatalf("removed = %#v", fake.removed)
 	}
 }
 
-func TestWindowsCleanupFirewallRejectsIdentityMismatch(t *testing.T) {
-	record := makeOwnedRecord(t, "instance", ResourceFirewallRule, "LANMesh-LANMesh", "10.44.0.0/24", "{11111111-1111-1111-1111-111111111111}", "{22222222-2222-2222-2222-222222222222}")
-	runner := &fakeWindowsRunner{handle: func(script string) ([]byte, error) {
-		if strings.Contains(script, "Get-NetFirewallRule") {
-			return []byte("{33333333-3333-3333-3333-333333333333}\r\n"), nil
-		}
-		t.Fatalf("mismatched rule must not be removed: %s", script)
-		return nil, nil
-	}}
-	if err := CleanupResourceWithRunner(record, runner); !errors.Is(err, ErrResourceNotOwned) {
+func TestWindowsCleanupFirewallRejectsRemoteMismatch(t *testing.T) {
+	record := makeOwnedRecord(t, "instance", ResourceFirewallRule, "LANMesh-LANMesh", "10.44.0.0/24", "LANMesh-LANMesh", "{22222222-2222-2222-2222-222222222222}")
+	fake := &fakeFirewall{rules: map[string]firewallState{"LANMesh-LANMesh": {Found: true, Remote: "10.99.0.0/24"}}}
+	stubFirewall(t, fake)
+	if err := CleanupResourceWithRunner(record, &fakeWindowsRunner{}); !errors.Is(err, ErrResourceNotOwned) {
 		t.Fatalf("cleanup error = %v, want ErrResourceNotOwned", err)
+	}
+	if len(fake.removed) != 0 {
+		t.Fatalf("mismatched rule was removed: %#v", fake.removed)
+	}
+}
+
+func TestWindowsCleanupFirewallIgnoresMissingRule(t *testing.T) {
+	record := makeOwnedRecord(t, "instance", ResourceFirewallRule, "LANMesh-LANMesh", "10.44.0.0/24", "LANMesh-LANMesh", "{22222222-2222-2222-2222-222222222222}")
+	fake := &fakeFirewall{rules: map[string]firewallState{}}
+	stubFirewall(t, fake)
+	if err := CleanupResourceWithRunner(record, &fakeWindowsRunner{}); err != nil {
+		t.Fatal(err)
+	}
+	if len(fake.removed) != 0 {
+		t.Fatalf("missing rule was removed: %#v", fake.removed)
+	}
+}
+
+// Windows Firewall reports remote addresses as address/mask, while the ledger
+// stores CIDR. Both spellings must compare equal.
+func TestNormalizePrefixText(t *testing.T) {
+	tests := map[string]string{
+		"10.242.0.0/24":            "10.242.0.0/24",
+		"10.242.0.0/255.255.255.0": "10.242.0.0/24",
+		"10.242.0.7/255.255.255.0": "10.242.0.0/24",
+		" 10.44.0.0/16 ":           "10.44.0.0/16",
+	}
+	for input, want := range tests {
+		got, err := normalizePrefixText(input)
+		if err != nil {
+			t.Fatalf("normalizePrefixText(%q): %v", input, err)
+		}
+		if got.String() != want {
+			t.Fatalf("normalizePrefixText(%q) = %s, want %s", input, got, want)
+		}
+	}
+	if _, err := normalizePrefixText("not-an-address"); err == nil {
+		t.Fatal("normalizePrefixText accepted garbage")
 	}
 }
 
