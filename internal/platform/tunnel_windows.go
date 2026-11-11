@@ -22,12 +22,18 @@ func commandWindows(program string, args ...string) error {
 }
 
 func commandWindowsWithRunner(runner Runner, program string, args ...string) error {
+	_, err := commandOutputWithRunner(runner, program, args...)
+	return err
+}
+
+// commandOutputWithRunner runs a native System32 utility and returns its stdout
+// for inspection. It never invokes a shell or a scripting engine.
+func commandOutputWithRunner(runner Runner, program string, args ...string) ([]byte, error) {
 	if runner == nil {
 		runner = SystemRunner{}
 	}
 	path := filepath.Join(os.Getenv("SystemRoot"), "System32", program)
-	_, err := runner.Run(path, args...)
-	return err
+	return runner.Run(path, args...)
 }
 
 func openTunnel(name string, address netip.Prefix, mtu int, options TunnelOptions) (*IPTunnel, error) {
@@ -54,7 +60,7 @@ func openTunnel(name string, address netip.Prefix, mtu int, options TunnelOption
 			return CleanupResourceWithRunner(record, options.Runner)
 		}
 	}
-	interfaceGUID, err := waitForAdapterGUID(options.Runner, name)
+	interfaceGUID, err := waitForAdapterGUID(name)
 	if err != nil {
 		_ = device.Close()
 		return nil, err
@@ -122,8 +128,7 @@ func openTunnel(name string, address netip.Prefix, mtu int, options TunnelOption
 	// address. This preserves the original Windows setup order and avoids
 	// colliding with routes Windows may add for a newly assigned address.
 	for _, prefix := range []string{"255.255.255.255/32", "224.0.0.0/4"} {
-		script := "$route=Get-NetRoute -InterfaceAlias " + psQuote(name) + " -DestinationPrefix " + psQuote(prefix) + " -PolicyStore ActiveStore -ErrorAction SilentlyContinue; if ($null -eq $route) { New-NetRoute -InterfaceAlias " + psQuote(name) + " -DestinationPrefix " + psQuote(prefix) + " -RouteMetric 5 -PolicyStore ActiveStore -ErrorAction Stop | Out-Null } else { $route | Set-NetRoute -RouteMetric 5 -ErrorAction Stop | Out-Null }"
-		if err := firewallScriptWithRunner(options.Runner, script); err != nil {
+		if err := ensureIPv4Route(options.Runner, name, prefix, 5); err != nil {
 			return nil, rollback(err)
 		}
 		routeType := ResourceBroadcastRoute
@@ -285,10 +290,10 @@ func addressPresent(addrs []net.Addr, want netip.Addr) bool {
 
 func psQuote(value string) string { return "'" + strings.ReplaceAll(value, "'", "''") + "'" }
 
-func waitForAdapterGUID(runner Runner, name string) (string, error) {
+func waitForAdapterGUID(name string) (string, error) {
 	var lastErr error
 	for attempt := 0; attempt < 10; attempt++ {
-		guid, present, err := queryAdapterGUID(runner, name)
+		guid, present, err := queryAdapterGUID(name)
 		if err != nil {
 			lastErr = err
 		} else if present {

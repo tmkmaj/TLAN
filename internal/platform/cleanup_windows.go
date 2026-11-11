@@ -47,7 +47,7 @@ func cleanupResource(record ResourceRecord, runner Runner) error {
 }
 
 func cleanupWintunInterface(record ResourceRecord, runner Runner) error {
-	guid, present, err := queryAdapterGUID(runner, record.Name)
+	guid, present, err := queryAdapterGUID(record.Name)
 	if err != nil {
 		return err
 	}
@@ -68,7 +68,7 @@ func cleanupIPv4Address(record ResourceRecord, runner Runner) error {
 	if err != nil || !prefix.Addr().Is4() {
 		return fmt.Errorf("%w: invalid IPv4 address prefix %q", ErrResourceNotOwned, record.Prefix)
 	}
-	present, err := verifyAdapterParent(record, runner)
+	present, err := verifyAdapterParent(record)
 	if err != nil || !present {
 		return err
 	}
@@ -98,7 +98,7 @@ func cleanupIPv4Address(record ResourceRecord, runner Runner) error {
 }
 
 func cleanupInterfaceAttribute(record ResourceRecord, runner Runner) error {
-	present, err := verifyAdapterParent(record, runner)
+	present, err := verifyAdapterParent(record)
 	if err != nil || !present {
 		return err
 	}
@@ -112,31 +112,18 @@ func cleanupRoute(record ResourceRecord, runner Runner) error {
 	if err != nil || !prefix.Addr().Is4() {
 		return fmt.Errorf("%w: invalid route prefix %q", ErrResourceNotOwned, record.Prefix)
 	}
-	present, err := verifyAdapterParent(record, runner)
+	present, err := verifyAdapterParent(record)
 	if err != nil || !present {
 		return err
 	}
-	query := "$routes=@(Get-NetRoute -InterfaceAlias " + psQuote(record.Name) +
-		" -AddressFamily IPv4 -DestinationPrefix " + psQuote(prefix.String()) +
-		" -ErrorAction SilentlyContinue); if ($routes.Count -eq 0) { exit 0 }; $routes | Select-Object -ExpandProperty DestinationPrefix"
-	output, err := runPowerShell(runner, query)
+	present, err = routePresent(runner, record.Name, prefix.String())
 	if err != nil {
-		return fmt.Errorf("query route %q: %w", record.Prefix, err)
+		return err
 	}
-	values := nonEmptyLines(output)
-	if len(values) == 0 {
+	if !present {
 		return nil
 	}
-	if len(values) != 1 || !strings.EqualFold(strings.TrimSpace(values[0]), prefix.String()) {
-		return fmt.Errorf("%w: route %q is ambiguous", ErrResourceNotOwned, record.Prefix)
-	}
-	command := "Remove-NetRoute -InterfaceAlias " + psQuote(record.Name) +
-		" -DestinationPrefix " + psQuote(prefix.String()) +
-		" -Confirm:$false -ErrorAction Stop | Out-Null"
-	if _, err := runPowerShell(runner, command); err != nil {
-		return fmt.Errorf("remove route %q: %w", record.Prefix, err)
-	}
-	return nil
+	return deleteIPv4Route(runner, record.Name, prefix.String())
 }
 
 func cleanupFirewallRule(record ResourceRecord, runner Runner) error {
@@ -163,8 +150,8 @@ func cleanupFirewallRule(record ResourceRecord, runner Runner) error {
 	return nil
 }
 
-func verifyAdapterParent(record ResourceRecord, runner Runner) (bool, error) {
-	guid, present, err := queryAdapterGUID(runner, record.Name)
+func verifyAdapterParent(record ResourceRecord) (bool, error) {
+	guid, present, err := queryAdapterGUID(record.Name)
 	if err != nil {
 		return false, err
 	}
@@ -175,25 +162,6 @@ func verifyAdapterParent(record ResourceRecord, runner Runner) (bool, error) {
 		return false, fmt.Errorf("%w: adapter %q GUID %q does not match parent %q", ErrResourceNotOwned, record.Name, guid, record.ParentID)
 	}
 	return true, nil
-}
-
-func queryAdapterGUID(runner Runner, name string) (string, bool, error) {
-	output, err := runPowerShell(runner, "$adapters=@(Get-NetAdapter -Name "+psQuote(name)+" -ErrorAction SilentlyContinue); if ($adapters.Count -eq 0) { exit 0 }; $adapters | Select-Object -ExpandProperty InterfaceGuid")
-	if err != nil {
-		return "", false, fmt.Errorf("query adapter %q: %w", name, err)
-	}
-	values := nonEmptyLines(output)
-	if len(values) == 0 {
-		return "", false, nil
-	}
-	if len(values) != 1 {
-		return "", true, fmt.Errorf("%w: adapter %q is ambiguous", ErrResourceNotOwned, name)
-	}
-	guid, err := normalizeGUID(values[0])
-	if err != nil {
-		return "", true, fmt.Errorf("%w: adapter %q GUID: %v", ErrResourceNotOwned, name, err)
-	}
-	return guid, true, nil
 }
 
 func normalizeFirewallRuleID(value string) (string, error) {
