@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"github.com/private-radminlan/lanmesh/internal/coreupdate"
 	"io"
 	"net"
 	"net/netip"
@@ -48,6 +49,9 @@ type ServerConfig struct {
 	RelayListen            string `yaml:"relay_listen"`
 	RelayCert              string `yaml:"relay_cert"`
 	RelayKey               string `yaml:"relay_key"`
+	// MinClientVersion is the oldest release version the server still serves.
+	// Empty disables the gate. Beta builds are never gated.
+	MinClientVersion string `yaml:"min_client_version,omitempty"`
 }
 
 type StorageConfig struct {
@@ -228,6 +232,27 @@ func writeNew(path string, cfg Config) error {
 	return nil
 }
 
+// validateMinClientVersion keeps the release gate on plain release versions.
+// Beta builds are deliberately out of scope, so naming one is a config error
+// rather than something that silently half-applies.
+func validateMinClientVersion(value string) error {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	if strings.Contains(value, "+") {
+		return errors.New("server.min_client_version must be a plain release version")
+	}
+	prerelease, err := coreupdate.IsPrerelease(value)
+	if err != nil {
+		return fmt.Errorf("server.min_client_version %q is not a valid version: %w", value, err)
+	}
+	if prerelease {
+		return fmt.Errorf("server.min_client_version %q must not be a beta or pre-release version", value)
+	}
+	return nil
+}
+
 func (c Config) Validate() error {
 	if name := strings.TrimSpace(c.Network.Name); name == "" || len(name) > 128 {
 		return errors.New("network.name must contain 1-128 characters")
@@ -253,6 +278,9 @@ func (c Config) Validate() error {
 		if err := validateHostPort("server.relay_listen", c.Server.RelayListen); err != nil {
 			return err
 		}
+	}
+	if err := validateMinClientVersion(c.Server.MinClientVersion); err != nil {
+		return err
 	}
 	if (c.Server.TLSCert == "") != (c.Server.TLSKey == "") {
 		return errors.New("server.tls_cert and server.tls_key must be set together")

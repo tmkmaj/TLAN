@@ -159,6 +159,8 @@ func runDesktop() {
 	identity.DisplayName = name
 	a := &desktop{identity: identity, api: clientapi.New(base, token), ctx: ctx, cancel: cancel, settings: settings, stun: *stun, startHidden: *startup}
 	a.api.Context = ctx
+	// Reported on every control request so an operator can gate outdated clients.
+	a.api.AgentVersion = appVersion
 	if settings.ServerURL == base && strings.TrimSpace(settings.AdminToken) != "" {
 		a.adminMode = true
 		a.adminToken = strings.TrimSpace(settings.AdminToken)

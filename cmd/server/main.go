@@ -142,7 +142,8 @@ func run() error {
 		DisableEnrollment: cfg.Network.JoinCode == "", StartedAt: time.Now().UTC(),
 		ControlListen: cfg.Server.Listen, ControlTLS: cfg.Server.TLSCert != "",
 		AdminListen: cfg.Server.AdminListen, AdminTLS: adminTLS,
-		DataDirSummary: dataDirSummary(cfg.Storage.DataDir),
+		MinClientVersion: cfg.Server.MinClientVersion,
+		DataDirSummary:   dataDirSummary(cfg.Storage.DataDir),
 	}
 	controlServer := &http.Server{Addr: cfg.Server.Listen, Handler: service.Handler(), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second, IdleTimeout: 90 * time.Second, MaxHeaderBytes: 32 * 1024}
 	// TLSNextProto disables HTTP/2 for the native HTTP/1.1 Upgrade relay.

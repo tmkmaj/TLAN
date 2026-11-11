@@ -61,6 +61,9 @@ type RegisteredDevice struct {
 	LastSeen    time.Time           `json:"last_seen"`
 	Online      bool                `json:"online"`
 	Blocked     bool                `json:"blocked,omitempty"`
+	// ClientVersion is the release version this device last reported. It gates
+	// access once the server requires a minimum client version.
+	ClientVersion string `json:"client_version,omitempty"`
 }
 
 type CandidateRecord struct {
@@ -481,6 +484,41 @@ func (s *Store) Heartbeat(deviceID core.DeviceID) (RegisteredDevice, error) {
 		return RegisteredDevice{}, err
 	}
 	return device, nil
+}
+
+
+// SetClientVersion records the release version a registered device reports.
+// Reporting the same version again is a no-op so the state file is not
+// rewritten on every heartbeat.
+func (s *Store) SetClientVersion(deviceID core.DeviceID, version string) error {
+	version = strings.TrimSpace(version)
+	if version == "" || deviceID.Validate() != nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	device, ok := s.data.Devices[deviceID.String()]
+	if !ok || device.ClientVersion == version {
+		return nil
+	}
+	device.ClientVersion = version
+	s.data.Devices[deviceID.String()] = device
+	return s.persistLocked()
+}
+
+// ClientVersion returns the version a registered device last reported. The
+// second result is false when the identity is unknown.
+func (s *Store) ClientVersion(deviceID core.DeviceID) (string, bool) {
+	if deviceID.Validate() != nil {
+		return "", false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	device, ok := s.data.Devices[deviceID.String()]
+	if !ok {
+		return "", false
+	}
+	return device.ClientVersion, true
 }
 
 // RegisteredDeviceExists reports whether an identity has completed the

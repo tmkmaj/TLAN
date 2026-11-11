@@ -23,6 +23,8 @@ type Client struct {
 	Token   string
 	HTTP    *http.Client
 	Context context.Context
+	// AgentVersion is reported to the server so it can gate outdated clients.
+	AgentVersion string
 
 	retryDelay func(attempt int) time.Duration
 }
@@ -302,6 +304,9 @@ func (c *Client) doRequest(ctx context.Context, httpClient *http.Client, method,
 	}
 	if hasBody {
 		req.Header.Set("Content-Type", "application/json")
+	}
+	if c.AgentVersion != "" {
+		req.Header.Set("X-Client-Version", c.AgentVersion)
 	}
 	if c.Token != "" {
 		if strings.HasPrefix(c.Token, "member_") {

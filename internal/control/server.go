@@ -33,13 +33,16 @@ type Server struct {
 	ControlTLS          bool
 	AdminListen         string
 	AdminTLS            bool
-	DataDirSummary      string
-	Relay               *network.RelayBroker
-	FRP                 *frpauth.Store
-	relayMu             sync.Mutex
-	relaySlotsOnce      sync.Once
-	relaySlots          chan struct{}
-	relayPairs          map[string]network.RelayTicket
+	// MinClientVersion is the oldest release client the server still serves.
+	// Empty disables the gate; beta builds are never gated.
+	MinClientVersion string
+	DataDirSummary   string
+	Relay            *network.RelayBroker
+	FRP              *frpauth.Store
+	relayMu          sync.Mutex
+	relaySlotsOnce   sync.Once
+	relaySlots       chan struct{}
+	relayPairs       map[string]network.RelayTicket
 }
 
 func (s *Server) Handler() http.Handler {
@@ -112,6 +115,13 @@ func (s *Server) auth(next http.Handler) http.Handler {
 			return
 		}
 		if credential, ok := s.Store.AuthenticateMember(token); ok && (frpRouteAllowed(r) || memberRouteAllowed(r, credential)) {
+			if reported := strings.TrimSpace(r.Header.Get(clientVersionHeader)); reported != "" {
+				_ = s.Store.SetClientVersion(core.DeviceID(credential.DeviceID), reported)
+			}
+			if err := s.clientVersionAllowed(credential); err != nil {
+				writeError(w, http.StatusUpgradeRequired, err.Error())
+				return
+			}
 			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), memberKey{}, credential)))
 			return
 		}

@@ -55,6 +55,17 @@ func CompareVersions(a, b string) (int, error) {
 	return 0, nil
 }
 
+// IsPrerelease reports whether a version carries a prerelease identifier, for
+// example v0.7.0-beta.1. Callers use it to keep beta builds out of release
+// gates.
+func IsPrerelease(raw string) (bool, error) {
+	parsed, err := parseVersion(raw)
+	if err != nil {
+		return false, err
+	}
+	return len(parsed.pre) > 0, nil
+}
+
 func parseVersion(raw string) (parsedVersion, error) {
 	var out parsedVersion
 	if raw == "" || raw != strings.TrimSpace(raw) {
