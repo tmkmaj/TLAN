@@ -429,7 +429,7 @@ func (b *meshBind) handleProbeOn(u *net.UDPConn, packet []byte, addr netip.AddrP
 		r.direct = addr
 		r.directSocket = socketIndex
 		r.lastDirect = time.Now()
-		r.rtt = time.Since(r.pingStarted)
+		r.rtt = measuredRTT(time.Since(r.pingStarted))
 		b.mu.Unlock()
 		return
 	}

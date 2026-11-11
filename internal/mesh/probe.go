@@ -13,6 +13,17 @@ type peerProbe struct {
 	RTT            time.Duration
 }
 
+// measuredRTT records a successful round-trip sample. Some platforms (notably
+// Windows) expose a monotonic clock whose resolution is coarser than a fast
+// loopback round trip, so time.Since can return exactly zero. Zero is reserved
+// to mean "no measurement yet", so successful samples are clamped positive.
+func measuredRTT(d time.Duration) time.Duration {
+	if d <= 0 {
+		return time.Microsecond
+	}
+	return d
+}
+
 // Probes travel inside WireGuard over whichever authenticated path is selected,
 // so relay latency is measured to the other device rather than to the server.
 func probePacket(source, target netip.Addr, reply bool, nonce [8]byte) []byte {
@@ -90,7 +101,7 @@ func (t *tunnel) handleProbe(p []byte) bool {
 	defer t.probeMu.Unlock()
 	state, ok := t.probes[source]
 	if ok && state.Nonce == nonce && !state.Sent.IsZero() && time.Since(state.Sent) < 5*time.Second {
-		state.RTT = time.Since(state.Sent)
+		state.RTT = measuredRTT(time.Since(state.Sent))
 		state.Received = time.Now()
 		state.Sent = time.Time{}
 		t.probes[source] = state
