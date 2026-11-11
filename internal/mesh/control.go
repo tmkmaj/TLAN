@@ -62,7 +62,10 @@ func (e *Engine) handleControlError(err error) bool {
 	var response *clientapi.HTTPError
 	if errors.As(err, &response) {
 		switch response.StatusCode {
-		case http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound:
+		case http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound, http.StatusUpgradeRequired:
+			// StatusUpgradeRequired is the server's minimum-version gate: the
+			// client can no longer be served, so it must stop rather than keep
+			// an unusable tunnel up.
 			// Close waits for this loop; cancellation delegates cleanup to the
 			// lifecycle watcher instead of deadlocking inside the loop itself.
 			e.cancel()

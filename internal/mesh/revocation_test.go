@@ -18,7 +18,7 @@ import (
 )
 
 func TestControlFailureLifecycle(t *testing.T) {
-	for _, status := range []int{401, 403, 404, 503} {
+	for _, status := range []int{401, 403, 404, 426, 503} {
 		t.Run(fmt.Sprint(status), func(t *testing.T) {
 			t.Parallel()
 			store, err := storage.Open(filepath.Join(t.TempDir(), "state.json"))
