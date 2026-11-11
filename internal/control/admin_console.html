@@ -391,7 +391,7 @@ __INSECURE_BANNER__
       </div>
       <div class="table-shell">
         <table>
-          <thead><tr><th>成员</th><th>虚拟 IP</th><th>连接</th><th>最后心跳</th><th>加入时间</th><th>转发</th><th>中继 / FRP</th><th>操作</th></tr></thead>
+          <thead><tr><th>成员</th><th>虚拟 IP</th><th>连接</th><th>版本</th><th>最后心跳</th><th>加入时间</th><th>转发</th><th>中继 / FRP</th><th>操作</th></tr></thead>
           <tbody id="members-body"></tbody>
         </table>
         <div id="members-empty" class="empty-state" hidden><strong>没有匹配的成员</strong>调整搜索条件或筛选器后再试。</div>
@@ -673,6 +673,7 @@ __INSECURE_BANNER__
         '<td data-label="成员"><div class="member-cell"><span class="avatar" aria-hidden="true">' + initials(member) + '</span><div><div class="member-name">' + escapeHTML(name) + '</div><div class="member-id">' + escapeHTML(member.id) + '</div></div></div></td>' +
         '<td data-label="虚拟 IP"><span class="ip">' + escapeHTML(member.virtual_ip || '–') + '</span></td>' +
         '<td data-label="连接">' + status + '</td>' +
+        '<td data-label="版本"><span class="muted">' + escapeHTML(member.client_version || '未上报') + '</span></td>' +
         '<td data-label="最后心跳"><span class="muted">' + escapeHTML(formatRelative(member.last_seen)) + '</span><br><span class="member-id">' + escapeHTML(formatTime(member.last_seen)) + '</span></td>' +
         '<td data-label="加入时间"><span class="muted">' + escapeHTML(formatTime(member.joined_at)) + '</span></td>' +
         '<td data-label="转发">' + forwarding + '</td>' +

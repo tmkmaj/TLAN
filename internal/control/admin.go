@@ -48,6 +48,9 @@ type adminMember struct {
 	LastSeen   time.Time `json:"last_seen"`
 	RelayCount int       `json:"relay_count"`
 	FRPLeases  int       `json:"frp_leases"`
+	// ClientVersion is the release version the device last reported so an
+	// operator can see who a minimum-version gate would cut off.
+	ClientVersion string `json:"client_version,omitempty"`
 }
 
 type adminConsole struct {
@@ -282,10 +285,12 @@ func (c *adminConsole) members(w http.ResponseWriter, requestID string) {
 		if c.server.FRP != nil {
 			frpLeases = c.server.FRP.ActiveLeaseCount(network.ID, device.ID)
 		}
+		clientVersion, _ := c.server.Store.ClientVersion(core.DeviceID(device.ID))
 		members = append(members, adminMember{
 			ID: device.ID, Name: device.Name, VirtualIP: device.VirtualIP, Online: device.Online,
 			Blocked: device.Blocked, Forwarding: device.Forwarding, JoinedAt: device.JoinedAt,
 			LastSeen: device.LastSeen, RelayCount: counts[device.ID], FRPLeases: frpLeases,
+			ClientVersion: clientVersion,
 		})
 	}
 	writeAdminData(w, http.StatusOK, requestID, map[string]any{"network": network, "members": members})
