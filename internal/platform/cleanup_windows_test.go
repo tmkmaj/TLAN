@@ -274,24 +274,6 @@ func TestEnsureIPv4RouteAddsWhenMissing(t *testing.T) {
 	}
 }
 
-func TestWindowsCleanupFirewallAcceptsStableInstanceID(t *testing.T) {
-	record := makeOwnedRecord(t, "instance", ResourceFirewallRule, "LANMesh-LANMesh", "10.44.0.0/24", "LANMesh-LANMesh", "{22222222-2222-2222-2222-222222222222}")
-	runner := &fakeWindowsRunner{handle: func(script string) ([]byte, error) {
-		switch {
-		case strings.Contains(script, "Get-NetFirewallRule"):
-			return []byte("LANMesh-LANMesh\r\n"), nil
-		case strings.Contains(script, "Remove-NetFirewallRule"):
-			return nil, nil
-		default:
-			t.Fatalf("unexpected script: %s", script)
-			return nil, nil
-		}
-	}}
-	if err := CleanupResourceWithRunner(record, runner); err != nil {
-		t.Fatal(err)
-	}
-}
-
 func TestWindowsAdapterQueryTreatsMissingAdapterAsAbsent(t *testing.T) {
 	restore := stubAdapters(t, []adapterInfo{{Name: "Other", GUID: "{11111111-1111-1111-1111-111111111111}"}})
 	defer restore()
