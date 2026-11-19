@@ -29,17 +29,43 @@ func (e *endpoint) DstToBytes() []byte  { return []byte(e.address.String()) }
 func (e *endpoint) DstIP() netip.Addr   { return e.address.Addr() }
 func (e *endpoint) SrcIP() netip.Addr   { return netip.Addr{} }
 
+// pendingProbe records one outstanding authenticated connectivity check.
+// Probes are keyed by nonce so the three per-socket check loops never overwrite
+// each other's outstanding check; a reply therefore matches the probe that
+// actually produced it.
+type pendingProbe struct {
+	socket int
+	sent   time.Time
+}
+
 type peerRoute struct {
-	key          []byte
-	candidates   []netip.AddrPort
+	key        []byte
+	candidates []netip.AddrPort
+
+	// direct is the pinned direct path. Both halves identify it: the remote
+	// address AND the local socket that owns the NAT mapping for it. Sending a
+	// packet on a different socket would use a mapping the peer's NAT has never
+	// seen, and the kernel would silently drop it.
 	direct       netip.AddrPort
 	directSocket int
 	lastDirect   time.Time
-	nonce        [8]byte
-	pingStarted  time.Time
-	rtt          time.Duration
-	relay        *network.StreamRelay
-	relayExpiry  time.Time
+
+	// pending holds the outstanding probes for this route, keyed by nonce.
+	pending map[[8]byte]pendingProbe
+
+	// failures counts consecutive unanswered probes on the pinned path. It is
+	// the evidence required before the path may migrate to another socket.
+	failures int
+
+	// rtt plus a Schmitt-trigger state avoid flapping when the measured latency
+	// sits near the preference boundary.
+	rtt     time.Duration
+	slow    bool
+	slowRun int
+	fastRun int
+
+	relay       *network.StreamRelay
+	relayExpiry time.Time
 }
 type datagram struct {
 	data []byte
@@ -67,6 +93,9 @@ type meshBind struct {
 	in        chan datagram
 	routes    map[netip.Addr]*peerRoute
 	stun      map[[12]byte]chan stunReply
+	// onDrop is set by the engine so bind-level drops are counted with the
+	// tunnel's own counters.
+	onDrop func()
 }
 
 func newBind(local netip.Addr, networkID, privateKey string) (*meshBind, error) {
@@ -107,7 +136,6 @@ func (b *meshBind) Open(port uint16) ([]conn.ReceiveFunc, uint16, error) {
 	for index, u := range sockets {
 		index, u := index, u
 		go b.readUDP(u, done, in, index)
-		go b.checkLoop(u, done)
 		receivers = append(receivers, func(packets [][]byte, sizes []int, eps []conn.Endpoint) (int, error) {
 			select {
 			case <-done:
@@ -119,6 +147,7 @@ func (b *meshBind) Open(port uint16) ([]conn.ReceiveFunc, uint16, error) {
 			}
 		})
 	}
+	go b.checkLoop(done)
 	return receivers, b.port, nil
 }
 func (b *meshBind) Close() error {
@@ -158,22 +187,117 @@ func (b *meshBind) ParseEndpoint(value string) (conn.Endpoint, error) {
 }
 
 const (
+	// A direct path must beat these thresholds to be used, and the gap between
+	// them is the deadband that keeps a path from flapping when its latency
+	// hovers at the boundary.
 	directRTTPreference = 180 * time.Millisecond
-	meshBindPortCount   = 3
-	meshPredictedPorts  = 3
+	directRTTDrop       = 220 * time.Millisecond
+	directRTTSamples    = 3
+
+	// The pinned path is abandoned only after this many consecutive probes go
+	// unanswered, so a single lost packet never moves the flow.
+	directFailureThreshold = 3
+	directProbeTimeout     = 5 * time.Second
+	directStaleAfter       = 12 * time.Second
+
+	meshBindPortCount  = 3
+	meshPredictedPorts = 3
 )
 
-// directPreferred keeps both paths alive and prefers a fresh, low-RTT direct
-// path. A relay is used immediately while the direct probe is still warming up
-// or when the direct path is measured as high latency.
+// directUsable reports whether the pinned direct path is recent enough to
+// trust. It deliberately reads the pinned pair (address + local socket) rather
+// than "the last address any socket answered from".
+func (r *peerRoute) directUsable(now time.Time) bool {
+	if r == nil || !r.direct.IsValid() || r.lastDirect.IsZero() {
+		return false
+	}
+	return now.Sub(r.lastDirect) < directStaleAfter
+}
+
+// directPreferred keeps both paths alive and prefers the pinned direct path.
+// A relay is used immediately while the direct probe is still warming up, when
+// the pinned path has failed directFailureThreshold probes in a row, or when
+// the measured latency has crossed the slow threshold. Two separate thresholds
+// (directRTTPreference and directRTTDrop) give the latency decision a deadband
+// so it cannot oscillate sample by sample.
 func (r *peerRoute) directPreferred(now time.Time, relayAvailable bool) bool {
-	if r == nil || !r.direct.IsValid() || now.Sub(r.lastDirect) >= 10*time.Second {
+	if !r.directUsable(now) {
+		return false
+	}
+	if r.failures >= directFailureThreshold {
 		return false
 	}
 	if !relayAvailable {
 		return true
 	}
-	return r.rtt <= 0 || r.rtt <= directRTTPreference
+	return r.rtt <= 0 || !r.slow
+}
+
+// observeSuccess promotes a socket to the pinned path and refreshes the RTT
+// with hysteresis. Path migration is only allowed once the previously pinned
+// path has gone unanswered directFailureThreshold times, so a socket that merely
+// answers a probe does not steal the flow away from the mapping in use.
+func (r *peerRoute) observeSuccess(now time.Time, address netip.AddrPort, socket int, rtt time.Duration) {
+	if r.direct.IsValid() && r.directSocket != socket && r.failures < directFailureThreshold {
+		// The pinned mapping is still healthy: record the sample as evidence but
+		// keep sending on the socket the peer's NAT already learned.
+		r.noteRTT(rtt)
+		return
+	}
+	r.direct = address
+	r.directSocket = socket
+	r.lastDirect = now
+	r.failures = 0
+	r.noteRTT(rtt)
+}
+
+func (r *peerRoute) noteRTT(rtt time.Duration) {
+	if rtt <= 0 {
+		return
+	}
+	r.rtt = rtt
+	if r.slow {
+		if rtt < directRTTPreference {
+			r.fastRun++
+			if r.fastRun >= directRTTSamples {
+				r.slow = false
+				r.fastRun = 0
+				r.slowRun = 0
+			}
+			return
+		}
+		r.fastRun = 0
+		return
+	}
+	if rtt > directRTTDrop {
+		r.slowRun++
+		if r.slowRun >= directRTTSamples {
+			r.slow = true
+			r.slowRun = 0
+			r.fastRun = 0
+		}
+		return
+	}
+	r.slowRun = 0
+}
+
+// observeFailure records one unanswered probe on the pinned path. The path is
+// only abandoned after consecutive failures, which is the debounce that stops a
+// single dropped packet from moving the flow to the relay.
+func (r *peerRoute) observeFailure(now time.Time) {
+	if r == nil || !r.direct.IsValid() {
+		return
+	}
+	r.failures++
+	if r.failures < directFailureThreshold {
+		return
+	}
+	// Keep the learned address as a hint for the next round of punching, but
+	// stop claiming it is usable.
+	r.lastDirect = time.Time{}
+	r.slow = false
+	r.slowRun = 0
+	r.fastRun = 0
 }
 
 func (b *meshBind) Send(bufs [][]byte, ep conn.Endpoint) error {
@@ -187,10 +311,15 @@ func (b *meshBind) Send(bufs [][]byte, ep conn.Endpoint) error {
 	}
 	sockets := append([]*net.UDPConn{primary}, extra...)
 	direct, directSocket, relay := r.direct, r.directSocket, r.relay
-	useDirect := r.directPreferred(time.Now(), relay != nil) && !b.relayOnly
+	now := time.Now()
+	useDirect := !b.relayOnly && r.directPreferred(now, relay != nil)
 	candidates := append([]netip.AddrPort(nil), r.candidates...)
 	b.mu.RUnlock()
+
 	for _, packet := range bufs {
+		// A genuine relay write failure must not silently drop the packet: fall
+		// through to the direct path (or to punching) instead of returning a
+		// success the caller never earned.
 		if useDirect && directSocket >= 0 && directSocket < len(sockets) {
 			if _, err := sockets[directSocket].WriteToUDPAddrPort(packet, direct); err == nil {
 				continue
@@ -199,19 +328,45 @@ func (b *meshBind) Send(bufs [][]byte, ep conn.Endpoint) error {
 		if relay != nil {
 			if err := relay.Send(packet); err == nil {
 				continue
+			} else if b.relayOnly {
+				// Relay-only mode has no alternative path; make the drop visible
+				// instead of reporting a success that never happened.
+				b.recordDrop()
+				continue
 			}
 		}
 		if b.relayOnly {
 			continue
 		}
+		if directSocket >= 0 && directSocket < len(sockets) && direct.IsValid() {
+			if _, err := sockets[directSocket].WriteToUDPAddrPort(packet, direct); err == nil {
+				continue
+			}
+		}
+		wrote := false
 		for _, u := range sockets {
 			for _, address := range candidates {
-				_, _ = u.WriteToUDPAddrPort(packet, address)
+				if _, err := u.WriteToUDPAddrPort(packet, address); err == nil {
+					wrote = true
+				}
 			}
+		}
+		if !wrote {
+			b.recordDrop()
 		}
 	}
 	return nil
 }
+
+// recordDrop counts a datagram that the bind could not hand to any path. The
+// tunnel already tracks drops it makes itself; this covers sends that fail
+// below it so a broken path is visible instead of silently "succeeding".
+func (b *meshBind) recordDrop() {
+	if b.onDrop != nil {
+		b.onDrop()
+	}
+}
+
 func (b *meshBind) updatePeer(ip netip.Addr, publicKey string, candidates []netip.AddrPort) error {
 	priv, err := ecdh.X25519().NewPrivateKey(b.private)
 	if err != nil {
@@ -348,7 +503,18 @@ func (b *meshBind) readUDP(u *net.UDPConn, done <-chan struct{}, in chan<- datag
 		}
 	}
 }
-func (b *meshBind) checkLoop(u *net.UDPConn, done <-chan struct{}) {
+
+// checkLoop runs one authenticated connectivity check per tick. It is a single
+// prober for ALL sockets rather than one goroutine per socket: a per-socket
+// prober would repeatedly overwrite the route's outstanding probe and every
+// reply but the last would be discarded as unmatched.
+//
+// Probing order follows the health of the pinned path: while it is answering,
+// only that socket is probed (a probe on another socket would learn a mapping
+// the peer's NAT has not seen and would move the flow). Only after the pinned
+// path has failed directFailureThreshold times does probing fan out across the
+// remaining sockets to find a better mapping.
+func (b *meshBind) checkLoop(done <-chan struct{}) {
 	if b.relayOnly {
 		return
 	}
@@ -358,37 +524,100 @@ func (b *meshBind) checkLoop(u *net.UDPConn, done <-chan struct{}) {
 		select {
 		case <-done:
 			return
-		case <-ticker.C:
-			type send struct {
-				addr netip.AddrPort
-				data []byte
-			}
-			var sends []send
-			b.mu.Lock()
-			for _, r := range b.routes {
-				_, _ = rand.Read(r.nonce[:])
-				r.pingStarted = time.Now()
-				packet := make([]byte, 41)
-				copy(packet, "LMP1")
-				packet[4] = 1
-				copy(packet[5:9], b.local.AsSlice())
-				binary.BigEndian.PutUint64(packet[9:17], uint64(time.Now().Unix()))
-				copy(packet[17:25], r.nonce[:])
-				signProbe(packet, r.key)
-				for _, addr := range r.candidates {
-					sends = append(sends, send{addr, packet})
-				}
-				if r.direct.IsValid() {
-					sends = append(sends, send{r.direct, packet})
-				}
-			}
-			b.mu.Unlock()
-			for _, s := range sends {
-				_, _ = u.WriteToUDPAddrPort(s.data, s.addr)
-			}
+		case now := <-ticker.C:
+			b.probeOnce(now)
 		}
 	}
 }
+
+type probeSend struct {
+	socket int
+	addr   netip.AddrPort
+	data   []byte
+}
+
+func (b *meshBind) probeOnce(now time.Time) {
+	b.mu.RLock()
+	sockets := append([]*net.UDPConn{b.udp}, b.extra...)
+	b.mu.RUnlock()
+	if len(sockets) == 0 || sockets[0] == nil {
+		return
+	}
+
+	var sends []probeSend
+	var routes []netip.Addr
+
+	b.mu.Lock()
+	for ip, r := range b.routes {
+		if r.pending == nil {
+			r.pending = make(map[[8]byte]pendingProbe)
+		}
+		// Retire probes that can no longer be answered. A timed-out probe on the
+		// pinned socket is evidence of path trouble, not evidence about any
+		// other socket.
+		for nonce, probe := range r.pending {
+			if now.Sub(probe.sent) < directProbeTimeout {
+				continue
+			}
+			delete(r.pending, nonce)
+			if r.directSocket == probe.socket {
+				r.observeFailure(now)
+			}
+		}
+		targets := b.socketsToProbe(r)
+		for _, socket := range targets {
+			var nonce [8]byte
+			if _, err := rand.Read(nonce[:]); err != nil {
+				continue
+			}
+			r.pending[nonce] = pendingProbe{socket: socket, sent: now}
+			packet := make([]byte, 41)
+			copy(packet, "LMP1")
+			packet[4] = 1
+			copy(packet[5:9], b.local.AsSlice())
+			binary.BigEndian.PutUint64(packet[9:17], uint64(now.Unix()))
+			copy(packet[17:25], nonce[:])
+			signProbe(packet, r.key)
+			for _, address := range r.candidates {
+				sends = append(sends, probeSend{socket: socket, addr: address, data: packet})
+			}
+			if r.direct.IsValid() {
+				sends = append(sends, probeSend{socket: socket, addr: r.direct, data: packet})
+			}
+		}
+		routes = append(routes, ip)
+	}
+	// Bound the outstanding set: an unreachable peer must not grow it forever.
+	for _, ip := range routes {
+		if r := b.routes[ip]; r != nil && len(r.pending) > 512 {
+			r.pending = make(map[[8]byte]pendingProbe)
+		}
+	}
+	b.mu.Unlock()
+
+	for _, send := range sends {
+		if send.socket < 0 || send.socket >= len(sockets) || sockets[send.socket] == nil {
+			continue
+		}
+		_, _ = sockets[send.socket].WriteToUDPAddrPort(send.data, send.addr)
+	}
+}
+
+// socketsToProbe returns the sockets worth probing for this route. While the
+// pinned mapping is healthy only it is probed; otherwise every socket is, so a
+// closed port can be replaced.
+func (b *meshBind) socketsToProbe(r *peerRoute) []int {
+	total := 1 + len(b.extra)
+	if r.direct.IsValid() && r.directSocket >= 0 && r.directSocket < total && r.failures < directFailureThreshold {
+		return []int{r.directSocket}
+	}
+	all := make([]int, 0, total)
+	for index := 0; index < total; index++ {
+		all = append(all, index)
+	}
+	return all
+}
+
 func containsAddrPort(values []netip.AddrPort, target netip.AddrPort) bool {
 	for _, value := range values {
 		if value == target {
@@ -425,13 +654,19 @@ func (b *meshBind) handleProbeOn(u *net.UDPConn, packet []byte, addr netip.AddrP
 		b.mu.Unlock()
 		return
 	}
-	if packet[4] == 2 && hmac.Equal(packet[17:25], r.nonce[:]) {
-		r.direct = addr
-		r.directSocket = socketIndex
-		r.lastDirect = time.Now()
-		r.rtt = measuredRTT(time.Since(r.pingStarted))
-		b.mu.Unlock()
-		return
+	if packet[4] == 2 {
+		var nonce [8]byte
+		copy(nonce[:], packet[17:25])
+		if probe, ok := r.pending[nonce]; ok {
+			delete(r.pending, nonce)
+			// Only a reply received on the socket that carried the probe proves
+			// that socket's NAT mapping works; ignore cross-socket echoes.
+			if probe.socket == socketIndex {
+				r.observeSuccess(time.Now(), addr, socketIndex, measuredRTT(time.Since(probe.sent)))
+			}
+			b.mu.Unlock()
+			return
+		}
 	}
 	if packet[4] != 1 {
 		b.mu.Unlock()

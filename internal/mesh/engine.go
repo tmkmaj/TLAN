@@ -162,6 +162,7 @@ func Start(parent context.Context, options Options) (*Engine, error) {
 		return nil, err
 	}
 	e.bind.relayOnly = options.RelayOnly
+	e.bind.onDrop = func() { e.plain.Dropped.Add(1) }
 	e.native = options.Native
 	if e.native == nil {
 		e.native, err = platform.OpenTunnelWithOptions(options.InterfaceName, netip.PrefixFrom(local, prefix.Bits()), MTU, platform.TunnelOptions{

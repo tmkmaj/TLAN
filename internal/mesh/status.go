@@ -46,7 +46,10 @@ func (e *Engine) Status() Status {
 		path := "checking"
 		rtt := time.Duration(0)
 		if r := e.bind.routes[ip]; r != nil {
-			if time.Since(r.lastDirect) < 10*time.Second {
+			// Report the path the sender actually chooses. Using a separate
+			// "recently answered" rule here is what made the UI disagree with
+			// itself and flip between direct and relay.
+			if r.directPreferred(time.Now(), r.relay != nil) && !e.bind.relayOnly {
 				path = "direct UDP"
 				rtt = r.rtt
 			} else if r.relay != nil {
