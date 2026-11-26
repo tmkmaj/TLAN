@@ -41,6 +41,23 @@ try {
         throw "linux/amd64 go vet failed with exit code $LASTEXITCODE"
     }
 
+    Write-Host '==> Building windows/amd64 client and installer'
+    $env:GOOS = 'windows'
+    $env:GOARCH = 'amd64'
+    $env:CGO_ENABLED = '0'
+    go build -mod=vendor -ldflags '-s -w' -o (Join-Path $outputDir 'TLAN.exe') ./cmd/client
+    if ($LASTEXITCODE -ne 0) {
+        throw "windows/amd64 client build failed with exit code $LASTEXITCODE"
+    }
+    go build -mod=vendor -ldflags '-s -w' -o (Join-Path $outputDir 'TLAN-Setup.exe') ./cmd/installer
+    if ($LASTEXITCODE -ne 0) {
+        throw "windows/amd64 installer build failed with exit code $LASTEXITCODE"
+    }
+    go vet -mod=vendor ./cmd/client ./cmd/installer
+    if ($LASTEXITCODE -ne 0) {
+        throw "windows/amd64 go vet failed with exit code $LASTEXITCODE"
+    }
+
     Remove-Item Env:GOOS -ErrorAction SilentlyContinue
     Remove-Item Env:GOARCH -ErrorAction SilentlyContinue
     Remove-Item Env:CGO_ENABLED -ErrorAction SilentlyContinue

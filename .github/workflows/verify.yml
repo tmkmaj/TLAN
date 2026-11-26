@@ -37,7 +37,7 @@ jobs:
           CGO_ENABLED: '0'
         run: go vet -mod=vendor ./...
       - name: Check Linux installer syntax
-        run: bash -n install.sh && bash -n deploy/install-server.sh
+        run: bash -n install.sh && bash -n deploy/install-server.sh && bash -n deploy/frps/install-frps.sh
       - name: Build Linux executables
         env:
           CGO_ENABLED: '0'
