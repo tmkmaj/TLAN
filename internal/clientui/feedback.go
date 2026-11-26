@@ -77,8 +77,6 @@ func explainZH(action string, err error, secrets ...string) Feedback {
 		f.Title, f.Message = "部分资源清理失败", "穿透已停止，但本机运行目录可能仍有残留。请重新启动客户端后重试。"
 	case strings.Contains(s, "version_mismatch") || strings.Contains(s, "client version"):
 		f.Title, f.Message = "版本不兼容，无法登录", "客户端与服务端的大/中版本号不一致，请将客户端或服务端升级至相同大.中版本后重试。"
-	case strings.Contains(s, "version_mismatch") || strings.Contains(s, "client version"):
-		f.Title, f.Message = "Incompatible Version", "Client and server Major.Minor versions do not match. Upgrade the client or server to the same Major.Minor release."
 	case strings.Contains(s, "invalid network password"):
 		f.Title, f.Message = "网络密码不正确", "请向网络创建者确认密码后重新加入；它与服务器访问令牌不同。"
 	case strings.Contains(s, "private enrollment is disabled"):
@@ -174,8 +172,6 @@ func explainEN(action string, err error, secrets ...string) Feedback {
 		f.Title, f.Message = "Unsupported FRP configuration", "Check target kind, server mode, and rule combination."
 	case strings.Contains(s, "cleanup_incomplete"):
 		f.Title, f.Message = "Incomplete cleanup", "Port mapping stopped, but some runtime files remain. Restart the client to retry."
-	case strings.Contains(s, "version_mismatch") || strings.Contains(s, "client version"):
-		f.Title, f.Message = "版本不兼容，无法登录", "客户端与服务端的大/中版本号不一致，请将客户端或服务端升级至相同大.中版本后重试。"
 	case strings.Contains(s, "version_mismatch") || strings.Contains(s, "client version"):
 		f.Title, f.Message = "Incompatible Version", "Client and server Major.Minor versions do not match. Upgrade the client or server to the same Major.Minor release."
 	case strings.Contains(s, "invalid network password"):
