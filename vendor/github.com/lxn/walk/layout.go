@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
+//go:build windows
 // +build windows
 
 package walk
@@ -112,7 +113,7 @@ func startLayoutPerformer(form Form) (performLayout chan ContainerLayoutItem, la
 		sizing := false
 		busy := false
 		var cancel chan struct{}
-		done := make(chan []LayoutResult)
+		var done chan []LayoutResult
 
 		for {
 			select {
@@ -123,11 +124,14 @@ func startLayoutPerformer(form Form) (performLayout chan ContainerLayoutItem, la
 
 				busy = true
 				cancel = make(chan struct{})
+				currentDone := make(chan []LayoutResult, 1)
+				done = currentDone
 
-				go layoutTree(root, root.Geometry().ClientSize, cancel, done, stopwatch)
+				go layoutTree(root, root.Geometry().ClientSize, cancel, currentDone, stopwatch)
 
 			case results := <-done:
 				busy = false
+				done = nil
 				if cancel != nil {
 					close(cancel)
 					cancel = nil
@@ -151,7 +155,6 @@ func startLayoutPerformer(form Form) (performLayout chan ContainerLayoutItem, la
 				if cancel != nil {
 					close(cancel)
 				}
-				close(done)
 				close(quit)
 				return
 			}
@@ -358,6 +361,11 @@ func applyLayoutResults(results []LayoutResult, stopwatch *stopwatch) error {
 					}
 				}
 
+				if oldBounds.Width > 0 && oldBounds.Height > 0 {
+					oldRect := oldBounds.toRECT()
+					win.InvalidateRect(result.container.Handle(), &oldRect, true)
+				}
+
 				if hdwp = win.DeferWindowPos(
 					hdwp,
 					ri.Item.Handle(),
@@ -366,10 +374,12 @@ func applyLayoutResults(results []LayoutResult, stopwatch *stopwatch) error {
 					int32(ri.Bounds.Y),
 					int32(ri.Bounds.Width),
 					int32(ri.Bounds.Height),
-					win.SWP_NOACTIVATE|win.SWP_NOOWNERZORDER|win.SWP_NOZORDER); hdwp == 0 {
+					win.SWP_NOACTIVATE|win.SWP_NOOWNERZORDER|win.SWP_NOZORDER|win.SWP_NOCOPYBITS); hdwp == 0 {
 
 					return lastError("DeferWindowPos")
 				}
+
+				win.InvalidateRect(ri.Item.Handle(), nil, true)
 
 				if widget.GraphicsEffects().Len() == 0 {
 					continue

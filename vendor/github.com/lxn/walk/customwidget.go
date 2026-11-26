@@ -144,6 +144,9 @@ func (cw *CustomWidget) WndProc(hwnd win.HWND, msg uint32, wParam, lParam uintpt
 		defer canvas.Dispose()
 
 		bounds := rectangleFromRECT(ps.RcPaint)
+		if wParam != 0 {
+			bounds = cw.ClientBoundsPixels()
+		}
 		if cw.paintMode == PaintBuffered {
 			err = cw.bufferedPaint(canvas, bounds)
 		} else if cw.paintPixels != nil {

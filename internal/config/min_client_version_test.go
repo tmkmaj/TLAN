@@ -11,7 +11,7 @@ func TestLoadFileCarriesMinClientVersion(t *testing.T) {
 	const document = `network:
   name: "gate"
   cidr: "10.240.0.0/24"
-  join_code: "TmkNetwork"
+  join_code: "test-join-code"
 server:
   listen: "127.0.0.1:8080"
   stun_listen: ":3478"
@@ -19,7 +19,7 @@ server:
 storage:
   data_dir: "./data"
 security:
-  admin_token: "Tmkmaj233"
+  admin_token: "test-admin-token"
 frp:
   mode: "disabled"
   core_version: "0.71.1"

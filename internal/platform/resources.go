@@ -509,7 +509,7 @@ func DefaultLedgerPath() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("locate user config directory: %w", err)
 	}
-	return filepath.Join(root, "TmkNetworkLAN", "mesh-resources.json"), nil
+	return filepath.Join(root, "TLAN", "mesh-resources.json"), nil
 }
 
 func OpenDefaultLedger() (*FileLedger, error) {

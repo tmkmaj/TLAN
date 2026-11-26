@@ -1,65 +1,78 @@
 $ErrorActionPreference = 'Stop'
+
 $root = $PSScriptRoot
+$outputDir = Join-Path $root 'dist\linux'
+$binPath = Join-Path $outputDir 'tlan-server'
+$zipPath = Join-Path $root 'dist\TLAN-server-linux-amd64.zip'
+$frpsAssetsDir = Join-Path $root 'assets\frp\linux-amd64'
+$frpsBinPath = Join-Path $frpsAssetsDir 'frps'
+$expectedFrpsSHA256 = '2FB8DA8392CF2B332BFCC540F075E928A82D1A106DF0B8FCFCF13497149F8C48'
+$frpsPkgDir = Join-Path $root '.tmp-build\frps-pkg'
+$frpsTarPath = Join-Path $root 'dist\TLAN-frps-linux-amd64.tar.gz'
+
+if (-not (Test-Path $frpsBinPath)) {
+    throw "Missing linux/amd64 frps binary: $frpsBinPath"
+}
+$actualFrpsSHA256 = (Get-FileHash -Algorithm SHA256 $frpsBinPath).Hash.ToUpperInvariant()
+if ($actualFrpsSHA256 -ne $expectedFrpsSHA256) {
+    throw "frps SHA256 mismatch: got $actualFrpsSHA256, want $expectedFrpsSHA256"
+}
+
+$global:LASTEXITCODE = 0
+& (Join-Path $root 'scripts\verify-frps-templates.ps1')
+if ($LASTEXITCODE -ne 0) {
+    throw 'frps template verification failed'
+}
+
+New-Item -ItemType Directory -Force -Path $outputDir | Out-Null
+
 Push-Location $root
-$previous = @{}
-foreach ($key in @('GOOS','GOARCH','CGO_ENABLED','GOCACHE')) { $previous[$key] = [Environment]::GetEnvironmentVariable($key,'Process') }
 try {
     $env:GOOS = 'linux'
     $env:GOARCH = 'amd64'
     $env:CGO_ENABLED = '0'
-    $env:GOCACHE = Join-Path $root '.tmp-build\go-cache'
-    $frps = 'assets\frp\linux-amd64\frps'
-    if (-not (Test-Path -LiteralPath $frps)) { throw 'Missing pinned FRP server binary.' }
-    if ((Get-FileHash -LiteralPath $frps -Algorithm SHA256).Hash -ne '2FB8DA8392CF2B332BFCC540F075E928A82D1A106DF0B8FCFCF13497149F8C48') { throw 'FRP server checksum mismatch' }
-    & (Join-Path $root 'scripts\verify-frps-templates.ps1')
-    New-Item -ItemType Directory -Force 'dist\linux' | Out-Null
-    go build -mod=vendor -trimpath -ldflags '-s -w' -o dist/linux/tmknetworklan-server ./cmd/server
-    if ($LASTEXITCODE -ne 0) { throw 'Debian server build failed' }
-    foreach ($legacy in @('dist/linux/lanmesh-server','dist/linux/lanmesh.env.example','dist/linux/tmknetworklan.env.example','dist/linux/lanmesh.service')) {
-        if (Test-Path -LiteralPath $legacy) { Remove-Item -LiteralPath $legacy -Force }
+    go build -mod=vendor -ldflags '-s -w' -o $binPath ./cmd/server
+    if ($LASTEXITCODE -ne 0) {
+        throw 'go build ./cmd/server failed'
     }
-    Copy-Item -LiteralPath deploy/systemd/tmknetworklan.service -Destination dist/linux/tmknetworklan.service -Force
-    Copy-Item -LiteralPath deploy/Caddyfile -Destination dist/linux/Caddyfile -Force
-    Copy-Item -LiteralPath README.md -Destination dist/linux/README.md -Force
-    New-Item -ItemType Directory -Force 'dist/linux/docs' | Out-Null
-    Copy-Item -LiteralPath docs/IP-DEPLOYMENT.md -Destination dist/linux/docs/IP-DEPLOYMENT.md -Force
-    Copy-Item -LiteralPath docs/R0-BUILD-AND-TEST-BASELINE.md -Destination dist/linux/docs/R0-BUILD-AND-TEST-BASELINE.md -Force
-    Copy-Item -LiteralPath docs/R1-R2-IMPLEMENTATION-REPORT-2026-10-21.md -Destination dist/linux/docs/R1-R2-IMPLEMENTATION-REPORT-2026-10-21.md -Force
-    Copy-Item -LiteralPath docs/ADVANCED-FEATURES-IMPLEMENTATION-2026-10-21.md -Destination dist/linux/docs/ADVANCED-FEATURES-IMPLEMENTATION-2026-10-21.md -Force
-    Copy-Item -LiteralPath docs/CORE-UPDATE-INFRASTRUCTURE.md -Destination dist/linux/docs/CORE-UPDATE-INFRASTRUCTURE.md -Force
-    Copy-Item -LiteralPath docs/FRPC-DESKTOP-COVERAGE.md -Destination dist/linux/docs/FRPC-DESKTOP-COVERAGE.md -Force
-    Copy-Item -LiteralPath THIRD-PARTY-NOTICES.md -Destination dist/linux/THIRD-PARTY-NOTICES.md -Force
-    New-Item -ItemType Directory -Force 'dist/linux/licenses' | Out-Null
-    Copy-Item -LiteralPath 'vendor/golang.org/x/sys/LICENSE' -Destination 'dist/linux/licenses/go-sys.txt' -Force
-    Copy-Item -LiteralPath 'vendor/golang.org/x/crypto/LICENSE' -Destination 'dist/linux/licenses/go-crypto.txt' -Force
-    Copy-Item -LiteralPath 'vendor/gopkg.in/yaml.v3/LICENSE' -Destination 'dist/linux/licenses/go-yaml.txt' -Force
-    Copy-Item -LiteralPath 'vendor/gopkg.in/yaml.v3/NOTICE' -Destination 'dist/linux/licenses/go-yaml-NOTICE.txt' -Force
-    Compress-Archive -Path 'dist\linux\*' -DestinationPath 'dist\TmkNetworkLAN-server-debian-amd64.zip' -Force
-
-    $frpRoot = Join-Path $root 'dist\frps-package'
-    $distRoot = [System.IO.Path]::GetFullPath((Join-Path $root 'dist'))
-    $frpRootFull = [System.IO.Path]::GetFullPath($frpRoot)
-    if (-not $frpRootFull.StartsWith($distRoot + [System.IO.Path]::DirectorySeparatorChar, [System.StringComparison]::OrdinalIgnoreCase)) { throw 'Unsafe FRPS package path' }
-    if (Test-Path -LiteralPath $frpRootFull) { Remove-Item -LiteralPath $frpRootFull -Recurse -Force }
-    New-Item -ItemType Directory -Force -Path (Join-Path $frpRootFull 'opt\tlan-frp\licenses') | Out-Null
-    New-Item -ItemType Directory -Force -Path (Join-Path $frpRootFull 'opt\tlan-frp\docs') | Out-Null
-    Copy-Item -LiteralPath $frps -Destination (Join-Path $frpRootFull 'opt\tlan-frp\frps') -Force
-    Copy-Item -LiteralPath 'deploy\frps\install-frps.sh' -Destination (Join-Path $frpRootFull 'opt\tlan-frp\install-frps.sh') -Force
-    Copy-Item -LiteralPath 'deploy\frps\frps.toml.example' -Destination (Join-Path $frpRootFull 'opt\tlan-frp\frps.toml.example') -Force
-    Copy-Item -LiteralPath 'deploy\frps\frps-wss.toml.example' -Destination (Join-Path $frpRootFull 'opt\tlan-frp\frps-wss.toml.example') -Force
-    Copy-Item -LiteralPath 'deploy\frps\tlan-frps.service' -Destination (Join-Path $frpRootFull 'opt\tlan-frp\tlan-frps.service') -Force
-    Copy-Item -LiteralPath 'deploy\frps\tlan-frps-wss.service' -Destination (Join-Path $frpRootFull 'opt\tlan-frp\tlan-frps-wss.service') -Force
-    Copy-Item -LiteralPath 'deploy\frps\README.md' -Destination (Join-Path $frpRootFull 'opt\tlan-frp\README.md') -Force
-    Copy-Item -LiteralPath 'docs\FRPS-DEPLOY.md' -Destination (Join-Path $frpRootFull 'opt\tlan-frp\docs\FRPS-DEPLOY.md') -Force
-    Copy-Item -LiteralPath 'assets\frp\linux-amd64\manifest.json' -Destination (Join-Path $frpRootFull 'opt\tlan-frp\manifest.json') -Force
-    Copy-Item -LiteralPath 'assets\frp\licenses\FRP-LICENSE.txt' -Destination (Join-Path $frpRootFull 'opt\tlan-frp\licenses\FRP-LICENSE.txt') -Force
-    Copy-Item -LiteralPath 'THIRD-PARTY-NOTICES.md' -Destination (Join-Path $frpRootFull 'opt\tlan-frp\THIRD-PARTY-NOTICES.md') -Force
-    tar -czf 'dist\TmkNetworkLAN-frps-debian-amd64.tar.gz' -C $frpRootFull .
-    if ($LASTEXITCODE -ne 0) { throw 'FRPS Debian package creation failed' }
-    Write-Output (Join-Path $root 'dist\linux\tmknetworklan-server')
-    Write-Output (Join-Path $root 'dist\TmkNetworkLAN-frps-debian-amd64.tar.gz')
-} finally {
-    foreach ($key in $previous.Keys) { [Environment]::SetEnvironmentVariable($key,$previous[$key],'Process') }
+}
+finally {
+    Remove-Item Env:GOOS -ErrorAction SilentlyContinue
+    Remove-Item Env:GOARCH -ErrorAction SilentlyContinue
+    Remove-Item Env:CGO_ENABLED -ErrorAction SilentlyContinue
     Pop-Location
 }
 
+$stagingDir = Join-Path $root '.tmp-build\server-zip-staging'
+Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $stagingDir
+New-Item -ItemType Directory -Force -Path (Join-Path $stagingDir 'systemd') | Out-Null
+Copy-Item -Force $binPath (Join-Path $stagingDir 'tlan-server')
+Copy-Item -Force (Join-Path $root 'install.sh') (Join-Path $stagingDir 'install.sh')
+Copy-Item -Force (Join-Path $root 'deploy\Caddyfile') (Join-Path $stagingDir 'Caddyfile')
+Copy-Item -Force (Join-Path $root 'deploy\systemd\tlan.service') (Join-Path $stagingDir 'systemd\tlan.service')
+Copy-Item -Force (Join-Path $root 'deploy\systemd\tlan-https.service') (Join-Path $stagingDir 'systemd\tlan-https.service')
+Copy-Item -Force (Join-Path $root 'deploy\systemd\tlan-graceful-restart.sh') (Join-Path $stagingDir 'systemd\tlan-graceful-restart.sh')
+if (Test-Path (Join-Path $root 'docs\INSTALL-LINUX.md')) {
+    Copy-Item -Force (Join-Path $root 'docs\INSTALL-LINUX.md') (Join-Path $stagingDir 'INSTALL-LINUX.md')
+}
+
+Remove-Item -Force -ErrorAction SilentlyContinue $zipPath
+Compress-Archive -Path (Join-Path $stagingDir '*') -DestinationPath $zipPath
+
+Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $frpsPkgDir
+$frpsOptDir = Join-Path $frpsPkgDir 'opt\tlan-frp'
+New-Item -ItemType Directory -Force -Path $frpsOptDir | Out-Null
+Copy-Item -Force $frpsBinPath (Join-Path $frpsOptDir 'frps')
+Copy-Item -Force (Join-Path $root 'deploy\frps\frps.toml.example') (Join-Path $frpsOptDir 'frps.toml.example')
+Copy-Item -Force (Join-Path $root 'deploy\frps\frps-wss.toml.example') (Join-Path $frpsOptDir 'frps-wss.toml.example')
+Copy-Item -Force (Join-Path $root 'deploy\frps\install-frps.sh') (Join-Path $frpsOptDir 'install-frps.sh')
+Copy-Item -Force (Join-Path $root 'deploy\frps\tlan-frps.service') (Join-Path $frpsOptDir 'tlan-frps.service')
+Copy-Item -Force (Join-Path $root 'deploy\frps\tlan-frps-wss.service') (Join-Path $frpsOptDir 'tlan-frps-wss.service')
+Copy-Item -Force (Join-Path $root 'deploy\frps\README.md') (Join-Path $frpsOptDir 'README.md')
+
+Remove-Item -Force -ErrorAction SilentlyContinue $frpsTarPath
+tar -czf $frpsTarPath -C $frpsPkgDir opt
+
+Write-Host "Built Linux server: $binPath"
+Write-Host "Packaged server ZIP: $zipPath"
+Write-Host "Packaged FRPS tarball: $frpsTarPath"

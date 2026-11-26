@@ -242,6 +242,13 @@ func (mw *MainWindow) WndProc(hwnd win.HWND, msg uint32, wParam, lParam uintptr)
 			mw.statusBar.SetBoundsPixels(bounds)
 		}
 
+		if !mw.Suspended() && mw.clientComposite != nil && cb.Width > 0 && cb.Height > 0 {
+			clientBounds := Rectangle{0, cb.Y, cb.Width, cb.Height}
+			if mw.clientComposite.BoundsPixels() != clientBounds {
+				mw.clientComposite.SetBoundsPixels(clientBounds)
+			}
+		}
+
 	case win.WM_INITMENUPOPUP:
 		mw.menu.updateItemsWithImageForWindow(mw)
 	}

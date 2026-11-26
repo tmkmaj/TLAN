@@ -72,7 +72,7 @@ POST /api/v1/frp/services/{id}/revoke
 - 默认关闭窗口仍直接退出；可显式开启“关闭时最小化到托盘”。
 - 托盘不可用时安全回退到直接退出，避免窗口隐藏后无法恢复。
 - 登录自启动使用当前用户 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`。
-- 只写本程序值 `TmkNetworkLAN`，关闭时只删除该值。
+- 只写本程序值 `TLAN`，关闭时只删除该值。
 - `--startup` 隐藏窗口并驻留托盘。
 - 不创建 SYSTEM 服务，不跨用户，不修改其他启动项。
 
@@ -157,7 +157,7 @@ go test -mod=vendor -tags frp_audit_regression ./... -count=1
 ### 2.1 当前构建产物
 
 - Windows 客户端：v0.6.0
-- EXE：`dist/windows/TmkNetworkLAN.exe`
+- EXE：`dist/windows/TLAN.exe`
 - EXE SHA-256：以 `dist/SHA256SUMS.txt` 为准
 - 四个发布归档的最新摘要以 `dist/SHA256SUMS.txt` 为准。
 - 客户端包内 `frpc.exe` 固定摘要仍为 `509F4FA082BF9B85F9AD27B45D37A89A8ACCB011F3B724CFF352DFAC90A94FEB`。

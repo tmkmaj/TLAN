@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/private-radminlan/lanmesh/core"
+	"github.com/private-radminlan/lanmesh/internal/frpauth"
+	"github.com/private-radminlan/lanmesh/internal/metrics"
 	"github.com/private-radminlan/lanmesh/internal/storage"
 )
 
@@ -33,8 +35,11 @@ type adminOverview struct {
 	BlockedCount   int                    `json:"blocked_count"`
 	RelayStatus    string                 `json:"relay_status"`
 	RelaySessions  int                    `json:"relay_sessions"`
-	FRPStatus      string                 `json:"frp_status"`
-	FRPLeaseCount  int                    `json:"frp_lease_count"`
+	FRPStatus      string                      `json:"frp_status"`
+	FRPLeaseCount  int                         `json:"frp_lease_count"`
+	FRPPortStart   int                         `json:"frp_port_start"`
+	FRPPortEnd     int                         `json:"frp_port_end"`
+	ServerDisplay  storage.ServerDisplayConfig `json:"server_display"`
 }
 
 type adminMember struct {
@@ -57,6 +62,7 @@ type adminConsole struct {
 	server        *Server
 	auth          *adminAuth
 	listenAddress string
+	apiToken      string
 }
 
 type adminAPIError struct {
@@ -77,6 +83,7 @@ func (s *Server) AdminHandler(adminToken string, secure bool) http.Handler {
 
 func (s *Server) AdminHandlerForListen(adminToken string, secure bool, listenAddress string) http.Handler {
 	console := &adminConsole{server: s, auth: newAdminAuth(adminToken, secure), listenAddress: strings.TrimSpace(listenAddress)}
+	console.apiToken = adminToken
 	return http.HandlerFunc(console.serveHTTP)
 }
 
@@ -108,6 +115,18 @@ func (c *adminConsole) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		c.auth.login(w, r)
 	case r.URL.Path == "/admin/logout":
 		c.auth.logout(w, r)
+	case r.URL.Path == "/metrics":
+		token := r.Header.Get("X-Admin-Token")
+		if token == "" {
+			token = strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		}
+		if !adminTokenMatches(token, c.apiToken) {
+			if _, _, ok := c.auth.authorize(r); !ok {
+				writeAdminFailure(w, http.StatusUnauthorized, requestID, "UNAUTHORIZED", "认证失败")
+				return
+			}
+		}
+		c.metrics(w)
 	case strings.HasPrefix(r.URL.Path, "/admin/api/"):
 		if _, _, ok := c.auth.authorize(r); !ok {
 			writeAdminFailure(w, http.StatusUnauthorized, requestID, "UNAUTHORIZED", "认证失败")
@@ -200,13 +219,88 @@ func (c *adminConsole) serveAPI(w http.ResponseWriter, r *http.Request, requestI
 		c.relaySessions(w, requestID)
 	case r.URL.Path == "/admin/api/session" && r.Method == http.MethodGet:
 		c.session(w, r, requestID)
+	case r.URL.Path == "/admin/api/frp-port-range" && r.Method == http.MethodPost:
+		c.setFRPPortRange(w, r, requestID)
+	case r.URL.Path == "/admin/api/server-display" && r.Method == http.MethodPost:
+		c.setServerDisplay(w, r, requestID)
+	case r.URL.Path == "/admin/api/network-name" && r.Method == http.MethodPost:
+		c.setNetworkName(w, r, requestID)
 	case strings.HasPrefix(r.URL.Path, "/admin/api/members/") && r.Method == http.MethodPost:
 		c.memberAction(w, r, requestID)
-	case r.URL.Path == "/admin/api/overview" || r.URL.Path == "/admin/api/members" || r.URL.Path == "/admin/api/relay-sessions" || r.URL.Path == "/admin/api/session" || strings.HasPrefix(r.URL.Path, "/admin/api/members/"):
+	case r.URL.Path == "/admin/api/overview" || r.URL.Path == "/admin/api/members" || r.URL.Path == "/admin/api/relay-sessions" || r.URL.Path == "/admin/api/session" || r.URL.Path == "/admin/api/frp-port-range" || r.URL.Path == "/admin/api/server-display" || r.URL.Path == "/admin/api/network-name" || strings.HasPrefix(r.URL.Path, "/admin/api/members/"):
 		writeAdminFailure(w, http.StatusMethodNotAllowed, requestID, "METHOD_NOT_ALLOWED", "请求方法不允许")
 	default:
 		writeAdminFailure(w, http.StatusNotFound, requestID, "NOT_FOUND", "接口不存在")
 	}
+}
+
+func (c *adminConsole) metrics(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+	registry := metrics.NewRegistry()
+	relaySessions := 0
+	if c.server.Relay != nil {
+		relaySessions = len(c.server.Relay.Snapshot())
+	}
+	relayQueueDropped, relayBackpressure, relayWriteErrors := int64(0), int64(0), int64(0)
+	if c.server.Relay != nil {
+		stats := c.server.Relay.Stats()
+		relayQueueDropped = stats.DroppedQueueFull
+		relayBackpressure = stats.BackpressureEvents
+		relayWriteErrors = stats.WriteErrors
+	}
+	network, networkErr := c.server.Store.PrivateNetwork()
+	activeMembers := 0
+	versionCounts := make(map[string]int)
+	if networkErr == nil {
+		devices, err := c.server.Store.ListDevicesWithBlocked(network.ID, true)
+		if err == nil {
+			for _, device := range devices {
+				if device.Online {
+					activeMembers++
+				}
+				version, _ := c.server.Store.ClientVersion(core.DeviceID(device.ID))
+				if version == "" {
+					version = "unknown"
+				}
+				versionCounts[version]++
+			}
+		}
+	}
+	gauges := []struct {
+		name, help string
+		value      float64
+	}{
+		{"tlan_active_members", "Currently online private-network members.", float64(activeMembers)},
+		{"tlan_relay_sessions", "Current relay sessions.", float64(relaySessions)},
+	}
+	for _, metric := range gauges {
+		gauge, err := registry.NewGauge(metric.name, metric.help)
+		if err == nil {
+			gauge.Set(metric.value)
+		}
+	}
+	counters := []struct {
+		name, help string
+		value      float64
+	}{
+		{"tlan_relay_queue_dropped_total", "Relay queue drops caused by full recipient queues.", float64(relayQueueDropped)},
+		{"tlan_relay_backpressure_total", "Relay queue congestion events.", float64(relayBackpressure)},
+		{"tlan_relay_write_errors_total", "Relay stream asynchronous write failures.", float64(relayWriteErrors)},
+	}
+	for _, metric := range counters {
+		counter, err := registry.NewCounter(metric.name, metric.help)
+		if err == nil {
+			counter.Set(metric.value)
+		}
+	}
+	if versions, err := registry.NewGaugeVec("tlan_client_version", "Registered members by reported client version.", []string{"version"}); err == nil {
+		for version, count := range versionCounts {
+			if gauge, lookupErr := versions.WithLabelValues(version); lookupErr == nil {
+				gauge.Set(float64(count))
+			}
+		}
+	}
+	_ = registry.WritePrometheus(w)
 }
 
 func (c *adminConsole) session(w http.ResponseWriter, r *http.Request, requestID string) {
@@ -230,7 +324,7 @@ func (c *adminConsole) overview(w http.ResponseWriter, requestID string) {
 	}
 	devices, err := c.server.Store.ListDevicesWithBlocked(network.ID, true)
 	if err != nil {
-		log.Printf("admin overview request_id=%s network=%s error=%q", requestID, network.ID, err.Error())
+		slog.Error("admin overview failed", "request_id", requestID, "network", network.ID, "error", err)
 		writeAdminFailure(w, http.StatusInternalServerError, requestID, "INTERNAL_ERROR", "服务器内部错误")
 		return
 	}
@@ -257,13 +351,99 @@ func (c *adminConsole) overview(w http.ResponseWriter, requestID string) {
 	if !c.server.StartedAt.IsZero() {
 		uptime = int64(time.Since(c.server.StartedAt).Seconds())
 	}
+	portRange := c.server.effectiveFRPPortRange()
+	serverDisplay := storage.DefaultServerDisplay
+	if c.server.Store != nil {
+		serverDisplay = c.server.Store.ServerDisplay()
+	}
 	writeAdminData(w, http.StatusOK, requestID, adminOverview{
-		Service: "tmknetworklan-control", Version: "0.2.0", Stage: "encrypted-ipv4-mesh",
+		Service: "tlan-control", Version: "1.0.0", Stage: "encrypted-ipv4-mesh",
 		UptimeSeconds: uptime, ControlListen: c.server.ControlListen, ControlTLS: c.server.ControlTLS,
 		AdminListen: c.server.AdminListen, AdminTLS: c.server.AdminTLS, DataDirSummary: c.server.DataDirSummary,
 		Network: network, MemberCount: len(devices), OnlineCount: online, BlockedCount: blocked,
 		RelayStatus: relayStatus, RelaySessions: relayCount, FRPStatus: frpStatus, FRPLeaseCount: frpLeases,
+		FRPPortStart: portRange.Start, FRPPortEnd: portRange.End,
+		ServerDisplay: serverDisplay,
 	})
+}
+
+func (c *adminConsole) setServerDisplay(w http.ResponseWriter, r *http.Request, requestID string) {
+	var req struct {
+		Mode  string `json:"mode"`
+		Alias string `json:"alias"`
+	}
+	if err := decodeAdminJSON(r, &req); err != nil {
+		logAdminAction(r, requestID, "server_display", "", "", "invalid_request", err)
+		writeAdminFailure(w, http.StatusBadRequest, requestID, "INVALID_REQUEST", "请求格式无效")
+		return
+	}
+	if _, err := storage.ValidateServerDisplay(req.Mode, req.Alias); err != nil {
+		writeAdminFailure(w, http.StatusBadRequest, requestID, "INVALID_SERVER_DISPLAY", "连接服务器显示配置无效："+err.Error())
+		return
+	}
+	saved, err := c.server.Store.SetServerDisplay(req.Mode, req.Alias)
+	if err != nil {
+		logAdminAction(r, requestID, "server_display", "", "", "error", err)
+		writeAdminFailure(w, http.StatusInternalServerError, requestID, "INTERNAL_ERROR", "保存服务器显示配置失败")
+		return
+	}
+	logAdminAction(r, requestID, "server_display", "", saved.Mode, "ok", nil)
+	writeAdminData(w, http.StatusOK, requestID, saved)
+}
+
+func (c *adminConsole) setNetworkName(w http.ResponseWriter, r *http.Request, requestID string) {
+	var req struct {
+		Name string `json:"name"`
+	}
+	if err := decodeAdminJSON(r, &req); err != nil {
+		logAdminAction(r, requestID, "network_name", "", "", "invalid_request", err)
+		writeAdminFailure(w, http.StatusBadRequest, requestID, "INVALID_REQUEST", "请求格式无效")
+		return
+	}
+	valid, err := storage.ValidateNetworkName(req.Name)
+	if err != nil {
+		writeAdminFailure(w, http.StatusBadRequest, requestID, "INVALID_NETWORK_NAME", "网络名称无效：请填写 1-64 个非控制字符")
+		return
+	}
+	saved, err := c.server.Store.RenameNetwork("", valid)
+	if err != nil {
+		logAdminAction(r, requestID, "network_name", "", "", "error", err)
+		writeAdminFailure(w, http.StatusInternalServerError, requestID, "INTERNAL_ERROR", "保存网络名称失败")
+		return
+	}
+	logAdminAction(r, requestID, "network_name", saved.ID, saved.Name, "ok", nil)
+	writeAdminData(w, http.StatusOK, requestID, saved)
+}
+
+func (c *adminConsole) setFRPPortRange(w http.ResponseWriter, r *http.Request, requestID string) {
+	var req struct {
+		Start int `json:"start"`
+		End   int `json:"end"`
+	}
+	if err := decodeAdminJSON(r, &req); err != nil {
+		logAdminAction(r, requestID, "frp_port_range", "", "", "invalid_request", err)
+		writeAdminFailure(w, http.StatusBadRequest, requestID, "INVALID_REQUEST", "请求格式无效")
+		return
+	}
+	if err := storage.ValidatePortRange(req.Start, req.End); err != nil {
+		writeAdminFailure(w, http.StatusBadRequest, requestID, "INVALID_PORT_RANGE", "端口范围无效，请填写 1-65535 且起始端口不大于结束端口")
+		return
+	}
+	saved, err := c.server.Store.SetFRPPortRange(req.Start, req.End)
+	if err != nil {
+		logAdminAction(r, requestID, "frp_port_range", "", "", "error", err)
+		writeAdminFailure(w, http.StatusInternalServerError, requestID, "INTERNAL_ERROR", "保存端口范围失败")
+		return
+	}
+	if c.server.FRP != nil {
+		if err := c.server.FRP.SetAllowedPorts([]frpauth.PortRange{{Start: saved.Start, End: saved.End}}); err != nil {
+			logAdminAction(r, requestID, "frp_port_range", "", "", "error", err)
+			writeAdminFailure(w, http.StatusInternalServerError, requestID, "INTERNAL_ERROR", "更新 FRP 端口限制失败")
+			return
+		}
+	}
+	logAdminAction(r, requestID, "frp_port_range", "", fmt.Sprintf("%d-%d", saved.Start, saved.End), "ok", nil)
+	writeAdminData(w, http.StatusOK, requestID, saved)
 }
 
 func (c *adminConsole) members(w http.ResponseWriter, requestID string) {
@@ -274,7 +454,7 @@ func (c *adminConsole) members(w http.ResponseWriter, requestID string) {
 	}
 	devices, err := c.server.Store.ListDevicesWithBlocked(network.ID, true)
 	if err != nil {
-		log.Printf("admin members request_id=%s network=%s error=%q", requestID, network.ID, err.Error())
+		slog.Error("admin members failed", "request_id", requestID, "network", network.ID, "error", err)
 		writeAdminFailure(w, http.StatusInternalServerError, requestID, "INTERNAL_ERROR", "服务器内部错误")
 		return
 	}
@@ -445,11 +625,20 @@ func writeAdminStorageError(w http.ResponseWriter, r *http.Request, requestID, a
 }
 
 func logAdminAction(r *http.Request, requestID, action, networkID, deviceID, result string, err error) {
+	args := []any{
+		"request_id", requestID,
+		"action", action,
+		"network", networkID,
+		"device", deviceID,
+		"result", result,
+		"client_ip", adminClientIP(r),
+	}
 	if err != nil {
-		log.Printf("admin action request_id=%s action=%s network=%s device=%s result=%s client_ip=%s error=%q", requestID, action, networkID, deviceID, result, adminClientIP(r), err.Error())
+		args = append(args, "error", err)
+		slog.Error("admin action", args...)
 		return
 	}
-	log.Printf("admin action request_id=%s action=%s network=%s device=%s result=%s client_ip=%s", requestID, action, networkID, deviceID, result, adminClientIP(r))
+	slog.Info("admin action", args...)
 }
 
 func adminRequestID() string {

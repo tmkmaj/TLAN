@@ -45,7 +45,7 @@ func memberRouteAllowed(r *http.Request, c storage.MemberCredential) bool {
 	if r.Method == http.MethodGet && p[6] == "candidates" {
 		return true
 	}
-	return p[5] == c.DeviceID && ((p[6] == "candidates" || p[6] == "diagnostics" || p[6] == "forwarding") && r.Method == http.MethodPost || p[6] == "diagnostics" && r.Method == http.MethodGet)
+	return p[5] == c.DeviceID && ((p[6] == "candidates" || p[6] == "diagnostics" || p[6] == "forwarding" || p[6] == "name") && r.Method == http.MethodPost || p[6] == "diagnostics" && r.Method == http.MethodGet)
 }
 
 type joinWindow struct {
@@ -141,12 +141,17 @@ func (s *Server) enroll(w http.ResponseWriter, r *http.Request) {
 		writeError(w, status, err.Error())
 		return
 	}
+	serverDisplay := storage.DefaultServerDisplay
+	if s.Store != nil {
+		serverDisplay = s.Store.ServerDisplay()
+	}
 	plain, _ := json.Marshal(struct {
-		Network storage.NetworkSummary `json:"network"`
-		Member  storage.Device         `json:"member"`
-		Token   string                 `json:"token"`
-		Admin   bool                   `json:"admin,omitempty"`
-	}{n, member, token, admin})
+		Network       storage.NetworkSummary      `json:"network"`
+		Member        storage.Device              `json:"member"`
+		Token         string                      `json:"token"`
+		Admin         bool                        `json:"admin,omitempty"`
+		ServerDisplay storage.ServerDisplayConfig `json:"server_display"`
+	}{n, member, token, admin, serverDisplay})
 	sealed, err := enrollment.Seal(req.Device.WireGuardPublicKey, plain)
 	if err != nil {
 		writeError(w, 400, "invalid device key")
@@ -171,9 +176,10 @@ func (s *Server) memberSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 404, "membership not found")
 		return
 	}
+	serverDisplay := s.Store.ServerDisplay()
 	for _, m := range devices {
 		if m.ID == c.DeviceID {
-			writeJSON(w, 200, map[string]any{"network": n, "member": m})
+			writeJSON(w, 200, map[string]any{"network": n, "member": m, "server_display": serverDisplay})
 			return
 		}
 	}

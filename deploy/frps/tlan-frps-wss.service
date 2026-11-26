@@ -1,7 +1,7 @@
 [Unit]
 Description=TLAN WSS FRP server loopback hop
-After=network-online.target tmknetworklan.service
-Wants=network-online.target tmknetworklan.service
+After=network-online.target tlan.service
+Wants=network-online.target tlan.service
 
 [Service]
 Type=simple

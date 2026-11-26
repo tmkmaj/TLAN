@@ -38,14 +38,18 @@ func run(args []string) error {
 		}
 		return prepare(args[1], args[2])
 	case "probe":
-		if len(args) != 3 {
-			return errors.New("probe http|https SECONDS")
+		if len(args) != 3 && len(args) != 4 {
+			return errors.New("probe http|https SECONDS [ENDPOINT_HOST]")
 		}
 		seconds, err := strconv.Atoi(args[2])
 		if err != nil || seconds < 1 || seconds > 120 {
 			return errors.New("invalid timeout")
 		}
-		return probe(args[1], time.Duration(seconds)*time.Second)
+		endpointHost := "127.0.0.1"
+		if len(args) == 4 && strings.TrimSpace(args[3]) != "" {
+			endpointHost = strings.TrimSpace(args[3])
+		}
+		return probe(args[1], time.Duration(seconds)*time.Second, endpointHost)
 	case "ports":
 		if len(args) != 2 {
 			return errors.New("ports CONFIG")
@@ -119,7 +123,7 @@ func prepare(source, destination string) error {
 	}
 	rel, err := filepath.Rel(base, dataDir)
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return errors.New("custom storage outside /var/lib/lanmesh requires manual deployment; existing files were not changed")
+		return errors.New("custom storage outside the service data directory requires manual deployment; existing files were not changed")
 	}
 	contents, err := yaml.Marshal(cfg)
 	if err != nil {
@@ -159,11 +163,14 @@ func checkPorts(cfg config.Config) error {
 	return nil
 }
 
-func probe(scheme string, timeout time.Duration) error {
+func probe(scheme string, timeout time.Duration, endpointHost string) error {
 	url := "http://127.0.0.1:8080/health"
 	port := "8080"
 	if scheme == "https" {
-		url, port = "https://8.163.21.82:8443/health", "8443"
+		if strings.TrimSpace(endpointHost) == "" {
+			endpointHost = "127.0.0.1"
+		}
+		url, port = fmt.Sprintf("https://%s/health", net.JoinHostPort(endpointHost, "8443")), "8443"
 	} else if scheme != "http" {
 		return errors.New("expected http or https")
 	}

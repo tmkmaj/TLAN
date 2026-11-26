@@ -1,12 +1,12 @@
 # TLAN 独立 FRPS 部署包
 
-此包与 `tmknetworklan-server`、`tnlan-config.yml`、成员数据库和 Caddy 完全独立。
+此包与 `tlan-server`、`tlan-config.yml`、成员数据库和 Caddy 完全独立。
 它只提供 FRP 控制连接和用户明确创建的公网端口映射，不代替现有 Mesh 中继。
 
 ## 安装
 
 ```bash
-tar -xzf TmkNetworkLAN-frps-debian-amd64.tar.gz -C /tmp/tlan-frps
+tar -xzf TLAN-frps-linux-amd64.tar.gz -C /tmp/tlan-frps
 sudo bash /tmp/tlan-frps/opt/tlan-frp/install-frps.sh
 ```
 
@@ -44,7 +44,7 @@ FRPS 强制 TLS，但不会自动生成生产证书。把包含实际 FRP 域名
 - 客户端使用 `protocol = "wss"`、8444、正确 `serverName` 和可信 CA。
 
 主实例和 WSS 实例使用不同 vhost/TCPMUX 端口，避免同一主机上的监听冲突。
-两个实例的 subdomain 根均为 `frp.8-163-21-82.nip.io`。
+两个实例的 subdomain 根均为 `frp.example.com`。
 
 ## 端口矩阵
 
@@ -63,9 +63,8 @@ FRPS 强制 TLS，但不会自动生成生产证书。把包含实际 FRP 域名
 | TCP 8444 | Caddy | 公网 WSS 入口 | 是，由主服务安装器放行 |
 | TCP/UDP 30000-30999 | 两个 FRPS 实例 | 示例业务端口范围，与 `allowPorts` 一致 | 是 |
 
-`frp.8-163-21-82.nip.io` 用于 subdomain 访问；例如规则子域为 `demo` 时，
-HTTP 访问形式为 `http://demo.frp.8-163-21-82.nip.io:18080`。`nip.io` 会解析其通配子域，
-不需要额外 DNS 记录。
+`frp.example.com` 用于 subdomain 访问；例如规则子域为 `demo` 时，
+HTTP 访问形式为 `http://demo.frp.example.com:18080`。使用泛域名或 `nip.io` 解析通配子域时，无需额外配置逐条 DNS 记录。
 
 ## 防火墙
 
@@ -89,7 +88,7 @@ TCP 和 UDP 同号端口是独立协议；云安全组和主机防火墙需要�
 
 ## TLAN 托管授权模式
 
-若要启用 P2 托管授权，在 `tnlan-config.yml` 中设置：
+若要启用 P2 托管授权，在 `tlan-config.yml` 中设置：
 
 ```yaml
 frp:
@@ -97,12 +96,12 @@ frp:
   core_version: "0.71.1"
   server_id: "frps-managed-1"
   plugin_listen: "127.0.0.1:9093"
-  lease_state_file: "/var/lib/lanmesh/frp-leases.json"
+  lease_state_file: "/var/lib/tlan/frp-leases.json"
   allowed_ports:
     - start: 30000
       end: 30999
   allowed_domains:
-    - "frp.8-163-21-82.nip.io"
+    - "frp.example.com"
 ```
 
 控制面提供 `GET /api/v1/frp/capabilities`（认证成员或管理员）用于读取 mode、核心版本、server ID、lease TTL、四个插件操作和支持特性；它不返回任何 capability 或 token。

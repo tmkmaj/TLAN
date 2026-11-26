@@ -197,7 +197,7 @@ func (fb *FormBase) SetLayout(value Layout) error {
 }
 
 func (fb *FormBase) SetBoundsPixels(bounds Rectangle) error {
-	if layout := fb.Layout(); layout != nil {
+	if layout := fb.Layout(); layout != nil && !fb.Suspended() {
 		layoutItem := CreateLayoutItemsForContainer(fb)
 		minSize := fb.sizeFromClientSizePixels(layoutItem.MinSizeForSize(bounds.Size()))
 		minSize = fb.sizeFromClientSizePixels(layoutItem.MinSizeForSize(minSize))
@@ -214,7 +214,11 @@ func (fb *FormBase) SetBoundsPixels(bounds Rectangle) error {
 		return err
 	}
 
-	fb.proposedSize = bounds.Size()
+	if actual := fb.SizePixels(); actual.Width > 0 && actual.Height > 0 {
+		fb.proposedSize = actual
+	} else {
+		fb.proposedSize = bounds.Size()
+	}
 
 	return nil
 }
@@ -237,6 +241,12 @@ func (fb *FormBase) SetSuspended(suspended bool) {
 	}
 
 	fb.suspended = suspended
+
+	if !suspended {
+		if actual := fb.window.SizePixels(); actual.Width > 0 && actual.Height > 0 {
+			fb.proposedSize = actual
+		}
+	}
 
 	if fb.clientComposite != nil {
 		fb.clientComposite.SetSuspended(suspended)
@@ -683,19 +693,37 @@ func (fb *FormBase) startLayout() bool {
 		return false
 	}
 
+	if !fb.inSizingLoop {
+		if actual := fb.window.SizePixels(); actual.Width > 0 && actual.Height > 0 {
+			fb.proposedSize = actual
+		}
+	}
+	if fb.proposedSize.Width <= 0 || fb.proposedSize.Height <= 0 {
+		return false
+	}
+
 	cs := fb.clientSizeFromSizePixels(fb.proposedSize)
 	min := CreateLayoutItemsForContainer(fb.clientComposite).MinSizeForSize(fb.proposedSize)
 
 	if cs.Width < min.Width || cs.Height < min.Height {
 		cs = maxSize(cs, min)
 		size := fb.sizeFromClientSizePixels(cs)
-		fb.SetSizePixels(size)
-		fb.Invalidate()
+		if size != fb.SizePixels() {
+			fb.SetSizePixels(size)
+			fb.Invalidate()
+		}
 	}
 
 	cbp := fb.window.ClientBoundsPixels()
+	if !fb.inSizingLoop && cbp.Width > 0 && cbp.Height > 0 {
+		cs = cbp.Size()
+	}
 
-	fb.clientComposite.SetBoundsPixels(Rectangle{Y: cbp.Y, Width: cs.Width, Height: cs.Height})
+	target := Rectangle{Y: cbp.Y, Width: cs.Width, Height: cs.Height}
+	if fb.clientComposite.BoundsPixels() != target {
+		fb.clientComposite.SetBoundsPixels(target)
+		win.InvalidateRect(fb.hWnd, nil, true)
+	}
 
 	cli := CreateLayoutItemsForContainer(fb)
 	cli.Geometry().ClientSize = cs
@@ -790,15 +818,20 @@ func (fb *FormBase) WndProc(hwnd win.HWND, msg uint32, wParam, lParam uintptr) u
 	case win.WM_WINDOWPOSCHANGED:
 		wp := (*win.WINDOWPOS)(unsafe.Pointer(lParam))
 
-		if wp.Flags&win.SWP_SHOWWINDOW != 0 {
+		if wp.Flags&win.SWP_NOSIZE == 0 && wp.Cx > 0 && wp.Cy > 0 {
+			fb.proposedSize = Size{int(wp.Cx), int(wp.Cy)}
+		}
+
+		if wp.Flags&win.SWP_SHOWWINDOW != 0 && !fb.Suspended() && fb.Layout() != nil {
+			if fb.proposedSize == (Size{}) {
+				fb.proposedSize = maxSize(SizeFrom96DPI(fb.minSize96dpi, fb.DPI()), fb.SizePixels())
+			}
 			fb.startLayout()
 		}
 
 		if wp.Flags&win.SWP_NOSIZE != 0 || fb.Layout() == nil || fb.Suspended() {
 			break
 		}
-
-		fb.proposedSize = Size{int(wp.Cx), int(wp.Cy)}
 
 		const performingLayoutSubject = "*FormBase.WndProc - WM_WINDOWPOSCHANGED - full layout from sizing loop"
 

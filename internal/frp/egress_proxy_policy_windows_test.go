@@ -24,11 +24,11 @@ func TestEgressProxyRejectsTLANRoute(t *testing.T) {
 	observer := &scriptedRouteObserver{routes: func(int) ([]netpolicy.Route, error) {
 		return []netpolicy.Route{{
 			Destination:       netip.MustParseAddr("127.0.0.1"),
-			InterfaceName:     "LANMesh",
+			InterfaceName:     "TLAN",
 			InterfacePrefixes: []netip.Prefix{netip.MustParsePrefix("10.50.0.2/16")},
 		}}, nil
 	}}
-	proxy, err := startEgressProxy(context.Background(), observer, cfg, []netip.Prefix{netip.MustParsePrefix("10.50.0.0/16")}, "LANMesh")
+	proxy, err := startEgressProxy(context.Background(), observer, cfg, []netip.Prefix{netip.MustParsePrefix("10.50.0.0/16")}, "TLAN")
 	if err != nil {
 		t.Fatal(err)
 	}

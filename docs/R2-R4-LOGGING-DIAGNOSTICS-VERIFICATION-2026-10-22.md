@@ -1,6 +1,6 @@
 # R2/R4 诊断、日志与 Windows 资源验证（2026-10-22）
 
-本记录覆盖 2026-10-22 继续开发的内容。代码工作区为 `D:\RadminLanPrivate`。
+本记录覆盖 2026-10-22 继续开发的内容。代码工作区为 `<REPO_ROOT>`。
 
 ## 1. 完成内容
 
@@ -74,16 +74,16 @@ go test -mod=vendor -tags frp_audit_regression ./... -count=1 -timeout 480s
 ## 3. 证据文件
 
 ```text
-D:\RadminLanPrivate\.tmp-runtime\adapter-validation-20261022-171921\SUMMARY.md
-D:\RadminLanPrivate\.tmp-runtime\adapter-test\report.txt
-D:\RadminLanPrivate\internal\frp\persistent_logs.go
-D:\RadminLanPrivate\internal\diagreport\report.go
-D:\RadminLanPrivate\internal\netpolicy\change_windows.go
+<REPO_ROOT>\.tmp-runtime\adapter-validation-20261022-171921\SUMMARY.md
+<REPO_ROOT>\.tmp-runtime\adapter-test\report.txt
+<REPO_ROOT>\internal\frp\persistent_logs.go
+<REPO_ROOT>\internal\diagreport\report.go
+<REPO_ROOT>\internal\netpolicy\change_windows.go
 ```
 
 ## 4. 真实公网诊断上传验证
 
-2026-10-22 17:42（Asia/Shanghai）在已部署控制面 `8.163.21.82` 上执行临时成员诊断上传：
+2026-10-22 17:42（Asia/Shanghai）在已部署控制面 `<SERVER_IP>` 上执行临时成员诊断上传：
 
 ```text
 DIAGNOSTIC_UPLOAD_E2E_PASS

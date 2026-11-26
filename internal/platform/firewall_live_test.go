@@ -14,8 +14,8 @@ import (
 // object. It needs administrator rights and mutates the machine, so it only
 // runs when explicitly requested.
 func TestLiveFirewallRuleRoundTrip(t *testing.T) {
-	if os.Getenv("TMK_FIREWALL_LIVE") == "" {
-		t.Skip("set TMK_FIREWALL_LIVE=1 to exercise the live Windows Firewall policy")
+	if os.Getenv("TLAN_FIREWALL_LIVE") == "" {
+		t.Skip("set TLAN_FIREWALL_LIVE=1 to exercise the live Windows Firewall policy")
 	}
 	adapters, err := windowsAdapters()
 	if err != nil {
@@ -31,9 +31,9 @@ func TestLiveFirewallRuleRoundTrip(t *testing.T) {
 	if alias == "" {
 		t.Skip("no physical adapter available")
 	}
-	const name = "TmkNetworkLAN-LiveTest"
+	const name = "TLAN-LiveTest"
 	_ = firewall.Remove(name)
-	spec := firewallSpec{Name: name, Description: "TmkNetworkLAN live test", Interfaces: []string{alias}, Remote: "10.242.0.0/24"}
+	spec := firewallSpec{Name: name, Description: "TLAN live test", Interfaces: []string{alias}, Remote: "10.242.0.0/24"}
 	if err := firewall.Add(spec); err != nil {
 		t.Fatalf("Add: %v", err)
 	}

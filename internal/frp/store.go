@@ -135,17 +135,21 @@ func (s *Store) SaveWithSecrets(cfg Config, token string, provided map[string]st
 	}
 
 	caSource := cfg.Profile.Server.TrustedCAPath
-	if err = ValidateCAFile(caSource); err != nil {
-		return Config{}, withCode(CodeTLSUntrusted, err)
-	}
-	caData, err := os.ReadFile(caSource)
-	if err != nil {
-		return Config{}, withCode(CodeTLSUntrusted, err)
-	}
-
+	var caData []byte
 	next := CloneConfig(cfg)
 	next.Profile.Revision = currentRevision + 1
-	next.Profile.Server.TrustedCAPath = s.CAFile()
+	if caSource != "" {
+		if err = ValidateCAFile(caSource); err != nil {
+			return Config{}, withCode(CodeTLSUntrusted, err)
+		}
+		caData, err = os.ReadFile(caSource)
+		if err != nil {
+			return Config{}, withCode(CodeTLSUntrusted, err)
+		}
+		next.Profile.Server.TrustedCAPath = s.CAFile()
+	} else if !cfg.Profile.Server.UseSystemCA {
+		return Config{}, withCode(CodeTLSUntrusted, errors.New("a trusted CA file is required"))
+	}
 	if err = ValidateConfig(next); err != nil {
 		return Config{}, err
 	}
@@ -200,8 +204,10 @@ func (s *Store) SaveWithSecrets(cfg Config, token string, provided map[string]st
 		restoreFile(profilePath, oldProfile, profileReadErr)
 		restoreFile(s.CAFile(), oldCA, caReadErr)
 	}
-	if err = writePrivateFile(s.CAFile(), caData); err != nil {
-		return Config{}, fmt.Errorf("save trusted CA: %w", err)
+	if len(caData) > 0 {
+		if err = writePrivateFile(s.CAFile(), caData); err != nil {
+			return Config{}, fmt.Errorf("save trusted CA: %w", err)
+		}
 	}
 	if err = writePrivateFile(secretPath, secretData); err != nil {
 		rollback()
@@ -212,6 +218,34 @@ func (s *Store) SaveWithSecrets(cfg Config, token string, provided map[string]st
 		return Config{}, fmt.Errorf("save FRP profile: %w", err)
 	}
 	return next, nil
+}
+
+// SaveBootstrap persists a server-supplied FRP configuration, protecting the
+// bearer token with DPAPI and writing any supplied PEM certificate bundle into
+// the managed CA file location (or using the OS root trust store when caData
+// is empty and UseSystemCA is requested).
+func (s *Store) SaveBootstrap(cfg Config, token string, caData []byte) (Config, error) {
+	if strings.TrimSpace(token) == "" {
+		return Config{}, codedError(CodeAuthRejected, "FRP token is not configured")
+	}
+	next := CloneConfig(cfg)
+	if len(caData) > 0 {
+		if err := ValidateCAPEM(caData); err != nil {
+			return Config{}, withCode(CodeTLSUntrusted, err)
+		}
+		if err := os.MkdirAll(s.root, 0o700); err != nil {
+			return Config{}, err
+		}
+		if err := writePrivateFile(s.CAFile(), caData); err != nil {
+			return Config{}, fmt.Errorf("save trusted CA: %w", err)
+		}
+		next.Profile.Server.TrustedCAPath = s.CAFile()
+		next.Profile.Server.UseSystemCA = false
+	} else {
+		next.Profile.Server.TrustedCAPath = ""
+		next.Profile.Server.UseSystemCA = true
+	}
+	return s.Save(next, token)
 }
 
 func requiredSecretRefs(cfg Config) map[string]struct{} {

@@ -8,7 +8,7 @@ import (
 
 func meshInterfaceIndex(name string) (uint32, error) {
 	if name == "" {
-		name = "LANMesh"
+		name = "TLAN"
 	}
 	iface, err := net.InterfaceByName(name)
 	if err != nil {

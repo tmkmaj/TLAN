@@ -1,19 +1,19 @@
-# Linux 服务端一键安装（优先适配 CentOS 7.9）
+# Linux 服务端安装指南（TLAN）
 
-安装文件：`TmkNetworkLAN-server-linux-amd64.run`。这是内置服务端、Caddy 2.11.7 和安装工具的单文件包，无需在服务器安装 Go 或现场下载程序。默认地址为 `https://8.163.21.82:8443`，STUN 为 `8.163.21.82:3478`。
+你可以使用仓库根目录的一键脚本 `install.sh`（支持源码编译或 `--binary` 安装，自动安装 Go/Caddy/系统依赖、交互设置管理员密钥并配置 `systemctl`），或者使用自解压安装包 `TLAN-server-linux-amd64.run`。默认服务地址形式为 `https://<你的服务器地址>:8443`，STUN 为 `<你的服务器地址>:3478`。
 
-支持范围：使用 systemd 的 x86_64/amd64 CentOS 7.9、Debian、Ubuntu。安装前检查 systemd >= 219、Linux 内核 >= 3.2、系统 CA 证书与必要命令。三个可执行文件均检查为静态 Linux amd64 ELF，不依赖新版 glibc。不是 ARM 安装包，不适用于无 systemd 的容器。CentOS 7 已停止常规维护，安装器不会替换系统软件源或升级系统。
+支持范围：使用 systemd 的 x86_64/amd64（及 `install.sh` 支持的 arm64）Debian、Ubuntu、CentOS、RHEL、Rocky Linux、AlmaLinux、Fedora。不适用于无 systemd 的容器。
 
-## 1. 放行阿里云安全组
+## 1. 放行云安全组 / 防火墙端口
 
-在 **8.163.21.82 对应实例**的安全组放行入方向：
+在服务器对应安全组放行入方向：
 
 | 协议/端口 | 用途 |
 | --- | --- |
-| TCP 80 | Let's Encrypt 公网 IP 证书验证及自动续期，须保持公网可达 |
+| TCP 80 | Let's Encrypt 证书验证及自动续期（使用域名证书时须保持公网可达） |
 | TCP 8443 | 客户端 HTTPS 控制接口及加密中继 |
-| TCP 8444 | 公网 WSS 入口，由 Caddy 终止 TLS 后回源到回环 FRPS |
-| UDP 3478 | STUN，帮助客户端直连 |
+| TCP 8444 | Web 管理控制台 HTTPS 入口 / 公网 WSS 入口 |
+| UDP 3478 | STUN，帮助客户端直连与延迟探测 |
 
 保留原有 SSH 规则；无需将 TCP 8080、Caddy 管理端口 2019 或 WSS FRPS 回环端口 7001 暴露公网。服务器还需要正常的 DNS、出方向 HTTPS 和准确的系统时间。安装包内置程序，但证书签发需要联网。公网 IP 在云服务器上经 NAT 映射也可以，不要求公网 IP 出现在网卡上。
 
@@ -29,16 +29,22 @@
 | TCP 18083 | WSS FRPS TCPMUX HTTP CONNECT |
 | TCP/UDP 30000-30999 | FRP 业务端口范围，与 `allowPorts` 一致 |
 
-主实例和 WSS 实例使用不同的 vhost/TCPMUX 端口；WSS FRPS 的 7001 只监听 `127.0.0.1`，不要放行到公网。subdomain 根固定为 `frp.8-163-21-82.nip.io`。
+主实例和 WSS 实例使用不同的 vhost/TCPMUX 端口；WSS FRPS 的 7001 只监听 `127.0.0.1`，不要放行到公网。示例 subdomain 根为 `frp.example.com`。
 
 ## 2. 上传并安装
 
-将 `.run` 文件上传到服务器，例如 `/root`。如同时上传 `.sha256` 文件，可以先校验：
+如果直接使用仓库一键脚本：
+
+```bash
+sudo bash install.sh
+```
+
+如果使用自解压 `.run` 安装包，将文件上传到服务器（例如 `/root`）后执行：
 
 ```bash
 cd /root
-sha256sum -c TmkNetworkLAN-server-linux-amd64.run.sha256
-sudo bash ./TmkNetworkLAN-server-linux-amd64.run
+sha256sum -c TLAN-server-linux-amd64.run.sha256
+sudo bash ./TLAN-server-linux-amd64.run
 ```
 
 已登录 root 时可以省略 `sudo`。通过 `bash` 执行无需 chmod，勿用 `sh`。只上传 `.run` 也能安装，其内部自带载荷校验。
@@ -46,16 +52,16 @@ sudo bash ./TmkNetworkLAN-server-linux-amd64.run
 可选：先执行只检查模式；它仅在临时目录解包与验证，不停止服务、不安装、不修改原配置。运行中的服务可能占用端口，正式安装会在停止本项目服务后再次检测。
 
 ```bash
-sudo bash ./TmkNetworkLAN-server-linux-amd64.run --check
+sudo bash ./TLAN-server-linux-amd64.run --check
 ```
 
 如果旧部署正在运行 `caddy.service`，默认拒绝接管。**确认旧 Caddy 仅用于本项目、没有承载其他网站后**，可在同一安装命令加参数：
 
 ```bash
-sudo bash ./TmkNetworkLAN-server-linux-amd64.run --replace-caddy
+sudo bash ./TLAN-server-linux-amd64.run --replace-caddy
 ```
 
-该参数停止并禁用旧 `caddy.service`，保留其配置及证书目录，改由独立的 `tmknetworklan-https.service` 提供服务。若旧 Caddy 承载其他网站，请使用手工部署方案，勿使用该参数。
+该参数停止并禁用旧 `caddy.service`，保留其配置及证书目录，改由独立的 `tlan-https.service` 提供服务。若旧 Caddy 承载其他网站，请使用手工部署方案，勿使用该参数。
 
 安装器会向当前活动的 firewalld 区域或已启用 UFW 添加上述四个主服务端口，不会关闭防火墙、SELinux 或刷新整个规则集。自定义 iptables/nftables、云安全组仍需自行配置。使用 `--skip-firewall` 可跳过主机防火墙变更。
 
@@ -66,46 +72,55 @@ sudo bash ./TmkNetworkLAN-server-linux-amd64.run --replace-caddy
 - 退出码 3：程序已安装，但主机防火墙添加规则失败，需要手动处理。
 - 退出码 1：检查或安装失败。部署事务开始后的失败会恢复已备份的程序、配置、服务文件及服务启用/运行状态；保留成员数据与新建的服务账号、目录。进入“已安装”阶段后的证书或防火墙问题不会回滚已工作的后端。
 
-当前发布客户端已内置以下服务器和 STUN 地址，界面只需输入入网码：
+在客户端连接页填写你部署好的服务器地址和入网密钥：
 
 ```text
-服务器：https://8.163.21.82:8443
-STUN：8.163.21.82:3478
+服务器：https://<你的服务器地址>:8443
+STUN：<你的服务器地址>:3478
 入网码：服务器配置中的 network.join_code
 ```
 
-在服务器本机用编辑器查看 `/var/lib/lanmesh/tnlan-config.yml`，只把 `network.join_code` 分享给成员。不要公开整个配置文件，尤其是 `security.admin_token`。
+在服务器本机用编辑器查看 `/var/lib/tlan/tlan-config.yml`，只把 `network.join_code` 分享给成员。不要公开整个配置文件，尤其是 `security.admin_token`。
 
-管理控制台默认只监听 `127.0.0.1:8081`。在服务器本机或通过 SSH 隧道访问 `http://127.0.0.1:8081/admin`，使用 `security.admin_token`（默认 `Tmkmaj233`）登录。不要把 8081 加入公网安全组；如需局域网设备直接访问，把 `server.admin_listen` 改为服务器内网 IP，并在未配置 TLS 时显式设置 `server.admin_allow_insecure_http: true`，同时只在内网防火墙放行。
+管理控制台默认只监听 `127.0.0.1:8081`（启用 Caddy 时亦可通过 HTTPS 入口的 `8444` 访问）。在服务器本机或通过 SSH 隧道访问 `http://127.0.0.1:8081/admin`，使用你在安装时设置的 `security.admin_token` 登录。不要把 `8081` 加入公网安全组；如需局域网设备直接访问，把 `server.admin_listen` 改为服务器内网 IP，并在未配置 TLS 时显式设置 `server.admin_allow_insecure_http: true`，同时只在内网防火墙放行。
 
 ## 安装位置与升级行为
 
 | 内容 | 位置 |
 | --- | --- |
-| 服务端、Caddy、Caddyfile | `/opt/tmknetworklan/` |
-| 服务端配置 | `/var/lib/lanmesh/tnlan-config.yml` |
-| 默认成员数据 | `/var/lib/lanmesh/data/state.json` |
-| IP 证书与 Caddy 状态 | `/var/lib/tmknetworklan-caddy/` |
-| 每次安装的私有备份 | `/var/backups/tmknetworklan/install-*/` |
-| 后端服务 | `tmknetworklan.service` |
-| HTTPS 服务 | `tmknetworklan-https.service` |
+| 服务端、Caddy、Caddyfile | `/opt/tlan/` |
+| 服务端配置 | `/var/lib/tlan/tlan-config.yml` |
+| 默认成员数据 | `/var/lib/tlan/data/state.json` |
+| 证书与 Caddy 状态 | `/var/lib/tlan-caddy/` |
+| 每次安装的私有备份 | `/var/backups/tlan/install-*/` |
+| 后端服务 | `tlan.service` |
+| 优雅切换脚本 | `/opt/tlan/tlan-graceful-restart.sh` |
+| HTTPS 服务 | `tlan-https.service` |
 
-再次运行同一安装命令可以更新程序。保留入网码、管理员令牌、网段、成员数据、STUN 和可选 TCP 中继配置；控制接口调整为 `127.0.0.1:8080`，后端的 `tls_cert/tls_key` 清空，由 Caddy 统一提供 HTTPS。YAML 会重新排版，原文件（含注释）保存在备份中。旧 `/var/lib/lanmesh/state.json` 布局也会保留。
+再次运行同一安装命令可以更新程序；已安装的 `/opt/tlan/tlan-graceful-restart.sh` 可在替换二进制后执行零窗口监听切换，旧进程最多排空 30 秒 Relay 会话。保留入网码、管理员令牌、网段、成员数据、STUN 和可选 TCP 中继配置；控制接口调整为 `127.0.0.1:8080`，后端的 `tls_cert/tls_key` 清空，由 Caddy 统一提供 HTTPS。YAML 会重新排版，原文件（含注释）保存在备份中。
 
-为避免错误接管，安装器会拒绝管理路径中的符号链接、现有本项目 systemd drop-in，以及 `/var/lib/lanmesh` 以外的自定义存储路径。这些部署应先人工确认，参考 [IP 手工部署说明](IP-DEPLOYMENT.md)。不会停止其他占用端口的服务。已有自定义 STUN/TCP 中继端口会保留，但其额外防火墙规则需自行管理。
+为避免错误接管，安装器会拒绝管理路径中的符号链接、现有本项目 systemd drop-in，以及 `/var/lib/tlan` 以外的自定义存储路径。这些部署应先人工确认，参考 [IP 手工部署说明](IP-DEPLOYMENT.md)。不会停止其他占用端口的服务。已有自定义 STUN/TCP 中继端口会保留，但其额外防火墙规则需自行管理。
 
 备份目录的 `paths.txt` 按行列出原路径，对应从零开始的 `file-0`、`file-1` 等备份；原来不存在的文件没有对应备份。`services.txt` 记录原服务状态，`state.json` 是停服后的数据快照（如存在）。**自动回滚不会用快照覆盖当前成员数据**。备份包含凭据，目录仅 root 可读；手工恢复前先停止两个本项目服务，并保留当前数据。
 
 ## 常用排查命令
 
 ```bash
-systemctl status tmknetworklan tmknetworklan-https --no-pager -l
-journalctl -u tmknetworklan -n 100 --no-pager
-journalctl -u tmknetworklan-https -n 100 --no-pager
+systemctl status tlan tlan-https --no-pager -l
+journalctl -u tlan -n 100 --no-pager
+journalctl -u tlan-https -n 100 --no-pager
 ss -lntup
 curl --fail http://127.0.0.1:8080/health
-curl --fail https://8.163.21.82:8443/health
+curl --fail https://<你的服务器地址>:8443/health
 timedatectl status
+```
+
+Prometheus 指标只在管理 listener 暴露，并要求管理令牌：
+
+```bash
+TOKEN=$(awk '$1=="admin_token:" {print $2}' /var/lib/tlan/tlan-config.yml | tr -d '"')
+curl -H "X-Admin-Token: $TOKEN" http://127.0.0.1:8081/metrics
+unset TOKEN
 ```
 
 请从另一台电脑也运行 HTTPS 健康检查；不要使用 `curl -k` 判断是否修好。出现 `x509` 错误检查证书、系统 CA 与时间；证书签发失败重点看 Caddy 日志和公网 TCP 80；本机正常但远端失败重点检查安全组、主机规则及线路。

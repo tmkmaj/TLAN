@@ -166,8 +166,8 @@ func TestWindowsCleanupAdapterRequiresExactGUID(t *testing.T) {
 }
 
 func TestWindowsCleanupAdapterMismatchDoesNotRemove(t *testing.T) {
-	record := makeOwnedRecord(t, "instance", ResourceWintunInterface, "LANMesh", "10.44.0.1/24", "{11111111-1111-1111-1111-111111111111}", "{11111111-1111-1111-1111-111111111111}")
-	restore := stubAdapters(t, []adapterInfo{{Name: "LANMesh", GUID: "{99999999-9999-9999-9999-999999999999}"}})
+	record := makeOwnedRecord(t, "instance", ResourceWintunInterface, "TLAN", "10.44.0.1/24", "{11111111-1111-1111-1111-111111111111}", "{11111111-1111-1111-1111-111111111111}")
+	restore := stubAdapters(t, []adapterInfo{{Name: "TLAN", GUID: "{99999999-9999-9999-9999-999999999999}"}})
 	defer restore()
 	runner := &fakeWindowsRunner{handle: func(script string) ([]byte, error) {
 		t.Fatalf("mismatched adapter must not be removed: %s", script)
@@ -179,14 +179,14 @@ func TestWindowsCleanupAdapterMismatchDoesNotRemove(t *testing.T) {
 }
 
 func TestWindowsCleanupRouteUsesExactPrefix(t *testing.T) {
-	record := makeOwnedRecord(t, "instance", ResourceBroadcastRoute, "LANMesh", "255.255.255.255/32", "", "{11111111-1111-1111-1111-111111111111}")
-	restore := stubAdapters(t, []adapterInfo{{Name: "LANMesh", GUID: "{11111111-1111-1111-1111-111111111111}"}})
+	record := makeOwnedRecord(t, "instance", ResourceBroadcastRoute, "TLAN", "255.255.255.255/32", "", "{11111111-1111-1111-1111-111111111111}")
+	restore := stubAdapters(t, []adapterInfo{{Name: "TLAN", GUID: "{11111111-1111-1111-1111-111111111111}"}})
 	defer restore()
 	runner := &fakeWindowsRunner{native: func(command fakeCommand) ([]byte, error) {
 		switch strings.Join(command.Args, " ") {
 		case "interface ipv4 show route store=active":
 			return []byte(routeTableSample), nil
-		case "interface ipv4 delete route prefix=255.255.255.255/32 interface=LANMesh store=active":
+		case "interface ipv4 delete route prefix=255.255.255.255/32 interface=TLAN store=active":
 			return []byte("Ok.\r\n"), nil
 		default:
 			t.Fatalf("unexpected command: %s", command.line())
@@ -199,7 +199,7 @@ func TestWindowsCleanupRouteUsesExactPrefix(t *testing.T) {
 	if len(runner.commands) != 2 {
 		t.Fatalf("commands = %#v", runner.commands)
 	}
-	if joined := strings.Join(runner.commands[1].Args, " "); !strings.Contains(joined, "delete route prefix=255.255.255.255/32 interface=LANMesh") {
+	if joined := strings.Join(runner.commands[1].Args, " "); !strings.Contains(joined, "delete route prefix=255.255.255.255/32 interface=TLAN") {
 		t.Fatalf("delete command = %q", joined)
 	}
 	if strings.Contains(strings.Join(runner.commands[0].Args, " "), "*") {
@@ -214,22 +214,22 @@ const routeTableSample = "\r\n" +
 	"No       Manual    9256  0.0.0.0/0                   9  26.0.0.1\r\n" +
 	"No       Manual    0    0.0.0.0/0                  10  172.16.85.254\r\n" +
 	"No       System    256  127.0.0.0/8                 1  Loopback Pseudo-Interface 1\r\n" +
-	"No       Manual    5    255.255.255.255/32         12  LANMesh\r\n" +
+	"No       Manual    5    255.255.255.255/32         12  TLAN\r\n" +
 	"No       Manual    5    255.255.255.255/32          9  Radmin VPN\r\n"
 
 func TestRoutePresentMatchesPrefixAndInterface(t *testing.T) {
 	runner := &fakeWindowsRunner{native: func(command fakeCommand) ([]byte, error) {
 		return []byte(routeTableSample), nil
 	}}
-	present, err := routePresent(runner, "LANMesh", "255.255.255.255/32")
+	present, err := routePresent(runner, "TLAN", "255.255.255.255/32")
 	if err != nil || !present {
-		t.Fatalf("routePresent(LANMesh) = %v, %v", present, err)
+		t.Fatalf("routePresent(TLAN) = %v, %v", present, err)
 	}
 	present, err = routePresent(runner, "Radmin VPN", "255.255.255.255/32")
 	if err != nil || !present {
 		t.Fatalf("routePresent(Radmin VPN) = %v, %v", present, err)
 	}
-	present, err = routePresent(runner, "LANMesh", "224.0.0.0/4")
+	present, err = routePresent(runner, "TLAN", "224.0.0.0/4")
 	if err != nil || present {
 		t.Fatalf("routePresent(missing) = %v, %v", present, err)
 	}
@@ -250,7 +250,7 @@ func TestEnsureIPv4RouteFallsBackToSetWhenRouteExists(t *testing.T) {
 		}
 		return nil, errors.New("unexpected command " + joined)
 	}}
-	if err := ensureIPv4Route(runner, "LANMesh", "255.255.255.255/32", 5); err != nil {
+	if err := ensureIPv4Route(runner, "TLAN", "255.255.255.255/32", 5); err != nil {
 		t.Fatal(err)
 	}
 	if len(runner.commands) != 2 || !strings.Contains(strings.Join(runner.commands[1].Args, " "), "set route") {
@@ -262,14 +262,14 @@ func TestEnsureIPv4RouteAddsWhenMissing(t *testing.T) {
 	runner := &fakeWindowsRunner{native: func(command fakeCommand) ([]byte, error) {
 		return []byte("Ok.\r\n"), nil
 	}}
-	if err := ensureIPv4Route(runner, "LANMesh", "224.0.0.0/4", 5); err != nil {
+	if err := ensureIPv4Route(runner, "TLAN", "224.0.0.0/4", 5); err != nil {
 		t.Fatal(err)
 	}
 	if len(runner.commands) != 1 {
 		t.Fatalf("commands = %#v", runner.commands)
 	}
 	joined := strings.Join(runner.commands[0].Args, " ")
-	if !strings.Contains(joined, "add route prefix=224.0.0.0/4 interface=LANMesh metric=5 store=active") {
+	if !strings.Contains(joined, "add route prefix=224.0.0.0/4 interface=TLAN metric=5 store=active") {
 		t.Fatalf("add command = %q", joined)
 	}
 }
@@ -277,7 +277,7 @@ func TestEnsureIPv4RouteAddsWhenMissing(t *testing.T) {
 func TestWindowsAdapterQueryTreatsMissingAdapterAsAbsent(t *testing.T) {
 	restore := stubAdapters(t, []adapterInfo{{Name: "Other", GUID: "{11111111-1111-1111-1111-111111111111}"}})
 	defer restore()
-	if guid, present, err := queryAdapterGUID("LANMesh-Test"); err != nil || present || guid != "" {
+	if guid, present, err := queryAdapterGUID("TLAN-Test"); err != nil || present || guid != "" {
 		t.Fatalf("missing adapter result = guid=%q present=%v err=%v", guid, present, err)
 	}
 	if guid, present, err := queryAdapterGUID("Other"); err != nil || !present || guid != "{11111111-1111-1111-1111-111111111111}" {

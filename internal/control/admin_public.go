@@ -64,9 +64,15 @@ func (s *Server) adminAPI(w http.ResponseWriter, r *http.Request) {
 		console.members(w, requestID)
 	case r.URL.Path == "/api/v1/admin/relay-sessions" && r.Method == http.MethodGet:
 		console.relaySessions(w, requestID)
+	case r.URL.Path == "/api/v1/admin/frp-port-range" && r.Method == http.MethodPost:
+		console.setFRPPortRange(w, r, requestID)
+	case r.URL.Path == "/api/v1/admin/server-display" && r.Method == http.MethodPost:
+		console.setServerDisplay(w, r, requestID)
+	case r.URL.Path == "/api/v1/admin/network-name" && r.Method == http.MethodPost:
+		console.setNetworkName(w, r, requestID)
 	case strings.HasPrefix(r.URL.Path, "/api/v1/admin/members/") && r.Method == http.MethodPost:
 		console.memberActionForPrefix(w, r, requestID, "/api/v1/admin/members/")
-	case r.URL.Path == "/api/v1/admin/overview" || r.URL.Path == "/api/v1/admin/members" || r.URL.Path == "/api/v1/admin/relay-sessions" || strings.HasPrefix(r.URL.Path, "/api/v1/admin/members/"):
+	case r.URL.Path == "/api/v1/admin/overview" || r.URL.Path == "/api/v1/admin/members" || r.URL.Path == "/api/v1/admin/relay-sessions" || r.URL.Path == "/api/v1/admin/frp-port-range" || r.URL.Path == "/api/v1/admin/server-display" || r.URL.Path == "/api/v1/admin/network-name" || strings.HasPrefix(r.URL.Path, "/api/v1/admin/members/"):
 		writeAdminFailure(w, http.StatusMethodNotAllowed, requestID, "METHOD_NOT_ALLOWED", "请求方法不允许")
 	default:
 		writeAdminFailure(w, http.StatusNotFound, requestID, "NOT_FOUND", "接口不存在")

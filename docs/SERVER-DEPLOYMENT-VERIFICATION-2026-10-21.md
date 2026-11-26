@@ -5,7 +5,7 @@
 > 均已上线并通过真实公网 managed 组合验证，详见 `docs/FINAL-PUBLIC-DEPLOYMENT-VERIFICATION-2026-10-21.md`。
 
 日期：2026-10-21（Asia/Shanghai）  
-目标：`8.163.21.82`  
+目标：`<SERVER_IP>`  
 访问方式：SSH（凭据来自用户提供的 `D:/SSH.txt`，本记录不包含任何密码、token 或私钥）
 
 ## 1. 部署前环境
@@ -18,7 +18,7 @@
 | systemd | 219 |
 | 磁盘 | 40G，部署前已用 3.1G |
 | 内存 | 1.7G |
-| 现有服务 | `tmknetworklan.service`、`tmknetworklan-https.service` |
+| 现有服务 | `TLAN.service`、`TLAN-https.service` |
 | 现有入口 | TCP 80、TCP 8443、UDP 3478 |
 | 现有数据 | `/var/lib/lanmesh/data/state.json`，2594 bytes |
 
@@ -33,14 +33,14 @@ SHA256:avo554+RKSb99NgeioOZ1M5ke8xeMX+HAI/xwAwnBEA
 额外备份：
 
 ```text
-/var/backups/tmknetworklan/pre-deploy-20261021-133033.tar.gz
+/var/backups/TLAN/pre-deploy-20261021-133033.tar.gz
 SHA-256 f18ade3eb428ddc755794804958f974ad16109d68e1c17d0df9138abca1273d6
 ```
 
 备份包含旧服务文件、systemd unit、配置和成员状态；文件权限 0600。安装器另外创建了事务备份：
 
 ```text
-/var/backups/tmknetworklan/install-ybfnospI
+/var/backups/TLAN/install-ybfnospI
 ```
 
 ## 3. 安装包
@@ -48,7 +48,7 @@ SHA-256 f18ade3eb428ddc755794804958f974ad16109d68e1c17d0df9138abca1273d6
 上传到服务器：
 
 ```text
-/var/tmp/TmkNetworkLAN-server-linux-amd64.run
+/var/tmp/TLAN-server-linux-amd64.run
 ```
 
 部署时安装包 SHA-256：
@@ -57,7 +57,7 @@ SHA-256 f18ade3eb428ddc755794804958f974ad16109d68e1c17d0df9138abca1273d6
 526f80f5bf4b40b8c0b926d56e246d5826ca7e831f774fae2404a76480657886
 ```
 
-随后更新文档和 FRPS unit 后重新构建；当前 `dist/TmkNetworkLAN-server-linux-amd64.run` 的 SHA-256 为：
+随后更新文档和 FRPS unit 后重新构建；当前 `dist/TLAN-server-linux-amd64.run` 的 SHA-256 为：
 
 ```text
 688924250a150e9eaa7333403ec4ee8f72a3daba972e27c7ee19a3745332afa1
@@ -70,24 +70,24 @@ SHA-256 f18ade3eb428ddc755794804958f974ad16109d68e1c17d0df9138abca1273d6
 ### 服务
 
 ```text
-tmknetworklan.service          active (running), enabled
-tmknetworklan-https.service    active (running), enabled
+TLAN.service          active (running), enabled
+TLAN-https.service    active (running), enabled
 ```
 
 新主进程：
 
 ```text
-tmknetworklan-server PID 5290
+TLAN-server PID 5290
 caddy PID 5317
 ```
 
 ### 二进制摘要
 
 ```text
-/opt/tmknetworklan/tmknetworklan-server
+/opt/TLAN/TLAN-server
 0cc56851a648088d61d9447852ad28d6b96f6e6d599d713ff6f7ff2168b2c922
 
-本地 dist/linux/tmknetworklan-server
+本地 dist/linux/TLAN-server
 0cc56851a648088d61d9447852ad28d6b96f6e6d599d713ff6f7ff2168b2c922
 ```
 
@@ -98,22 +98,22 @@ caddy PID 5317
 ```text
 TCP 80    Caddy
 TCP 8443  Caddy
-UDP 3478  tmknetworklan-server
+UDP 3478  TLAN-server
 TCP 8080  127.0.0.1 only
 ```
 
 ### 本机健康检查
 
 ```text
-GET https://8.163.21.82:8443/health
+GET https://<SERVER_IP>:8443/health
 {"status":"ok"}
 ```
 
 ### 当前 Windows 公网检查
 
 ```text
-GET https://8.163.21.82:8443/health -> {"status":"ok"}
-GET http://8.163.21.82/ -> HTTP 308 to https://8.163.21.82:8443/
+GET https://<SERVER_IP>:8443/health -> {"status":"ok"}
+GET http://<SERVER_IP>/ -> HTTP 308 to https://<SERVER_IP>:8443/
 STUN Binding UDP 3478 -> PASS
 mapped=58.249.112.32:5527
 ```
@@ -128,7 +128,7 @@ GET /api/v1/networks with admin  -> HTTP 200
 
 ### 数据和服务兼容
 
-- `/var/lib/lanmesh/tnlan-config.yml` 权限仍为 0600、`lanmesh:lanmesh`。
+- `/var/lib/lanmesh/tlan-config.yml` 权限仍为 0600、`lanmesh:lanmesh`。
 - `/var/lib/lanmesh/data/state.json` 权限仍为 0600、大小仍为 2594 bytes。
 - 新进程日志出现 `private code enrollment enabled for network 我的私人网络`，说明旧网络状态已加载。
 - 部署后观察到真实客户端 `GET /api/v1/session` 和 `GET /api/v1/frp/capabilities`，说明现有客户端能重新连接新服务端。
@@ -155,13 +155,13 @@ vhost      TCP 18080 / 18443
 fa212e185ac6f90f7299f25cb6e2fd65514b1d580dbdb77b010424453595a1bd
 ```
 
-随后修复 CentOS 7 unit 兼容警告并重新打包；当前 `dist/TmkNetworkLAN-frps-debian-amd64.tar.gz` 的 SHA-256 为：
+随后修复 CentOS 7 unit 兼容警告并重新打包；当前 `dist/TLAN-frps-debian-amd64.tar.gz` 的 SHA-256 为：
 
 ```text
 9f7c4c4572e9c38cc2545ce6505e28c319dea7b38db1ca594bfe47e84ee78379
 ```
 
-FRPS 使用 Caddy 已签发的 `8.163.21.82` IP 证书；主 FRPS 7000 保持 TLS-only。WSS 8444 通过 Caddy 终止 TLS 后回源到独立的 127.0.0.1:7001 WSS FRPS 实例；详见 5.7。
+FRPS 使用 Caddy 已签发的 `<SERVER_IP>` IP 证书；主 FRPS 7000 保持 TLS-only。WSS 8444 通过 Caddy 终止 TLS 后回源到独立的 127.0.0.1:7001 WSS FRPS 实例；详见 5.7。
 
 控制面已切换为：
 
@@ -193,7 +193,7 @@ frp:
 控制面签发 managed lease       PASS
 FRPC TLS 连接 7000             PASS
 FRPS 注册 TCP proxy 30001      PASS
-Windows -> 8.163.21.82:30001   PASS
+Windows -> <SERVER_IP>:30001   PASS
 本地回显内容校验               PASS
 停止 FRPC 后 30001 关闭        PASS
 lease 撤销                     PASS
@@ -230,9 +230,9 @@ ProtectSystem=full
 在 Windows 客户端“服务器设置”中使用：
 
 ```text
-服务器地址       8.163.21.82
+服务器地址       <SERVER_IP>
 端口             7000
-TLS serverName   8.163.21.82
+TLS serverName   <SERVER_IP>
 模式             managed
 server_id        frps-managed-1
 可信 CA          从服务器复制 /etc/tlan-frp/server.crt 到 Windows 后选择
@@ -258,17 +258,17 @@ timer 每 5 分钟检查 Caddy 证书文件；只有证书或私钥变化时才�
 ### 5.7.1 部署前保护
 
 - 本地 Caddyfile 备份：`.tmp-runtime/Caddyfile.pre-8444-20261021-135131`
-- 服务器 Caddyfile 备份：`/opt/tmknetworklan/backups/wss-8444-20261021-135138/Caddyfile`
+- 服务器 Caddyfile 备份：`/opt/TLAN/backups/wss-8444-20261021-135138/Caddyfile`
 - 原 Caddyfile SHA-256：`120059fea802aa4cc28129d6e67839b636210b7d0fbe013c4aea5564c8ed9576`
 - FRPS 配置备份：`/etc/tlan-frp/frps.toml.wss-backup-20261021-135519`
-- 备份同时记录了 `tmknetworklan-https.service` 的 active/enabled 状态、unit、监听端口和 firewalld 规则。
+- 备份同时记录了 `TLAN-https.service` 的 active/enabled 状态、unit、监听端口和 firewalld 规则。
 
 ### 5.7.2 Caddy 配置
 
-`deploy/Caddyfile` 与服务器 `/opt/tmknetworklan/Caddyfile` 已同步，保留原有 8443 -> 8080，并新增：
+`deploy/Caddyfile` 与服务器 `/opt/TLAN/Caddyfile` 已同步，保留原有 8443 -> 8080，并新增：
 
 ```caddyfile
-https://8.163.21.82:8444 {
+https://<SERVER_IP>:8444 {
 	log
 	tls {
 		issuer acme {
@@ -286,7 +286,7 @@ https://8.163.21.82:8444 {
 - Caddy 版本：2.11.7
 - Caddyfile SHA-256：`83ed0816bcf6bec64faa887ff8895ef3eda381d587b9f338463b4c056d84655f`
 - `caddy validate`：`Valid configuration`
-- `tmknetworklan-https.service`：`active`，已执行正式 restart
+- `TLAN-https.service`：`active`，已执行正式 restart
 - 重启后 PID：9176
 - 8443 与 8444 均监听 TCP；8443 仍返回原有的未认证 401，证明旧控制入口未被替换
 
@@ -320,7 +320,7 @@ transport.tls.force = false
 ```
 
 Caddy 8444 终止客户端 TLS，再转发到 `127.0.0.1:7001`。客户端仍使用
-`serverPort=8444`、`protocol=wss`、`serverName=8.163.21.82`、可信 CA 和
+`serverPort=8444`、`protocol=wss`、`serverName=<SERVER_IP>`、可信 CA 和
 `transport.tls.enable=true`。公网 7000 不再接受明文，7001 不暴露到公网。
 
 双实例服务：
@@ -339,12 +339,12 @@ WSS 验证完成后，主 TCP/TLS 7000 也重新通过了一次真实 managed �
 ```text
 临时成员 enroll                         PASS
 控制面签发 managed lease                PASS
-Windows frpc -> 8.163.21.82:8444 WSS    PASS
+Windows frpc -> <SERVER_IP>:8444 WSS    PASS
 Caddy WebSocket upgrade                 status=101
 FRPS Login 插件观察                     login_seen=true
 FRPS NewProxy 插件观察                  proxy_seen=true
 FRPS TCP proxy 30997                    PASS
-Windows -> 8.163.21.82:30997 回显        PASS
+Windows -> <SERVER_IP>:30997 回显        PASS
 回显内容逐字节一致                       PASS
 Caddy restart 后重复 managed WSS         PASS
 ```
@@ -356,7 +356,7 @@ Caddy 访问日志记录 `uri=/~!frp`、HTTP/1.1 Upgrade 和 `status=101`；FRPS
 ### 5.7.6 清理
 
 两次测试的临时 lease 和成员均已撤销/删除，清理后 lease 查询返回 401；30997 不再监听；
-本机无残留 `frpc`/`TmkNetworkLAN` 进程；远端临时 join code、server-id、CA 临时文件已删除。
+本机无残留 `frpc`/`TLAN` 进程；远端临时 join code、server-id、CA 临时文件已删除。
 服务器上的 Caddy 和 FRPS 服务保持 active，8444 保持监听。
 
 ### 5.7.7 发布工程同步完成
@@ -376,11 +376,11 @@ Caddy 访问日志记录 `uri=/~!frp`、HTTP/1.1 Upgrade 和 `status=101`；FRPS
 若需回滚：
 
 ```bash
-systemctl stop tlan-frps.service tmknetworklan.service tmknetworklan-https.service
-tar -xzf /var/backups/tmknetworklan/pre-deploy-20261021-133033.tar.gz -C /
-# 如需回滚控制面 frp 配置，同时恢复 /var/backups/tmknetworklan/tnlan-config-pre-frp-20261021-133727.yml。
+systemctl stop tlan-frps.service TLAN.service TLAN-https.service
+tar -xzf /var/backups/TLAN/pre-deploy-20261021-133033.tar.gz -C /
+# 如需回滚控制面 frp 配置，同时恢复 /var/backups/TLAN/tnlan-config-pre-frp-20261021-133727.yml。
 systemctl daemon-reload
-systemctl start tmknetworklan.service tmknetworklan-https.service
+systemctl start TLAN.service TLAN-https.service
 # 确认 FRPS 配置和证书后再启动 tlan-frps.service。
 ```
 
@@ -390,8 +390,8 @@ systemctl start tmknetworklan.service tmknetworklan-https.service
 
 2026-10-21 又完成了真实公网 managed FRP 的 UDP 与 HTTP vhost 验证：
 
-- UDP `8.163.21.82:30002` 回显通过；
-- `8-163-21-82.nip.io:18080` HTTP 200，Host rewrite 和请求/响应 Header 通过；
+- UDP `<SERVER_IP>:30002` 回显通过；
+- `example.com:18080` HTTP 200，Host rewrite 和请求/响应 Header 通过；
 - 停止后 UDP 端口关闭、vhost 路由移除、lease 撤销、临时成员删除；
 - 控制面配置摘要恢复到原值，临时 secret 清理完成。
 

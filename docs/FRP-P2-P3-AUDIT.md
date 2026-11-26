@@ -96,7 +96,7 @@ TLAN_FRP_LIVE=1 go test -mod=vendor ./internal/frpauth -run TestLive -count=1 -v
 
 `TestLiveFRPSPluginTCPAndHTTPProxy` 覆盖 TCP、HTTP、UDP，并验证撤销后新 FRPC 登录失败。
 
-已通过的原生 UI smoke（使用现有 `dist/windows/TmkNetworkLAN.exe`，不是当前 P3 源码重新构建的二进制）：
+已通过的原生 UI smoke（使用现有 `dist/windows/TLAN.exe`，不是当前 P3 源码重新构建的二进制）：
 
 ```text
 PASS: integrated Mesh workspace, FRP page, version control, power-off transition,
@@ -413,7 +413,7 @@ P3 的“网络切换、身份变化、授权收紧时停止/恢复”没有完�
 | `go vet -mod=vendor ./...` | PASS | 无输出 |
 | `TLAN_FRP_INTEGRATION=1 go test -mod=vendor ./internal/frp -run TestLive -count=1 -v` | PASS | 3 个真实/局部联调测试 |
 | `TLAN_FRP_LIVE=1 go test -mod=vendor ./internal/frpauth -run TestLive -count=1 -v` | PASS | 真实 plugin TCP/HTTP/UDP |
-| 现有 `dist/windows/TmkNetworkLAN.exe --ui-smoke-test` | PASS | 旧 P2 二进制，不是当前 P3 源码构建 |
+| 现有 `dist/windows/TLAN.exe --ui-smoke-test` | PASS | 旧 P2 二进制，不是当前 P3 源码构建 |
 | `go test -race ...` | 未执行成功 | 环境无 gcc，`CGO_ENABLED=1` 仍报 `C compiler "gcc" not found` |
 
 ### 5.2 未验证
@@ -657,7 +657,7 @@ go test -mod=vendor ./internal/frp -run 'TestVisitorStatus|TestVisitorErrorClass
 
 ### 9.3 本机构建/发布物一致性缺口
 
-- `dist/windows/TmkNetworkLAN.exe` 的时间为 `2026-10-21 03:10:42`，而当前 `internal/frp/manager_windows.go`、`internal/control`、`internal/mesh`、`internal/frpauth`、`cmd/client/frp_mesh_windows.go` 等多个源文件时间为 `07:59–08:07`；当前发布 EXE/ZIP 不是本节快照的构建产物。
+- `dist/windows/TLAN.exe` 的时间为 `2026-10-21 03:10:42`，而当前 `internal/frp/manager_windows.go`、`internal/control`、`internal/mesh`、`internal/frpauth`、`cmd/client/frp_mesh_windows.go` 等多个源文件时间为 `07:59–08:07`；当前发布 EXE/ZIP 不是本节快照的构建产物。
 - 因此 `VALIDATION.md` 中“最终包已重建”的表述不能覆盖本节最新源码；当前源码的临时 `--ui-smoke-test` 已 PASS，但该结果不能替代重新打包和发布包校验。
 - 这是本地可完成的发布工程缺口，不是数据面缺口。源码冻结后应重新运行构建脚本、重新生成 `dist/SHA256SUMS.txt`，并对新 EXE 重跑 UI smoke 和包内 frpc hash 校验。
 
@@ -667,7 +667,7 @@ go test -mod=vendor ./internal/frp -run 'TestVisitorStatus|TestVisitorErrorClass
 .\build-windows-client.ps1
 .\build-debian-server.ps1
 .\build-server-installer.ps1 -Offline
-Get-FileHash -Algorithm SHA256 .\dist\windows\TmkNetworkLAN.exe
+Get-FileHash -Algorithm SHA256 .\dist\windows\TLAN.exe
 ```
 
 ### 9.4 当前测试结果与可继续完成的验证
@@ -691,7 +691,7 @@ go test -mod=vendor ./internal/frpauth -run TestLive -count=1 -v
 当前源码另以临时目录构建 Windows GUI，并执行：
 
 ```text
-TmkNetworkLAN.exe --ui-smoke-test <临时报告>
+TLAN.exe --ui-smoke-test <临时报告>
 PASS: integrated Mesh workspace, FRP page, version control, power-off transition,
 member/rule tables and antialiased drawing calls; no network or adapter created
 ```

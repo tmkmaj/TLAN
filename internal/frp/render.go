@@ -112,7 +112,9 @@ func RenderConfig(input RenderInput) (RenderedConfig, error) {
 	}
 	fmt.Fprintf(&b, "transport.tls.disableCustomTLSFirstByte = %t\n", disableFirstByte)
 	writeTOMLString(&b, "transport.tls.serverName", cfg.Profile.Server.TLSServerName)
-	writeTOMLString(&b, "transport.tls.trustedCaFile", filepath.ToSlash(cfg.Profile.Server.TrustedCAPath))
+	if cfg.Profile.Server.TrustedCAPath != "" {
+		writeTOMLString(&b, "transport.tls.trustedCaFile", filepath.ToSlash(cfg.Profile.Server.TrustedCAPath))
+	}
 	b.WriteString("\nlog.to = \"console\"\n")
 	b.WriteString("log.level = \"info\"\n")
 	b.WriteString("log.disablePrintColor = true\n\n")

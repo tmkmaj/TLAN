@@ -1380,6 +1380,36 @@ func (m *Manager) Apply(ctx context.Context, cfg Config, token string) (Config, 
 	return m.ApplyWithSecrets(ctx, cfg, token, nil)
 }
 
+// SaveBootstrap stores a server-provisioned FRP endpoint, credential, and
+// optional pinned CA bundle without starting the local frpc process yet.
+func (m *Manager) SaveBootstrap(ctx context.Context, cfg Config, token string, caData []byte) (Config, error) {
+	m.opMu.Lock()
+	defer m.opMu.Unlock()
+
+	cfg = NormalizeConfig(cfg)
+	current, err := m.store.Load()
+	currentRevision := uint64(0)
+	if err == nil {
+		currentRevision = current.Profile.Revision
+	} else if !errors.Is(err, ErrNoConfig) {
+		return Config{}, err
+	}
+	cfg.Profile.Revision = currentRevision
+	saved, err := m.store.SaveBootstrap(cfg, token, caData)
+	if err != nil {
+		return Config{}, m.fail(err)
+	}
+	m.mu.Lock()
+	m.config = saved
+	m.hasConfig = true
+	if m.instance == nil && (m.state == "" || m.state == "unconfigured" || m.state == "failed") {
+		m.state = "stopped"
+		m.lastErr = nil
+	}
+	m.mu.Unlock()
+	return saved, nil
+}
+
 func (m *Manager) ApplyWithSecrets(ctx context.Context, cfg Config, token string, providedSecrets map[string]string) (Config, error) {
 	m.opMu.Lock()
 	defer m.opMu.Unlock()
@@ -2121,7 +2151,18 @@ func (m *Manager) waitReady(ctx context.Context, inst *managedInstance) error {
 				continue
 			}
 			if proxy.Err != "" {
-				return classifyProxyError(proxy.Err)
+				classified := classifyProxyError(proxy.Err)
+				switch ErrorCode(classified) {
+				case CodeRemotePortBusy:
+					if rule.Exposure.RemotePort > 0 {
+						return codedError(CodeRemotePortBusy, "服务器端口 %d 已被占用: %s", rule.Exposure.RemotePort, proxy.Err)
+					}
+				case CodeRemotePortDenied:
+					if rule.Exposure.RemotePort > 0 {
+						return codedError(CodeRemotePortDenied, "服务器端口 %d 不在允许范围内: %s", rule.Exposure.RemotePort, proxy.Err)
+					}
+				}
+				return classified
 			}
 			if strings.EqualFold(proxy.Status, "running") &&
 				(rule.Type == "http" || rule.Type == "https" || rule.Type == "stcp" || rule.Type == "sudp" || rule.Type == "tcpmux" || rule.Type == "xtcp" || proxy.RemoteAddr != "") {
@@ -2284,8 +2325,15 @@ func (m *Manager) Snapshot(ctx context.Context) Snapshot {
 				row.RemoteAddr = proxyRemoteAddress(rule, proxy.RemoteAddr, cfg.Profile.Server)
 				if proxy.Err != "" {
 					row.State = "注册失败"
-					row.ErrorDetail = proxy.Err
 					row.ErrorCode = ErrorCode(classifyProxyError(proxy.Err))
+					switch row.ErrorCode {
+					case CodeRemotePortBusy:
+						row.ErrorDetail = "服务器端口已被占用"
+					case CodeRemotePortDenied:
+						row.ErrorDetail = "端口不在允许范围内"
+					default:
+						row.ErrorDetail = proxy.Err
+					}
 				} else if strings.EqualFold(proxy.Status, "running") {
 					row.State = "已注册"
 					snapshot.Authenticated = true
@@ -2600,7 +2648,7 @@ func (m *Manager) acquireLeaseWithSecrets(ctx context.Context, cfg Config, secre
 	request := LeaseRequest{NetworkID: m.networkID, DeviceID: m.deviceID, ServerID: cfg.Profile.Server.ServerID, Rules: rules, TTL: 10 * time.Minute, TTLSeconds: 600}
 	lease, err := m.leaseProvider.Acquire(ctx, request)
 	if err != nil {
-		return nil, withCode(CodeAuthRejected, err)
+		return nil, classifyLeaseAcquireError(err)
 	}
 	if lease.ID == "" || lease.Credential == "" || !lease.ExpiresAt.After(time.Now()) {
 		return nil, codedError(CodeAuthRejected, "managed FRP lease response is incomplete or already expired")

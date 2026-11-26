@@ -25,6 +25,10 @@ func frpRouteAllowed(r *http.Request) bool {
 	switch {
 	case r.URL.Path == "/api/v1/frp/capabilities":
 		return r.Method == http.MethodGet
+	case r.URL.Path == "/api/v1/frp/port-range":
+		return r.Method == http.MethodGet
+	case r.URL.Path == "/api/v1/frp/bootstrap":
+		return r.Method == http.MethodGet
 	case r.URL.Path == "/api/v1/frp/leases":
 		return r.Method == http.MethodPost
 	case r.URL.Path == "/api/v1/frp/services":

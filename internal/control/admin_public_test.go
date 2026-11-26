@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/private-radminlan/lanmesh/core"
 	"github.com/private-radminlan/lanmesh/internal/clientapi"
 	"github.com/private-radminlan/lanmesh/internal/clientidentity"
 	"github.com/private-radminlan/lanmesh/internal/storage"
@@ -16,11 +17,11 @@ func TestAdminEnrollmentAndClientAdminAPI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	network, err := store.EnsurePrivateNetwork("Admin Client", "TmkNetwork", "10.244.0.0/24")
+	network, err := store.EnsurePrivateNetwork("Admin Client", "test-join-code", "10.244.0.0/24")
 	if err != nil {
 		t.Fatal(err)
 	}
-	server := httptest.NewServer((&Server{Store: store, AdminToken: "Tmkmaj233"}).Handler())
+	server := httptest.NewServer((&Server{Store: store, AdminToken: "test-admin-token"}).Handler())
 	defer server.Close()
 
 	adminIdentity, err := clientidentity.LoadOrCreate(filepath.Join(t.TempDir(), "admin-id.json"))
@@ -28,7 +29,7 @@ func TestAdminEnrollmentAndClientAdminAPI(t *testing.T) {
 		t.Fatal(err)
 	}
 	memberAPI := clientapi.New(server.URL, "")
-	adminMembership, err := memberAPI.Enroll("Tmkmaj233", adminIdentity.RegisterRequest(), adminIdentity.PrivateKey)
+	adminMembership, err := memberAPI.Enroll("test-admin-token", adminIdentity.RegisterRequest(), adminIdentity.PrivateKey)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,15 +46,16 @@ func TestAdminEnrollmentAndClientAdminAPI(t *testing.T) {
 		t.Fatal(err)
 	}
 	normalAPI := clientapi.New(server.URL, "")
-	normalMembership, err := normalAPI.Enroll("TmkNetwork", normalIdentity.RegisterRequest(), normalIdentity.PrivateKey)
+	normalMembership, err := normalAPI.Enroll("test-join-code", normalIdentity.RegisterRequest(), normalIdentity.PrivateKey)
 	if err != nil {
 		t.Fatal(err)
 	}
+	normalAPI.Token = normalMembership.Token
 	if normalMembership.Admin {
 		t.Fatal("normal enrollment was marked admin")
 	}
 
-	adminAPI := clientapi.NewAdmin(server.URL, "Tmkmaj233")
+	adminAPI := clientapi.NewAdmin(server.URL, "test-admin-token")
 	overview, err := adminAPI.Overview()
 	if err != nil {
 		t.Fatal(err)
@@ -94,5 +96,25 @@ func TestAdminEnrollmentAndClientAdminAPI(t *testing.T) {
 	}
 	if _, err := clientapi.NewAdmin(server.URL, "wrong-admin-token").Overview(); err == nil {
 		t.Fatal("wrong admin token accessed public admin API")
+	}
+	if gotRange, err := memberAPI.FRPPortRange(); err != nil || gotRange.Start != 60000 || gotRange.End != 61000 {
+		t.Fatalf("default member FRPPortRange = %+v, err=%v", gotRange, err)
+	}
+	updatedRange, err := adminAPI.SetFRPPortRange(50000, 50500)
+	if err != nil || updatedRange.Start != 50000 || updatedRange.End != 50500 {
+		t.Fatalf("admin SetFRPPortRange = %+v, err=%v", updatedRange, err)
+	}
+	if overview2, err := adminAPI.Overview(); err != nil || overview2.FRPPortStart != 50000 || overview2.FRPPortEnd != 50500 {
+		t.Fatalf("overview after SetFRPPortRange = %+v, err=%v", overview2, err)
+	}
+	if gotRange2, err := memberAPI.FRPPortRange(); err != nil || gotRange2.Start != 50000 || gotRange2.End != 50500 {
+		t.Fatalf("updated member FRPPortRange = %+v, err=%v", gotRange2, err)
+	}
+	selfRenamed, err := memberAPI.RenameSelf(core.NetworkID(network.ID), adminIdentity.DeviceID, "PlayerOne")
+	if err != nil || selfRenamed.Name != "PlayerOne" {
+		t.Fatalf("member RenameSelf = %+v, err=%v", selfRenamed, err)
+	}
+	if _, err := memberAPI.RenameSelf(core.NetworkID(network.ID), normalIdentity.DeviceID, "Hijacked"); err == nil {
+		t.Fatal("member was able to rename another member's device")
 	}
 }

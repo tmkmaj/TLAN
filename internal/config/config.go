@@ -19,7 +19,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const FileName = "tnlan-config.yml"
+const FileName = "tlan-config.yml"
 
 // Config is the complete server configuration. The YAML file is deliberately
 // strict: misspelled or obsolete fields fail startup rather than being ignored.
@@ -32,9 +32,11 @@ type Config struct {
 }
 
 type NetworkConfig struct {
-	Name     string `yaml:"name"`
-	CIDR     string `yaml:"cidr"`
-	JoinCode string `yaml:"join_code"`
+	Name         string `yaml:"name"`
+	CIDR         string `yaml:"cidr"`
+	JoinCode     string `yaml:"join_code"`
+	DisplayMode  string `yaml:"display_mode,omitempty"`
+	DisplayAlias string `yaml:"display_alias,omitempty"`
 }
 
 type ServerConfig struct {
@@ -52,6 +54,7 @@ type ServerConfig struct {
 	// MinClientVersion is the oldest release version the server still serves.
 	// Empty disables the gate. Beta builds are never gated.
 	MinClientVersion string `yaml:"min_client_version,omitempty"`
+	RelayQueueDepth  int    `yaml:"relay_queue_depth,omitempty"`
 }
 
 type StorageConfig struct {
@@ -79,6 +82,13 @@ type FRPConfig struct {
 	MaxDomainsPerRule   int           `yaml:"max_domains_per_rule,omitempty"`
 	AllowedPorts        FRPPortList   `yaml:"allowed_ports,omitempty"`
 	AllowedDomains      FRPDomainList `yaml:"allowed_domains,omitempty"`
+	ClientHost          string        `yaml:"client_host,omitempty"`
+	ClientPort          int           `yaml:"client_port,omitempty"`
+	ClientTransport     string        `yaml:"client_transport,omitempty"`
+	ClientTLSServerName string        `yaml:"client_tls_server_name,omitempty"`
+	ClientToken         string        `yaml:"client_token,omitempty"`
+	ClientTokenFile     string        `yaml:"client_token_file,omitempty"`
+	ClientCAFile        string        `yaml:"client_ca_file,omitempty"`
 }
 
 type FRPPortRange struct {
@@ -158,11 +168,19 @@ func LoadFile(path string) (Config, error) {
 }
 
 func newDefault() (Config, error) {
+	joinCode, err := randomToken(12)
+	if err != nil {
+		return Config{}, fmt.Errorf("generate default join code: %w", err)
+	}
+	adminToken, err := randomToken(24)
+	if err != nil {
+		return Config{}, fmt.Errorf("generate default admin token: %w", err)
+	}
 	return Config{
 		Network: NetworkConfig{
-			Name:     "我的私人网络",
+			Name:     "TLAN",
 			CIDR:     "10.240.0.0/24",
-			JoinCode: "TmkNetwork",
+			JoinCode: joinCode,
 		},
 		Server: ServerConfig{
 			Listen:      "127.0.0.1:8080",
@@ -171,7 +189,7 @@ func newDefault() (Config, error) {
 		},
 		Storage: StorageConfig{DataDir: "./data"},
 		Security: SecurityConfig{
-			AdminToken: "Tmkmaj233",
+			AdminToken: adminToken,
 		},
 		FRP: FRPConfig{
 			Mode:        "disabled",
@@ -190,15 +208,15 @@ func randomToken(size int) (string, error) {
 
 func writeNew(path string, cfg Config) error {
 	var output bytes.Buffer
-	output.WriteString("# TmkNetworkLAN Linux 服务端配置\n")
-	output.WriteString("# 此文件包含管理员令牌与入网令牌，请勿上传或公开。\n")
-	output.WriteString("# 修改配置后再次运行程序。程序只从当前目录读取 tnlan-config.yml。\n")
-	output.WriteString("# 将 network.join_code 设为空字符串可禁止新成员加入。\n\n")
-	output.WriteString("# frp.mode 默认 disabled；external 使用独立 FRPS 的共享 token；\n")
-	output.WriteString("# managed 还需配置 frp.server_id、frp.plugin_listen 和允许的端口/域名。\n")
-	output.WriteString("# 托管模式的外层 FRPS token 仍放在独立 frps.toml，不写入本文件。\n\n")
-	output.WriteString("# IP HTTPS 部署：Caddy 在 8.163.21.82:8443 提供 HTTPS，代理到下方 listen。\n")
-	output.WriteString("# 默认使用 Caddy 时保持 tls_cert/tls_key 为空；TCP 80 用于 IP 证书自动验证。\n\n")
+	output.WriteString("# TLAN Linux Server Configuration\n")
+	output.WriteString("# This file contains your admin token and network join code. Keep it private.\n")
+	output.WriteString("# Edit as needed and start tlan-server again. Config is read from ./tlan-config.yml.\n")
+	output.WriteString("# server.relay_queue_depth defaults to 64 when 0; server.min_client_version disables gating when empty.\n")
+	output.WriteString("# Set network.join_code to \"\" to disable new member enrollment.\n\n")
+	output.WriteString("# frp.mode defaults to disabled; external uses a standalone FRPS shared token;\n")
+	output.WriteString("# managed also requires frp.server_id, frp.plugin_listen, and allowed_ports/allowed_domains.\n\n")
+	output.WriteString("# HTTPS reverse proxy: Caddy listens on :8443 and proxies to server.listen (127.0.0.1:8080).\n")
+	output.WriteString("# Keep tls_cert/tls_key empty when using Caddy; TCP 80 is used for ACME HTTP-01 renewal.\n\n")
 	encoder := yaml.NewEncoder(&output)
 	encoder.SetIndent(2)
 	if err := encoder.Encode(cfg); err != nil {
@@ -282,6 +300,9 @@ func (c Config) Validate() error {
 	if err := validateMinClientVersion(c.Server.MinClientVersion); err != nil {
 		return err
 	}
+	if c.Server.RelayQueueDepth < 0 || c.Server.RelayQueueDepth > 8192 {
+		return errors.New("server.relay_queue_depth must be 0-8192")
+	}
 	if (c.Server.TLSCert == "") != (c.Server.TLSKey == "") {
 		return errors.New("server.tls_cert and server.tls_key must be set together")
 	}
@@ -311,6 +332,14 @@ func (c Config) Validate() error {
 	}
 	if c.Network.JoinCode != "" && c.Security.AdminToken == c.Network.JoinCode {
 		return errors.New("security.admin_token must differ from network.join_code")
+	}
+	if mode := strings.ToLower(strings.TrimSpace(c.Network.DisplayMode)); mode != "" && mode != "alias" && mode != "ip" {
+		return errors.New("network.display_mode must be alias or ip")
+	}
+	if alias := strings.TrimSpace(c.Network.DisplayAlias); len([]rune(alias)) > 64 || strings.ContainsAny(alias, "\r\n\x00") {
+		return errors.New("network.display_alias is invalid")
+	} else if strings.EqualFold(strings.TrimSpace(c.Network.DisplayMode), "alias") && alias == "" {
+		return errors.New("network.display_alias is required when network.display_mode is alias")
 	}
 
 	if err := c.FRP.Validate(); err != nil {
@@ -583,10 +612,13 @@ func (f FRPConfig) Validate() error {
 		if f.CoreVersion != "" && f.CoreVersion != "0.71.1" {
 			return errors.New("frp.core_version must be 0.71.1")
 		}
-		return nil
+		return f.validateClientBootstrap()
 	case "managed":
 	default:
 		return fmt.Errorf("frp.mode must be disabled, external, or managed")
+	}
+	if err := f.validateClientBootstrap(); err != nil {
+		return err
 	}
 	if f.EffectiveCoreVersion() != "0.71.1" {
 		return errors.New("frp.core_version must be 0.71.1")
@@ -621,6 +653,23 @@ func (f FRPConfig) Validate() error {
 		if err := validateAllowedDomainSuffix(domain); err != nil {
 			return fmt.Errorf("frp.allowed_domains: %w", err)
 		}
+	}
+	return nil
+}
+
+func (f FRPConfig) validateClientBootstrap() error {
+	if f.ClientPort < 0 || f.ClientPort > 65535 {
+		return errors.New("frp.client_port must be 0-65535")
+	}
+	if transport := strings.ToLower(strings.TrimSpace(f.ClientTransport)); transport != "" {
+		switch transport {
+		case "tcp", "websocket", "wss", "quic", "kcp":
+		default:
+			return errors.New("frp.client_transport must be tcp, websocket, wss, quic, or kcp")
+		}
+	}
+	if strings.TrimSpace(f.ClientToken) != "" && strings.TrimSpace(f.ClientTokenFile) != "" {
+		return errors.New("frp.client_token and frp.client_token_file must not both be set")
 	}
 	return nil
 }

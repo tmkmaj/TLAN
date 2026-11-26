@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
+//go:build windows
 // +build windows
 
 package walk
@@ -381,9 +382,7 @@ func (cb *ContainerBase) WndProc(hwnd win.HWND, msg uint32, wParam, lParam uintp
 			break
 		}
 
-		if cb.background == nullBrushSingleton {
-			cb.Invalidate()
-		}
+		win.InvalidateRect(hwnd, nil, true)
 	}
 
 	return cb.WidgetBase.WndProc(hwnd, msg, wParam, lParam)

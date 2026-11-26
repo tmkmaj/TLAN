@@ -726,3 +726,28 @@ func TestActiveLeaseCountFiltersNetworkAndDevice(t *testing.T) {
 		t.Fatalf("revoked lease count = %d, want 0", got)
 	}
 }
+
+func TestSetAllowedPortsUpdatesAndRevokesOutOfPolicyLeases(t *testing.T) {
+	store, _ := testStore(t)
+	lease, err := store.Issue("net-a", "dev-a", "frps-managed-1", []Rule{
+		{ID: "rule-a", ProxyName: "tlan_a", Type: "tcp", RemotePort: 30001, BindPort: 8080},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetAllowedPorts([]PortRange{{Start: 60000, End: 61000}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AuthorizeLogin(LoginRequest{LeaseID: lease.LeaseID, Capability: lease.Credential, ServerID: "frps-managed-1", User: "user-a", RunID: "run-a"}); !errors.Is(err, ErrRevoked) {
+		t.Fatalf("out-of-policy lease after SetAllowedPorts = %v, want ErrRevoked", err)
+	}
+	if _, err := store.Issue("net-a", "dev-a", "frps-managed-1", []Rule{
+		{ID: "rule-b", ProxyName: "tlan_b", Type: "tcp", RemotePort: 60005, BindPort: 8080},
+	}); err != nil {
+		t.Fatalf("new range lease error = %v", err)
+	}
+	caps := store.Capabilities()
+	if len(caps.AllowedPorts) != 1 || caps.AllowedPorts[0] != (PortRange{Start: 60000, End: 61000}) {
+		t.Fatalf("Capabilities().AllowedPorts = %+v", caps.AllowedPorts)
+	}
+}

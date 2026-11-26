@@ -33,7 +33,7 @@ func TestValidateMeshStartRejectsCapturedFRPS(t *testing.T) {
 	cfg.Profile.Server.Port = 7000
 	manager := &Manager{
 		config: cfg, hasConfig: true,
-		meshInterface: "LANMesh",
+		meshInterface: "TLAN",
 		observer: &scriptedRouteObserver{routes: func(int) ([]netpolicy.Route, error) {
 			return []netpolicy.Route{{
 				Destination:       netip.MustParseAddr("10.50.0.20"),
@@ -55,7 +55,7 @@ func TestValidateMeshStartAllowsIndependentVPN(t *testing.T) {
 	cfg.Profile.Server.Port = 7000
 	manager := &Manager{
 		config: cfg, hasConfig: true,
-		meshInterface: "LANMesh",
+		meshInterface: "TLAN",
 		observer: &scriptedRouteObserver{routes: func(int) ([]netpolicy.Route, error) {
 			return []netpolicy.Route{{
 				Destination:       netip.MustParseAddr("203.0.113.20"),
@@ -113,13 +113,13 @@ func TestRuntimeEgressChangeStopsFRPAndClearsIntent(t *testing.T) {
 		}
 		return []netpolicy.Route{{
 			Destination:       netip.MustParseAddr("203.0.113.20"),
-			InterfaceName:     "LANMesh",
+			InterfaceName:     "TLAN",
 			InterfacePrefixes: []netip.Prefix{netip.MustParsePrefix("10.50.0.2/16")},
 		}}, nil
 	}}
 	inst := &managedInstance{done: make(chan struct{}), config: cfg, stopped: true}
 	manager := &Manager{
-		observer: observer, meshInterface: "LANMesh", egressInterval: 10 * time.Millisecond,
+		observer: observer, meshInterface: "TLAN", egressInterval: 10 * time.Millisecond,
 		meshCIDRs: []netip.Prefix{netip.MustParsePrefix("10.50.0.0/16")},
 		instance:  inst, state: "running",
 	}
@@ -154,7 +154,7 @@ func TestRuntimeEgressMissingEvidenceFailsClosed(t *testing.T) {
 	}}
 	inst := &managedInstance{done: make(chan struct{}), config: cfg, stopped: true}
 	manager := &Manager{
-		observer: observer, meshInterface: "LANMesh", egressInterval: 10 * time.Millisecond,
+		observer: observer, meshInterface: "TLAN", egressInterval: 10 * time.Millisecond,
 		meshCIDRs: []netip.Prefix{netip.MustParsePrefix("10.50.0.0/16")},
 		instance:  inst, state: "running",
 	}

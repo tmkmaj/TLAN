@@ -4,9 +4,9 @@ $root = $PSScriptRoot
 $previousPath = $env:PATH
 Push-Location $root
 try {
-    $path = Join-Path $root 'dist/TmkNetworkLAN-server-linux-amd64.run'
+    $path = Join-Path $root 'dist/TLAN-server-linux-amd64.run'
     $bytes = [IO.File]::ReadAllBytes($path)
-    $marker = [Text.Encoding]::ASCII.GetBytes("`n__TMK_PAYLOAD_BELOW__`n")
+    $marker = [Text.Encoding]::ASCII.GetBytes("`n__TLAN_PAYLOAD_BELOW__`n")
     $offset = -1
     # The header is small; do not scan compressed payload as text.
     for ($i = 0; $i -lt [Math]::Min($bytes.Length - $marker.Length, 131072); $i++) {
@@ -30,11 +30,11 @@ try {
     if ((Get-FileHash -Algorithm SHA256 $path).Hash.ToLowerInvariant() -ne $expectedFull) { throw 'Installer checksum mismatch.' }
     tar -xzf $archive -C $verify
     if ($LASTEXITCODE -ne 0) { throw 'Payload extraction failed.' }
-    foreach ($name in @('tmknetworklan-server','caddy','install-helper','Caddyfile','tmknetworklan.service','tmknetworklan-https.service','INSTALL-LINUX.md','IP-DEPLOYMENT.md')) {
+    foreach ($name in @('tlan-server','caddy','install-helper','Caddyfile','tlan.service','tlan-https.service','tlan-graceful-restart.sh','INSTALL-LINUX.md','IP-DEPLOYMENT.md')) {
         $stagedHash = (Get-FileHash -Algorithm SHA256 ".tmp-build/server-installer-payload/$name").Hash
         if ((Get-FileHash -Algorithm SHA256 "$verify/$name").Hash -ne $stagedHash) { throw "Payload differs from build output: $name" }
     }
-    foreach ($unit in @('tmknetworklan.service','tmknetworklan-https.service')) {
+    foreach ($unit in @('tlan.service','tlan-https.service')) {
         $text = Get-Content -Raw "$verify/$unit"
         if ($text -match '(?m)^(StateDirectory|ReadWritePaths|AmbientCapabilities)=|^ProtectSystem=strict') { throw "Unit contains directives incompatible with systemd 219: $unit" }
     }
@@ -44,7 +44,7 @@ try {
         if ($LASTEXITCODE -ne 0) { throw 'Bash syntax check failed.' }
         & $Bash deploy/tests/installer-rollback-test.sh
         if ($LASTEXITCODE -ne 0) { throw 'Rollback test failed.' }
-        & $Bash dist/TmkNetworkLAN-server-linux-amd64.run --help
+        & $Bash dist/TLAN-server-linux-amd64.run --help
         if ($LASTEXITCODE -ne 0) { throw 'Installer help smoke test failed.' }
     }
     Write-Output 'PASS: header, payload checksum, full checksum, extraction, shipped files and systemd compatibility checks.'

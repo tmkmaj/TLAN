@@ -2,7 +2,7 @@
 
 ## 应用流量转发（显式代理模式，2026-11-10）
 
-- **迁移说明（2026-11-10）**：应用流量转发/Egress 已从本仓库移出，独立软件位于 `D:\TmkTrafficSandbox`。主仓库不再包含该 GUI、Windows helper、Linux gateway、部署目录和打包步骤；以下条目保留为迁移前的实现与验证记录。
+- **迁移说明（2026-11-10）**：应用流量转发/Egress 已从本仓库移出，独立软件位于 `<SANDBOX_DIR>`。主仓库不再包含该 GUI、Windows helper、Linux gateway、部署目录和打包步骤；以下条目保留为迁移前的实现与验证记录。
 - 新增 `internal/egress`（模型/校验/独立存储/DPAPI、TLNE v1 协议、两步密钥握手、目标前导、客户端与网关会话）与 `internal/egressgateway`（租约、策略、配额、Lease API、nftables/iptables NAT 生命周期）。
 - 新增独立二进制 `cmd/egress-gateway`（Linux 服务）与 `cmd/egress-helper`（Windows 回环 SOCKS5 显式代理，fail-closed）。
 - 客户端新增“应用流量转发”第三页：规则表、服务器设置、启停、复制代理地址；顶部明确标注“显式代理模式，透明 WFP 未启用”。Egress 页已改为顶部对齐，最小窗口下空状态和规则表不会悬在窗口中部。
@@ -14,7 +14,7 @@
 
 ## 内网管理控制台（2026-11-10，按 admin-console-design 复核）
 
-- 固定令牌：普通入网令牌 `TmkNetwork`，管理令牌 `Tmkmaj233` 原样生效；配置校验允许 8–256 字节管理令牌，短令牌启动时输出明文警告。
+- 固定令牌：普通入网令牌 `TLAN`，管理令牌 `<ADMIN_TOKEN>` 原样生效；配置校验允许 8–256 字节管理令牌，短令牌启动时输出明文警告。
 - 独立 admin listener：默认 `127.0.0.1:8081`，空值禁用；支持 `admin_tls_cert/key`。非回环且未配置 TLS 时必须显式 `admin_allow_insecure_http: true`，否则配置校验拒绝启动；启用后启动日志警告限制内网和防火墙访问。
 - 认证边界：管理 listener 使用独立 handler，不挂载 `/api/v1/*`；登录使用 SHA-256 常量时间比较、按 TCP 对端 IP 的 5 次/15 分钟固定窗口、HttpOnly/SameSite=Strict `tlan_admin` Cookie、服务端哈希会话键、30 分钟滑动过期和最多 8 个会话；服务重启后旧 Cookie 失效。状态变更同时校验 CSRF 和同源 `Origin`，Host 必须匹配配置的 admin 地址或回环别名，不信任 `X-Forwarded-*`。
 - API：所有 `/admin/api/*` 响应使用 `{"ok":...}` 外壳并带 `request_id`；失败使用稳定错误码和不含底层详情的可读消息；新增 `GET /admin/api/session`，返回 CSRF、会话到期时间和服务启动时间。管理操作写入带 request_id、来源 IP、动作、网络/成员 ID 和结果的结构化日志。
@@ -23,21 +23,21 @@
 - 状态一致性：断开/踢出/拉黑先关闭 Relay，再撤销 Managed FRP lease，并设置 Forwarding=false；踢出先撤销成员凭据；拉黑在存储事务中设置 blocked 并撤销凭据。成员列表/候选/认证/心跳过滤 blocked 设备。解封只清除 blocked，不恢复旧凭据。
 - 边界测试：普通成员凭据访问 `/admin/api/*` 返回 401；管理 listener 的 `/api/v1/*`、随机路径、编码穿越路径和静态文件路径返回统一 404；旧 YAML 缺少 `admin_*` 字段时管理页禁用且其他行为不变；端口占用、TLS 证书/私钥不配对和非回环明文未 opt-in 均被明确拒绝。
 - 验收证据：`gofmt -l` 无输出；`go vet -mod=vendor ./...` 通过；`go test -mod=vendor ./... -count=1 -timeout 900s` 全部通过；Linux amd64 交叉构建和单文件安装包重建通过，安装包 SHA-256 为 `fd39ff9f515930bbad0043f5b78d1685b698f1c06b9f812567563dfb6c6fa0c5`。
-- 真实浏览器验收：Windows 服务端启动 smoke 后，用 Playwright + Chrome 完成登录、概览、成员、拉黑/解封、连接和 390px 移动端截图；浏览器无 console/page error，页面未出现 `Tmkmaj233`；亮色/暗色切换、刷新后主题持久化、设置对话框键盘关闭和 390px 移动端均通过。截图见 `docs/screenshots/admin-login-2026-11-10.png`、`admin-overview-2026-11-10.png`、`admin-members-2026-11-10.png`、`admin-members-blocked-2026-11-10.png`、`admin-connections-2026-11-10.png`、`admin-members-mobile-2026-11-10.png`、`admin-settings-light-2026-11-10.png`、`admin-settings-dark-2026-11-10.png`、`admin-settings-mobile-2026-11-10.png`、`admin-overview-dark-2026-11-10.png` 和 `admin-login-dark-2026-11-10.png`。
+- 真实浏览器验收：Windows 服务端启动 smoke 后，用 Playwright + Chrome 完成登录、概览、成员、拉黑/解封、连接和 390px 移动端截图；浏览器无 console/page error，页面未出现 `<ADMIN_TOKEN>`；亮色/暗色切换、刷新后主题持久化、设置对话框键盘关闭和 390px 移动端均通过。截图见 `docs/screenshots/admin-login-2026-11-10.png`、`admin-overview-2026-11-10.png`、`admin-members-2026-11-10.png`、`admin-members-blocked-2026-11-10.png`、`admin-connections-2026-11-10.png`、`admin-members-mobile-2026-11-10.png`、`admin-settings-light-2026-11-10.png`、`admin-settings-dark-2026-11-10.png`、`admin-settings-mobile-2026-11-10.png`、`admin-overview-dark-2026-11-10.png` 和 `admin-login-dark-2026-11-10.png`。
 - 未在本机执行的验收：当前环境没有可用 WSL distro，Linux 运行时启动 smoke 未执行；发布前仍应在目标 Debian/CentOS 主机运行安装器 `--check` 和实际启动。管理事件只写结构化服务日志，未提供浏览器事件查询；管理页不支持反向代理；拉黑不能阻止删除本地身份后的重新入网；连接页不是 WireGuard 数据面完整遥测。
 
 ## 客户端管理员入场与管理面板（2026-11-10）
 
-- 管理员在 Windows 客户端入网令牌框输入 `Tmkmaj233`，服务端返回 `admin=true` 和独立 `member_...` 成员凭据；客户端只在本地 DPAPI 保存管理令牌，成员凭据继续用于 Session、Relay、FRP 和心跳，二者不互换。普通令牌 `TmkNetwork` 不显示管理入口。
+- 管理员在 Windows 客户端入网令牌框输入 `<ADMIN_TOKEN>`，服务端返回 `admin=true` 和独立 `member_...` 成员凭据；客户端只在本地 DPAPI 保存管理令牌，成员凭据继续用于 Session、Relay、FRP 和心跳，二者不互换。普通令牌 `TLAN` 不显示管理入口。
 - 新增客户端管理页：仅管理员可见，展示服务器/网络/成员/Relay/FRP 摘要；成员表支持重命名、断开、踢出、拉黑和解封。管理请求使用 `X-Admin-Token` 和 `{"ok":...}` 响应外壳；成员页会对危险操作和目标成员 ID 二次确认。
 - 端口映射令牌门禁：首次页的“配置内网穿透”必须先验证入网令牌；未提供令牌时返回令牌输入页，输入有效令牌后完成 enrollment 再进入 FRP 页。服务端回归测试同时确认无令牌 capabilities/lease 返回 401、管理员令牌不能替代成员租约返回 403。
 - 本地验证：`gofmt -l` 无输出；`go vet -mod=vendor ./...` PASS；`go test -mod=vendor ./... -count=1 -timeout 900s` PASS；Windows 发布 EXE `--ui-smoke-test` PASS；`--ui-preview admin` 实际窗口截图见 `docs/screenshots/admin-client-panel-2026-11-10.png`。
-- 公网部署：安装包 SHA-256 `71ccdedfaf0f9891ce9c54f8ee7951ab0ff644bcfb8ab894d57ac28f457b1aaf` 部署到 `8.163.21.82`；服务端二进制 SHA-256 `1115af46a2a2094011bb7f17ec1f987cadc13bb061b206d3982a719f4d9cbc68`；`tmknetworklan` 与 `tmknetworklan-https` 均 active。
-- 公网验收：`https://8.163.21.82:8443` 上管理令牌 enrollment 返回 `admin=true`，客户端管理 API overview/members 通过，测试成员已清理，成员数恢复为 3；公网成员令牌访问管理 API 返回 401；配置和成员数据保留，部署前备份位于 `/var/backups/tmknetworklan/install-hqaLWAQq`。
+- 公网部署：安装包 SHA-256 `71ccdedfaf0f9891ce9c54f8ee7951ab0ff644bcfb8ab894d57ac28f457b1aaf` 部署到 `<SERVER_IP>`；服务端二进制 SHA-256 `1115af46a2a2094011bb7f17ec1f987cadc13bb061b206d3982a719f4d9cbc68`；`TLAN` 与 `TLAN-https` 均 active。
+- 公网验收：`https://<SERVER_IP>:8443` 上管理令牌 enrollment 返回 `admin=true`，客户端管理 API overview/members 通过，测试成员已清理，成员数恢复为 3；公网成员令牌访问管理 API 返回 401；配置和成员数据保留，部署前备份位于 `/var/backups/TLAN/install-hqaLWAQq`。
 
 ## P2/P3 受控发布验证（2026-10-21，R1/R2 复核）
 
-- FRPS 发布模板 P0 一致性已修复并完成公网部署：主实例补齐 KCP/QUIC/TCPMUX/subdomain，WSS 回环实例补齐独立 vhost/TCPMUX/subdomain；主实例仍 TLS-only，WSS 回环仍仅 127.0.0.1:7001。2026-10-21 15:31（Asia/Shanghai）已在 8.163.21.82 部署最新安装器和 frpauth 续租修复；KCP、QUIC、WebSocket、主/WSS TCP、HTTP、HTTPS、TCPMUX 的真实公网 managed 回归均通过。详见 `docs/FINAL-PUBLIC-DEPLOYMENT-VERIFICATION-2026-10-21.md`。
+- FRPS 发布模板 P0 一致性已修复并完成公网部署：主实例补齐 KCP/QUIC/TCPMUX/subdomain，WSS 回环实例补齐独立 vhost/TCPMUX/subdomain；主实例仍 TLS-only，WSS 回环仍仅 127.0.0.1:7001。2026-10-21 15:31（Asia/Shanghai）已在 <SERVER_IP> 部署最新安装器和 frpauth 续租修复；KCP、QUIC、WebSocket、主/WSS TCP、HTTP、HTTPS、TCPMUX 的真实公网 managed 回归均通过。详见 `docs/FINAL-PUBLIC-DEPLOYMENT-VERIFICATION-2026-10-21.md`。
 
 - 最新审查报告 F-01～F-07 的代码路径已修复，显式 `frp_audit_regression` 回归全部通过；详细证据与残余边界见 [R1/R2 实现与验证报告](docs/R1-R2-IMPLEMENTATION-REPORT-2026-10-21.md)。
 - R2 协调层新增独立 EndpointRegistry（admin/visitor/TargetGateway/egress 监听归属、跨 profile 冲突检测）和 ObservationDebouncer（generation、两次稳定去抖、旧结果丢弃）；R4 诊断入口新增完整 FRP JSON/文本导出，覆盖 snapshot、lease、route、TargetGateway、日志和 TLS/CA 结果。
@@ -48,7 +48,7 @@
 - 高级能力批次已完成：TCP/WebSocket/WSS/KCP/QUIC 传输、TCPMUX/XTCP、HTTP locations/Basic Auth/subdomain/Header rewrite、managed 精确高级授权、目标成员审批、批量端口和安全 JSON 配置导入导出。本机真实 FRP 联调通过 TCP/UDP/WebSocket/KCP/QUIC、HTTP 高级字段、TCPMUX、managed HTTP/TCPMUX/XTCP 授权；WSS 已通过公网 Caddy 8444 managed 端到端回显；XTCP 双端打洞仍待真实环境。
 - 客户端已支持托盘、关闭到托盘、当前用户登录自启动；受管 frpc 使用 Medium 完整性、Administrators deny-only 的受限令牌启动，并保留 fail-closed 无管理员回退。Mesh 资源账本、精确恢复和 GUI 残留提示已接入。
 - 受控核心更新基础设施 `internal/coreupdate` + `cmd/corepack` 已实现签名清单、哈希、原子安装和回滚测试；生产签名密钥、更新源和客户端自动更新入口尚未部署。
-- 2026-10-21 已通过 SSH 将 v0.6.0 控制服务和 FRPS 0.71.1 部署到 8.163.21.82（CentOS 7）。服务、HTTPS、STUN、managed capabilities、FRPS TLS、临时成员 enroll/lease、公网 TCP 30001 映射与回显、停止后端口关闭、lease 撤销和临时成员删除均通过；详细记录见 [服务器部署与公网验证记录](docs/SERVER-DEPLOYMENT-VERIFICATION-2026-10-21.md)。
+- 2026-10-21 已通过 SSH 将 v0.6.0 控制服务和 FRPS 0.71.1 部署到 <SERVER_IP>（CentOS 7）。服务、HTTPS、STUN、managed capabilities、FRPS TLS、临时成员 enroll/lease、公网 TCP 30001 映射与回显、停止后端口关闭、lease 撤销和临时成员删除均通过；详细记录见 [服务器部署与公网验证记录](docs/SERVER-DEPLOYMENT-VERIFICATION-2026-10-21.md)。
 - F-01/F-02 已加入权限交集回滚、持久化撤销上限、`DesiredRunning`/`CanStop` 和启动代次门控；删除或禁用服务后失败恢复不会再重开旧入口。
 - F-03 已接入实际路由观察与认证回环出口代理。受管 FRPC 的 TCP 控制连接每次拨号重新解析路由并使用 Windows 接口约束；真实联调断言 FRPC 确实经过代理。Mesh 启动前检查 FRPS/LAN 后端，运行中每 5 秒复检，证据不足时 fail-closed。
 - F-04～F-06 已统一保留目标、动态管理端口、`10/8`/`100.64/10` 地址池和 visitor 依赖隔离；F-07 的 Windows 测试拆分使 Linux 全量 vet 通过。
@@ -82,12 +82,12 @@
 - `go test ./internal/frp ./internal/clientui ./cmd/client -count=1`、`go test -mod=vendor ./...` 和 `go vet -mod=vendor ./...` 通过。
 - 真实本机 FRPS/FRPC 联调通过：临时 CA/服务器证书、TCP 回显、UDP 回显、HTTP/HTTPS vhost、STCP 访问器、SUDP 访问器、管理 API 实际注册状态、错误 CA 返回 `FRP_TLS_UNTRUSTED`、错误 token 返回 `FRP_AUTH_REJECTED`；停止后受管子进程进入终止状态且运行目录为空。
 - 使用独立 Job Object 启动受管 `frpc.exe`，`CREATE_SUSPENDED | CREATE_NO_WINDOW`、受限句柄列表、最小环境变量和随机回环管理密码均已接入；没有按进程名结束用户自行运行的 FRP。
-- `dist/windows/TmkNetworkLAN.exe -ui-smoke-test` 为 PASS；`--ui-preview frp` 实际窗口截图检查了多配置选择、规则/访问器表格、服务器卡和日志区。
+- `dist/windows/TLAN.exe -ui-smoke-test` 为 PASS；`--ui-preview frp` 实际窗口截图检查了多配置选择、规则/访问器表格、服务器卡和日志区。
 - `build-windows-client.ps1` 生成包含 `runtime/frp/0.71.1/windows-amd64/frpc.exe`、manifest、FRP 许可证和哈希校验的客户端 ZIP；`build-debian-server.ps1` 生成独立 FRPS tar.gz，检查内容包含 ELF `frps`、systemd unit、安装脚本、示例配置和许可证。
 - 该历史段落的 P2 托管授权/P3 TargetGateway“未实现”结论已由本页顶部 2026-10-21 验证记录更新；P4 和真实公网/双机/长稳验收仍未完成。当前 GUI 要求管理员权限，受管 FRPC 继承该权限。
 ## IP HTTPS 入口迁移
 
-- 默认控制/入网/中继入口改为 `https://8.163.21.82:8443`，STUN 改为 `8.163.21.82:3478`。
+- 默认控制/入网/中继入口改为 `https://<SERVER_IP>:8443`，STUN 改为 `<SERVER_IP>:3478`。
 - 对旧部署的两个已知 HTTPS 地址提供定向成员身份迁移，保留令牌、虚拟 IP、网络记录及转发设置；自定义服务器不会继承其他地址的令牌。只在成功恢复成员后保存迁移结果。
 - 新增 IP HTTPS 测试确认不发送域名 SNI；不受信任证书和错误 IP SAN 被拒绝。原有 HTTPS WireGuard 端到端测试也加入无域名 SNI 断言。
 - Caddyfile 经官方 Caddy 2.11.7 的 `adapt` 和 `validate` 验证：公网 IP 的 `shortlived` ACME 策略、无 SNI 默认选证书、8443 入口及 8080 后端均正确。验证工具下载包与官方 SHA512 校验值一致。
@@ -133,39 +133,39 @@
 
 ## 服务器部署记录（2026-11-10）
 
-- 目标服务器 `8.163.21.82`，CentOS 7，root SSH；报告不记录密码。部署前配置备份：`/var/lib/lanmesh/tnlan-config.yml.before-admin-console-20261110121403`；安装器备份：`/var/backups/tmknetworklan/install-l96CHBtW`。
-- 配置更新：`server.admin_listen=127.0.0.1:8081`，管理 TLS 为空，`server.admin_allow_insecure_http=false`；`security.admin_token` 按要求设置为 `Tmkmaj233`；`network.join_code=TmkNetwork`；`frp.mode=managed` 保持不变。
-- 安装包 `dist/TmkNetworkLAN-server-linux-amd64.run` SHA-256：`fd39ff9f515930bbad0043f5b78d1685b698f1c06b9f812567563dfb6c6fa0c5`；安装器输出 `READY`。
+- 目标服务器 `<SERVER_IP>`，CentOS 7，root SSH；报告不记录密码。部署前配置备份：`/var/lib/lanmesh/tlan-config.yml.before-admin-console-20261110121403`；安装器备份：`/var/backups/TLAN/install-l96CHBtW`。
+- 配置更新：`server.admin_listen=127.0.0.1:8081`，管理 TLS 为空，`server.admin_allow_insecure_http=false`；`security.admin_token` 按要求设置为 `<ADMIN_TOKEN>`；`network.join_code=TLAN`；`frp.mode=managed` 保持不变。
+- 安装包 `dist/TLAN-server-linux-amd64.run` SHA-256：`fd39ff9f515930bbad0043f5b78d1685b698f1c06b9f812567563dfb6c6fa0c5`；安装器输出 `READY`。
 - 远程控制服务二进制 SHA-256：`ecf67bf44bfce0388200700d04cb3d12253118a7fcf8da3d9275c9067810b180`，与本地安装器暂存二进制一致。
-- 服务状态：`tmknetworklan`、`tmknetworklan-https`、`tlan-frps`、`tlan-frps-wss` 均为 active；控制端口 `127.0.0.1:8080`、管理端口 `127.0.0.1:8081`、公网 HTTPS 8443 和 STUN 3478 正常。
-- 管理页验证：登录返回 200、CSRF 下发、`/admin/api/session` 和 `/admin/api/overview` 返回 `ok`；`version=0.2.0`、`admin_listen=127.0.0.1:8081`、`admin_tls=false`、`member_count=3`，成员数据保留；页面和登录响应均未出现 `Tmkmaj233`；管理 listener 的 `/api/v1/status` 返回 404；最近 10 分钟无 panic/fatal/error/failed 日志。
+- 服务状态：`TLAN`、`TLAN-https`、`tlan-frps`、`tlan-frps-wss` 均为 active；控制端口 `127.0.0.1:8080`、管理端口 `127.0.0.1:8081`、公网 HTTPS 8443 和 STUN 3478 正常。
+- 管理页验证：登录返回 200、CSRF 下发、`/admin/api/session` 和 `/admin/api/overview` 返回 `ok`；`version=0.2.0`、`admin_listen=127.0.0.1:8081`、`admin_tls=false`、`member_count=3`，成员数据保留；页面和登录响应均未出现 `<ADMIN_TOKEN>`；管理 listener 的 `/api/v1/status` 返回 404；最近 10 分钟无 panic/fatal/error/failed 日志。
 - 通过 SSH 隧道在真实 Chrome 验证已部署控制台：版本显示 `v0.2.0`、亮色/暗色切换成功、成员数 3、无 console/page error。截图：`docs/screenshots/admin-deployed-overview-2026-11-10.png`、`admin-deployed-settings-2026-11-10.png`、`admin-deployed-dark-2026-11-10.png`。
 
 ## 服务端 YAML 配置
 
-- 服务端只从当前目录读取 `tnlan-config.yml`；文件不存在时生成默认固定 `TmkNetwork`/`Tmkmaj233`、默认回环管理监听和全部默认配置，文件权限为 `0600`，随后以退出码 0 结束。
+- 服务端只从当前目录读取 `tlan-config.yml`；文件不存在时生成默认固定 `TLAN`/`<ADMIN_TOKEN>`、默认回环管理监听和全部默认配置，文件权限为 `0600`，随后以退出码 0 结束。
 - 实际冷启动验证：第一次运行退出码为 0，只生成 YAML；第二次运行读取同一文件，成功创建数据目录并开始监听控制端口与 STUN。
 - YAML 加载启用未知字段和多文档拒绝；管理员令牌、入网令牌、私人 CIDR、控制/管理监听地址、管理明文 opt-in、TLS 配对和数据目录均在监听端口前校验。
 - 已有旧版 `state.json` 时，首次生成的 `data_dir` 自动设为 `.`，避免升级后创建空网络或重新分配成员 IP。
 - 配置生成、重复启动不覆盖、非法配置不覆盖、字段校验、固定令牌默认值及旧状态目录继承测试通过。
 
-## TmkNetworkLAN 品牌更新
+## TLAN 品牌更新
 
-- 客户端名称改为 `TmkNetworkLAN`，Windows GUI EXE 与 Debian 服务端分别使用该名称发布。
+- 客户端名称改为 `TLAN`，Windows GUI EXE 与 Debian 服务端分别使用该名称发布。
 - Windows PE 资源包含产品名、Common Controls v6 高 DPI manifest 和用户提供的深蓝刷痕 T 图标；GUI 窗口标题栏也使用该图标。
-- 原图保存于 `assets/branding/tmknetworklan-icon.png` 并保留透明通道。
+- 原图保存于 `assets/branding/TLAN-icon.png` 并保留透明通道。
 - 旧版 `%APPDATA%/LANMesh/` 身份和设置文件继续沿用，避免改名后生成新设备身份。Debian systemd 服务继续使用 `/var/lib/lanmesh`，配置和成员数据保留在该目录。
 
 ## 当前口令与电源版本
 
-- 发布客户端内置 `https://relay.tmknetwork.online`，界面只要求入网口令。
+- 发布客户端内置 `https://relay.example.com`，界面只要求入网口令。
 - 新增成员凭据加密响应、权限隔离、服务端口令加入限流的测试。
 - 实际 wireguard-go 双端测试覆盖普通成员凭据通过 HTTPS 中继进行加密传输，以及直连和中继下的端到端延迟。
 - 两次启停循环验证引擎关闭、网卡句柄释放、服务端在线/离线状态和固定虚拟 IP。
 - Windows/Linux 静态检查及构建通过；原生控件初始化通过专用 UI smoke 模式检查，该模式不创建网卡。
 - 本机尝试访问公网 `/health` 时 HTTPS 连接未能建立，因此未确认已在该域名部署新版服务端。此项与本机测试通过分开记录。
 
-下文记录前期开发验证；当前仍未进行 Dark Hours 测试或跨公网双 Windows 实机验收。
+下文记录前期开发验证；当前仍未进行 SampleGame 测试或跨公网双 Windows 实机验收。
 
 本次交付为 Windows amd64 原生 GUI 客户端与 Debian/Linux amd64 独立服务端。
 
@@ -190,7 +190,7 @@
 
 ## 验证范围
 
-尚未在实际 Debian 主机启动服务端，未进行跨公网、两台独立 Windows 电脑的实机验收；这些环境结果不能由本地测试替代。按要求未启动或测试 Dark Hours。
+尚未在实际 Debian 主机启动服务端，未进行跨公网、两台独立 Windows 电脑的实机验收；这些环境结果不能由本地测试替代。按要求未启动或测试 SampleGame。
 
 当前数据通道覆盖 IPv4 三层网络及其广播/组播转发，不是完整 Ethernet 二层桥，不提供 IPv6，也未复制 Radmin 私有协议。当前管理令牌适用于互相信任的私人设备。使用方法和具体限制见 README.md。
 

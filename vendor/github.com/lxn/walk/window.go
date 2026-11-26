@@ -1683,7 +1683,7 @@ func (wb *WindowBase) SetSize(size Size) error {
 func (wb *WindowBase) SetSizePixels(size Size) error {
 	bounds := wb.window.BoundsPixels()
 
-	return wb.SetBoundsPixels(bounds.SetSize(size))
+	return wb.window.SetBoundsPixels(bounds.SetSize(size))
 }
 
 // X returns the x coordinate of the *WindowBase, relative to the screen for
@@ -1714,7 +1714,7 @@ func (wb *WindowBase) SetXPixels(value int) error {
 	bounds := wb.window.BoundsPixels()
 	bounds.X = value
 
-	return wb.SetBoundsPixels(bounds)
+	return wb.window.SetBoundsPixels(bounds)
 }
 
 // Y returns the y coordinate of the *WindowBase, relative to the screen for
@@ -1745,7 +1745,7 @@ func (wb *WindowBase) SetYPixels(value int) error {
 	bounds := wb.window.BoundsPixels()
 	bounds.Y = value
 
-	return wb.SetBoundsPixels(bounds)
+	return wb.window.SetBoundsPixels(bounds)
 }
 
 // Width returns the outer width of the *WindowBase, including decorations.
@@ -1768,7 +1768,7 @@ func (wb *WindowBase) SetWidthPixels(value int) error {
 	bounds := wb.window.BoundsPixels()
 	bounds.Width = value
 
-	return wb.SetBoundsPixels(bounds)
+	return wb.window.SetBoundsPixels(bounds)
 }
 
 // Height returns the outer height of the *WindowBase, including decorations.
@@ -1791,7 +1791,7 @@ func (wb *WindowBase) SetHeightPixels(value int) error {
 	bounds := wb.window.BoundsPixels()
 	bounds.Height = value
 
-	return wb.SetBoundsPixels(bounds)
+	return wb.window.SetBoundsPixels(bounds)
 }
 
 func windowTrimToClientBounds(hwnd win.HWND, pt *win.POINT) {
@@ -2329,6 +2329,22 @@ func (wb *WindowBase) WndProc(hwnd win.HWND, msg uint32, wParam, lParam uintptr)
 
 	switch msg {
 	case win.WM_ERASEBKGND:
+		if form, ok := window.(Form); ok {
+			bg := form.Background()
+			if bg != nil && bg != nullBrushSingleton {
+				if pwb, ok := bg.(perWindowBrush); ok {
+					bg = pwb.delegateForWindow(wb)
+				}
+				canvas, err := newCanvasFromHDC(win.HDC(wParam))
+				if err == nil {
+					defer canvas.Dispose()
+					if err := canvas.FillRectanglePixels(bg, wb.ClientBoundsPixels()); err == nil {
+						return 1
+					}
+				}
+			}
+			return 0
+		}
 		if _, ok := window.(Widget); !ok {
 			return 0
 		}

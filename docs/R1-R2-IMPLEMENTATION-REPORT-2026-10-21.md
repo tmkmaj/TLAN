@@ -139,12 +139,12 @@ go run ./cmd/client --ui-smoke-test ...                      PASS
 
 本轮代码冻结后已重建客户端 v0.5.1、Debian 服务端归档、独立 FRPS 归档和 Linux 单文件安装器：
 
-- `dist/windows/TmkNetworkLAN.exe` SHA-256：`BC72EB2190CF894C30AEAF3B2BFED0CE5DC65F0A18ACE9A0A453210FA9A9862D`
+- `dist/windows/TLAN.exe` SHA-256：`BC72EB2190CF894C30AEAF3B2BFED0CE5DC65F0A18ACE9A0A453210FA9A9862D`
 - 新构建 EXE 的 `--ui-smoke-test`：PASS。
 - 客户端 ZIP、服务端 ZIP、FRPS tar.gz、单文件安装器的最新摘要以 `dist/SHA256SUMS.txt` 为准。
 - 客户端包内 `frpc.exe` SHA-256：`509F4FA082BF9B85F9AD27B45D37A89A8ACCB011F3B724CFF352DFAC90A94FEB`，与固定值一致。
 - `test-server-installer.ps1`：PASS。
-- 检查时未发现残留 `TmkNetworkLAN.exe`、`frpc.exe` 或 `frps.exe` 进程。
+- 检查时未发现残留 `TLAN.exe`、`frpc.exe` 或 `frps.exe` 进程。
 
 ## 7. 尚未完成或不能宣称完成的内容
 

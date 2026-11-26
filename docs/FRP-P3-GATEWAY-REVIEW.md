@@ -1,7 +1,7 @@
 # FRP P3 TargetGateway 只读审计报告
 
 - 审计日期：2026-10-21（Asia/Shanghai）
-- 审计目录：`D:\RadminLanPrivate`
+- 审计目录：`<REPO_ROOT>`
 - 审计范围：`internal/targetgateway/**`、`internal/mesh/target.go`、`internal/mesh/target_route_windows.go`、`cmd/client/frp_mesh_windows.go`、`internal/frp/manager_windows.go`，对照 `docs/FRPC-INTEGRATION-PLAN.md` 的 P3、6.2、15.4。
 - 说明：本报告是只读审计结果，没有修改实现代码；审计期间工作区被并发修改，行号以最终快照为准。
 

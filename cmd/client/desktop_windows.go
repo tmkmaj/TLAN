@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
-	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -16,14 +15,17 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/lxn/walk"
+	"github.com/lxn/win"
 	"github.com/private-radminlan/lanmesh/core"
 	"github.com/private-radminlan/lanmesh/internal/clientapi"
 	"github.com/private-radminlan/lanmesh/internal/clientidentity"
 	"github.com/private-radminlan/lanmesh/internal/clientui"
 	"github.com/private-radminlan/lanmesh/internal/frp"
 	"github.com/private-radminlan/lanmesh/internal/mesh"
+	"github.com/private-radminlan/lanmesh/internal/network"
 	"github.com/private-radminlan/lanmesh/internal/platform"
 	"golang.org/x/sys/windows"
 )
@@ -33,76 +35,105 @@ type desktopSession struct {
 	engine *mesh.Engine
 }
 type desktop struct {
-	window                                                                                                *walk.MainWindow
-	code                                                                                                  *walk.LineEdit
-	token                                                                                                 string
-	joinButton, toggleButton, membersButton, frpEntryButton                                               *walk.PushButton
-	railPower, railFRP, railVersion, railMore                                                             *walk.PushButton
-	powerVisual, compactPowerVisual                                                                       *walk.ImageView
-	joinPage, shellPage, powerPage, frpPage, connectedArea, notice                                        *walk.Composite
-	admin                                                                                                 *adminPanel
-	adminAPI                                                                                              *clientapi.AdminClient
-	adminToken                                                                                            string
-	adminMode                                                                                             bool
-	railAdmin                                                                                             *walk.PushButton
-	joinAfter                                                                                             func()
-	frpToggleButton, frpSettingsButton, frpAddButton, frpAddVisitorButton, frpEditButton, frpDeleteButton *walk.PushButton
-	frpNewProfileButton, frpApprovalButton, frpImportButton, frpExportButton, frpBatchButton              *walk.PushButton
-	frpProfileBox                                                                                         *walk.ComboBox
-	frpStatus, frpServer, frpAuthNote                                                                     *walk.Label
-	frpRules                                                                                              *walk.TableView
-	frpRuleModel                                                                                          *frpRuleTableModel
-	frpRows                                                                                               []frpEntryRef
-	frpLogs                                                                                               *walk.TextEdit
-	frpCatalog                                                                                            *frp.Catalog
-	frpProfiles                                                                                           []frp.ProfileInfo
-	frpManagers                                                                                           map[string]*frp.Manager
-	frpLeaseProviders                                                                                     map[string]*frpLeaseProvider
-	frpManagerErrors                                                                                      map[string]error
-	frpEndpointRegistry                                                                                   *frp.EndpointRegistry
-	frpProfileID                                                                                          string
-	frpManager                                                                                            *frp.Manager
-	frpConfig                                                                                             frp.Config
-	frpSnapshot                                                                                           frp.Snapshot
-	frpInitErr                                                                                            error
-	frpBusy, frpRefreshing, frpProfileSwitching                                                           bool
-	frpStarting, frpStopping                                                                              bool
-	frpStartSeq                                                                                           atomic.Uint64
-	frpCloseOnce                                                                                          sync.Once
-	frpStopDone                                                                                           chan struct{}
-	page                                                                                                  int
-	offState, offNetwork                                                                                  *walk.Label
-	offHint                                                                                               *walk.TextLabel
-	deviceName, address, badge, status, networkTitle, memberCount, traffic, noticeTitle                   *walk.Label
-	empty, noticeMessage                                                                                  *walk.TextLabel
-	peers                                                                                                 *walk.TableView
-	peerModel                                                                                             *desktopTableModel
-	feedback                                                                                              clientui.Feedback
-	identity                                                                                              clientidentity.Identity
-	api                                                                                                   *clientapi.Client
-	membership                                                                                            clientapi.Membership
-	members                                                                                               []clientapi.Device
-	settings                                                                                              clientidentity.Settings
-	stun                                                                                                  string
-	engine                                                                                                *mesh.Engine
-	busy, refreshing                                                                                      bool
-	powerState                                                                                            int // 0 off, 1 on, 2 transitioning
-	ctx                                                                                                   context.Context
-	cancel                                                                                                context.CancelFunc
-	sessionCancel                                                                                         context.CancelFunc
-	session                                                                                               *desktopSession
-	appIcon                                                                                               *walk.Icon
-	logoImage                                                                                             walk.Image
-	connectedAnimToken                                                                                    uint64
-	animationsEnabled                                                                                     bool
-	railSelection                                                                                         int
-	closing                                                                                               atomic.Bool
-	explicitExit                                                                                          atomic.Bool
-	shutdownOnce                                                                                          sync.Once
-	startHidden                                                                                           bool
-	settingsDialogOpen                                                                                    bool
-	trayIcon                                                                                              *walk.NotifyIcon
-	trayShowAction, trayMeshAction, trayFRPAction, traySettingsAction, trayExitAction                     *walk.Action
+	window                                                                                                             *walk.MainWindow
+	code                                                                                                               *walk.LineEdit
+	serverInput, stunInput, usernameInput                                                                              *walk.LineEdit
+	advancedPanel                                                                                                      *walk.Composite
+	advancedButton                                                                                                     *walk.PushButton
+	token                                                                                                              string
+	joinButton, joinThemeButton, joinLangButton, toggleButton, membersButton                                           *walk.PushButton
+	copyLocalIPButton, renameSelfButton, noticeDetailButton, noticeDismissButton                                       *walk.PushButton
+	railPower, railFRP, railAdmin, railDiag, railMore                                                                  *walk.PushButton
+	menuSettingsAction, menuAboutAction, menuSwitchAction, menuLeaveAction                                             *walk.Action
+	peerCopyMenuAction, peerRefreshMenuAction                                                                          *walk.Action
+	frpCopyMenuAction, frpToggleMenuAction, frpEditMenuAction, frpDeleteMenuAction                                     *walk.Action
+	powerVisual                                                                                                        *walk.ImageView
+	joinPage, shellPage, powerPage, frpPage, connectedArea, emptyArea, notice                                          *walk.Composite
+	joinBlueprint                                                                                                      *walk.ImageView
+	deckScanView                                                                                                       *walk.Composite
+	serverChart                                                                                                        *walk.CustomWidget
+	serverProbe                                                                                                        *serverProbeHistory
+	serverLatencyLabel, serverAvgLabel, serverLossLabel, serverProbeModeLabel, peerCopyHint                            *walk.Label
+	peerCopySeq                                                                                                        uint64
+	offHintSeq                                                                                                         uint64
+	animPhase, powerHover, powerGlow, deckScanProgress                                                                 float64
+	animLoopActive, deckScanActive                                                                                     bool
+	pageTransitionsReady                                                                                               bool
+	smokeMode                                                                                                          bool
+	admin                                                                                                              *adminPanel
+	adminAPI                                                                                                           *clientapi.AdminClient
+	adminToken                                                                                                         string
+	adminMode                                                                                                          bool
+	joinAfter                                                                                                          func()
+	frpToggleButton, frpLogsButton                                                                                       *walk.PushButton
+	powerServerEye, frpServerEye                                                                                       *walk.PushButton
+	frpQuickAddButton, frpPickProcessButton                                                                            *walk.PushButton
+	frpCopyAddrButton, frpToggleRuleButton, frpEditButton, frpDeleteButton                                             *walk.PushButton
+	frpQuickName, frpQuickLocalIP, frpQuickLocalPort, frpQuickRemotePort                                               *walk.LineEdit
+	frpQuickProto                                                                                                      *walk.ComboBox
+	frpHeading, frpListHeading                                                                                         *walk.Label
+	frpStatus, frpServer, frpServerBannerTitle, frpServerAddrLabel, frpRuleCount, frpPortRangeHint                     *walk.Label
+	serverDisplayTitle                                                                                                 *walk.Label
+	powerServerHidden, frpServerHidden                                                                                 bool
+	serverDisplay                                                                                                      clientapi.ServerDisplayConfig
+	renameSeq                                                                                                          uint64
+	frpPortRange                                                                                                       clientapi.PortRange
+	frpPortRangeLoading                                                                                                bool
+	frpRules                                                                                                           *walk.TableView
+	frpRuleModel                                                                                                       *frpRuleTableModel
+	frpRows                                                                                                            []frpEntryRef
+	frpLogs                                                                                                            *walk.TextEdit
+	frpCatalog                                                                                                         *frp.Catalog
+	frpProfiles                                                                                                        []frp.ProfileInfo
+	frpManagers                                                                                                        map[string]*frp.Manager
+	frpLeaseProviders                                                                                                  map[string]*frpLeaseProvider
+	frpManagerErrors                                                                                                   map[string]error
+	frpEndpointRegistry                                                                                                *frp.EndpointRegistry
+	frpProfileID                                                                                                       string
+	frpManager                                                                                                         *frp.Manager
+	frpConfig                                                                                                          frp.Config
+	frpSnapshot                                                                                                        frp.Snapshot
+	frpInitErr                                                                                                         error
+	frpBusy, frpRefreshing, frpProfileSwitching                                                                        bool
+	frpStarting, frpStopping                                                                                           bool
+	frpStartSeq                                                                                                        atomic.Uint64
+	frpCloseOnce                                                                                                       sync.Once
+	frpStopDone                                                                                                        chan struct{}
+	page                                                                                                               int
+	offState, offNetwork                                                                                               *walk.Label
+	offHint                                                                                                            *walk.Label
+	deviceName, address, badge, status, networkTitle, serverIdentity, memberCount, traffic, noticeTitle, noticeMessage *walk.Label
+	empty                                                                                                              *walk.Label
+	peers                                                                                                              *walk.TableView
+	peerModel                                                                                                          *desktopTableModel
+	feedback                                                                                                           clientui.Feedback
+	identity                                                                                                           clientidentity.Identity
+	api                                                                                                                *clientapi.Client
+	membership                                                                                                         clientapi.Membership
+	members                                                                                                            []clientapi.Device
+	settings                                                                                                           clientidentity.Settings
+	stun                                                                                                               string
+	stunAuto                                                                                                           bool
+	engine                                                                                                             *mesh.Engine
+	busy, refreshing                                                                                                   bool
+	powerState                                                                                                         int // 0 off, 1 on, 2 transitioning
+	ctx                                                                                                                context.Context
+	cancel                                                                                                             context.CancelFunc
+	sessionCancel                                                                                                      context.CancelFunc
+	session                                                                                                            *desktopSession
+	appIcon                                                                                                            *walk.Icon
+	deckScanToken                                                                                                      uint64
+	resizeSyncSeq                                                                                                      uint64
+	animationsEnabled                                                                                                  bool
+	railSelection                                                                                                      int
+	closing                                                                                                            atomic.Bool
+	explicitExit                                                                                                       atomic.Bool
+	shutdownOnce                                                                                                       sync.Once
+	startHidden                                                                                                        bool
+	settingsDialogOpen                                                                                                 bool
+	trayIcon                                                                                                           *walk.NotifyIcon
+	trayShowAction, trayMeshAction, trayFRPAction, traySettingsAction, trayExitAction                                  *walk.Action
+	langRefreshers                                                                                                     []func()
 }
 
 func runDesktop() {
@@ -128,42 +159,76 @@ func runDesktop() {
 		return
 	}
 	settings, settingsErr := clientidentity.LoadSettings()
-	instance, err := windows.CreateMutex(nil, false, windows.StringToUTF16Ptr("Local\\LANMesh-Desktop"))
+	setActiveLanguage(settings.Language)
+	instance, err := windows.CreateMutex(nil, false, windows.StringToUTF16Ptr("Local\\TLAN-Desktop"))
 	if instance != 0 {
 		defer windows.CloseHandle(instance)
 	}
 	if err != nil {
-		walk.MsgBox(nil, appName, "客户端已经运行，请使用已有窗口。", walk.MsgBoxOK|walk.MsgBoxIconInformation)
+		walk.MsgBox(nil, appName, tr("客户端已经运行，请使用已有窗口。", "TLAN is already running. Use the existing window."), walk.MsgBoxOK|walk.MsgBoxIconInformation)
 		return
 	}
 	identity, err := clientidentity.LoadOrCreate(*identityPath)
 	if err != nil {
-		walk.MsgBox(nil, "无法读取本机身份", "请使用原来的 Windows 用户运行，或检查本机配置文件权限。", walk.MsgBoxOK|walk.MsgBoxIconError)
+		walk.MsgBox(nil, tr("无法读取本机身份", "Unable to read local identity"), tr("请使用原来的 Windows 用户运行，或检查本机配置文件权限。", "Run as the original Windows user or check local config permissions."), walk.MsgBoxOK|walk.MsgBoxIconError)
 		return
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	base := strings.TrimRight(strings.TrimSpace(*server), "/")
-	settings = migrateBundledSettings(settings, base)
-	token := ""
-	if settings.ServerURL == base && strings.HasPrefix(settings.Token, "member_") {
-		token = settings.Token
+	explicitServer, explicitSTUN := false, false
+	flag.Visit(func(f *flag.Flag) {
+		explicitServer = explicitServer || f.Name == "server"
+		explicitSTUN = explicitSTUN || f.Name == "stun"
+	})
+	settings = migrateBundledSettings(settings, defaultServerURL)
+	rawServer := startupServer(settings.ServerURL, *server, explicitServer)
+	var base string
+	var endpointErr error
+	if rawServer != "" {
+		base, endpointErr = normalizeServerURL(rawServer)
+		if endpointErr != nil {
+			base = defaultServerURL
+			if settingsErr == nil {
+				settingsErr = fmt.Errorf(tr("已保存的服务器地址无效，请重新填写: %w", "Saved server address is invalid: %w"), endpointErr)
+			}
+		}
+	}
+	token, savedAdmin := savedCredentialsForServer(settings, base)
+	savedBase, _ := normalizeServerURL(settings.ServerURL)
+	stunValue := strings.TrimSpace(*stun)
+	if !explicitSTUN {
+		stunValue = ""
+		if savedBase == base {
+			stunValue = settings.STUNServer
+		}
+	}
+	effectiveSTUN := ""
+	if base != "" {
+		var stunErr error
+		_, effectiveSTUN, stunErr = connectionEndpoints(base, stunValue)
+		if stunErr != nil {
+			effectiveSTUN, _ = STUNAddressForServer(base)
+			if settingsErr == nil {
+				settingsErr = fmt.Errorf(tr("STUN 地址无效，已使用服务器默认值: %w", "Invalid STUN address; using server default: %w"), stunErr)
+			}
+		}
 	}
 	name, _ := os.Hostname()
 	if name == "" {
-		name = "我的电脑"
+		name = tr("我的电脑", "My PC")
 	}
 	if settings.DeviceName != "" {
 		name = settings.DeviceName
 	}
 	identity.DisplayName = name
-	a := &desktop{identity: identity, api: clientapi.New(base, token), ctx: ctx, cancel: cancel, settings: settings, stun: *stun, startHidden: *startup}
+	applyAppearancePalette(settings.Appearance)
+	a := &desktop{identity: identity, api: clientapi.New(base, token), ctx: ctx, cancel: cancel, settings: settings, stun: effectiveSTUN, startHidden: *startup, serverProbe: newServerProbeHistory(serverProbeCapacity)}
 	a.api.Context = ctx
 	// Reported on every control request so an operator can gate outdated clients.
 	a.api.AgentVersion = appVersion
-	if settings.ServerURL == base && strings.TrimSpace(settings.AdminToken) != "" {
+	if savedAdmin != "" {
 		a.adminMode = true
-		a.adminToken = strings.TrimSpace(settings.AdminToken)
+		a.adminToken = savedAdmin
 		a.adminAPI = clientapi.NewAdmin(base, a.adminToken)
 		a.adminAPI.Context = ctx
 	}
@@ -171,28 +236,29 @@ func runDesktop() {
 		a.membership = clientapi.Membership{Network: clientapi.Network{ID: settings.NetworkID, Name: settings.NetworkName, CIDR: settings.NetworkCIDR}, Member: clientapi.Device{ID: identity.DeviceID.String(), Name: name, VirtualIP: settings.VirtualIP}}
 	}
 	if err = a.build(); err != nil {
-		f := clientui.Explain("打开窗口", err)
+		f := clientui.ExplainLang(currentLang(), tr("打开窗口", "Open window"), err)
 		walk.MsgBox(nil, f.Title, f.Message, walk.MsgBoxOK|walk.MsgBoxIconError)
 		return
 	}
 	a.initializeFRP()
+	a.startServerProbeLoop()
 	if err = a.setupTray(); err != nil {
 		a.settings.CloseToTray = false
 		a.showWindow()
-		a.showError("创建托盘图标", err)
+		a.showError(tr("创建托盘图标", "Create tray icon"), err)
 	}
 	if settingsErr == nil {
 		if err = a.syncLaunchAtLogin(); err != nil {
 			a.showNotice(clientui.Feedback{
-				Title:   "登录启动设置未同步",
-				Message: "当前用户启动项未能更新，其他设置仍可正常使用。",
-				Detail:  clientui.Redact(err.Error(), a.api.Token),
+				Title:   tr("登录启动设置未同步", "Startup registration failed"),
+				Message: tr("当前用户启动项未能更新，其他设置仍可正常使用。", "Failed to update Windows startup item. Other settings remain active."),
+				Detail:  clientui.RedactLang(currentLang(), err.Error(), a.api.Token),
 			})
 		}
 	}
 	a.window.Closing().Attach(a.handleWindowClosing)
 	if settingsErr != nil {
-		a.showError("读取本机配置", settingsErr)
+		a.showError(tr("读取本机配置", "Load local settings"), settingsErr)
 	}
 	if a.adminMode {
 		a.restoreAdminAccess()
@@ -238,6 +304,84 @@ func runDesktop() {
 		a.announceOff()
 	}
 }
+
+func (a *desktop) onLang(fn func()) {
+	if fn != nil {
+		a.langRefreshers = append(a.langRefreshers, fn)
+	}
+}
+
+func (a *desktop) toggleLanguage() {
+	next := langEN
+	if isEnglish() {
+		next = langZH
+	}
+	a.settings.Language = next
+	a.applyLanguage(next)
+	_ = a.remember()
+}
+
+func (a *desktop) applyLanguage(lang string) {
+	setActiveLanguage(lang)
+	a.retranslateUI()
+}
+
+func (a *desktop) retranslateUI() {
+	for _, fn := range a.langRefreshers {
+		fn()
+	}
+	a.updateThemeButton()
+	a.updateSTUNCue()
+	a.updatePowerButtons()
+	a.refreshPowerStateTexts()
+	a.updateStatus()
+	a.refreshServerMetricsDisplay()
+	a.renderFRPState()
+	a.updateFRPRows()
+	a.updateFRPButtons()
+	a.applyFRPPortRange(a.activeFRPPortRange())
+	if a.admin != nil {
+		a.admin.retranslate()
+	}
+	a.updateTrayMenu()
+	a.requestCleanRelayout()
+}
+
+func (a *desktop) setOffState(text string, color walk.Color) {
+	if a == nil || a.offState == nil {
+		return
+	}
+	setLabelIfChanged(a.offState, text)
+	setLabelColorIfChanged(a.offState, color)
+}
+
+func (a *desktop) refreshPowerStateTexts() {
+	if a.offState == nil || a.badge == nil {
+		return
+	}
+	if a.engine != nil {
+		a.setOffState(tr("已连接", "Connected"), uiSuccess)
+		setLabelIfChanged(a.badge, "● "+tr("本机在线", "Online"))
+		setLabelColorIfChanged(a.badge, uiSuccess)
+		return
+	}
+	if a.powerState == 2 {
+		a.setOffState(tr("连接中…", "Connecting…"), uiWarning)
+		setLabelIfChanged(a.badge, "● "+tr("连接中…", "Connecting…"))
+		setLabelColorIfChanged(a.badge, uiWarning)
+		return
+	}
+	a.setOffState(tr("未连接", "Offline"), uiDanger)
+	setLabelIfChanged(a.badge, "● "+tr("未连接", "Offline"))
+	setLabelColorIfChanged(a.badge, uiMuted)
+	if a.memberCount != nil {
+		setLabelIfChanged(a.memberCount, tr("未连接", "Offline"))
+	}
+	if a.empty != nil && (a.peers == nil || !widgetOwnVisible(a.peers)) {
+		setLabelIfChanged(a.empty, tr("尚未连接\r\n连接后将显示成员列表与延迟", "Not connected\r\nConnect to view members and latency"))
+	}
+}
+
 func (a *desktop) ui(fn func()) {
 	if !a.closing.Load() {
 		a.window.Synchronize(func() {
@@ -249,8 +393,10 @@ func (a *desktop) ui(fn func()) {
 }
 func (a *desktop) setStatus(text string) { a.status.SetText(text) }
 func (a *desktop) remember() error {
-	a.settings.ServerURL = a.api.BaseURL
-	a.settings.Token = a.api.Token
+	if a.api != nil {
+		a.settings.ServerURL = a.api.BaseURL
+		a.settings.Token = a.api.Token
+	}
 	if a.adminMode {
 		a.settings.AdminToken = a.adminToken
 	} else {
@@ -268,9 +414,9 @@ func (a *desktop) restoreMembership() {
 	a.busy = true
 	a.joinButton.SetEnabled(false)
 	a.updatePowerButtons()
-	a.offState.SetText("正在恢复网络")
-	a.offHint.SetText("正在读取已保存的成员身份…")
-	a.setStatus("正在恢复已加入的网络…")
+	a.offState.SetText(tr("恢复中…", "Restoring…"))
+	a.offState.SetTextColor(uiWarning)
+	a.setStatus(tr("正在恢复网络…", "Restoring network…"))
 	go func() {
 		m, err := a.api.Session()
 		if err == nil && m.Member.ID != a.identity.DeviceID.String() {
@@ -285,19 +431,31 @@ func (a *desktop) restoreMembership() {
 			a.busy = false
 			a.joinButton.SetEnabled(true)
 			a.updatePowerButtons()
-			a.offState.SetText("虚拟网络已关闭")
+			a.setOffState(tr("未连接", "Offline"), uiDanger)
 			if err != nil {
-				a.setStatus("暂时无法恢复网络，可稍后点击电源重试。")
-				a.showError("恢复网络", err)
+				a.setStatus(tr("恢复失败，点击连接网络可重试。", "Restore failed. Click Connect to retry."))
+				a.showError(tr("恢复网络", "Restore network"), err)
 				return
 			}
 			a.membership = m
-			a.refreshFRPIdentity()
-			a.applyMembership()
-			if err := a.remember(); err != nil {
-				a.showError("保存成员凭据", err)
+			a.serverDisplay = m.ServerDisplay
+			if m.Member.Name != "" {
+				a.identity.DisplayName = m.Member.Name
+				if a.deviceName != nil {
+					_ = a.deviceName.SetText(m.Member.Name)
+				}
+				if a.usernameInput != nil {
+					_ = a.usernameInput.SetText(m.Member.Name)
+				}
 			}
-			a.setStatus("网络已恢复，点击电源按钮开启转发。")
+			a.refreshFRPIdentity()
+			a.refreshFRPPortRange()
+			a.applyMembership()
+			a.bootstrapFRPFromServer(nil)
+			if err := a.remember(); err != nil {
+				a.showError(tr("保存成员凭据", "Save credentials"), err)
+			}
+			a.setStatus(tr("已就绪，点击启动组网", "Ready to connect"))
 		})
 	}()
 }
@@ -314,10 +472,10 @@ func (a *desktop) restoreAdminAccess() {
 			}
 			if isAdminAuthFailure(err) {
 				a.setAdminMode(false, "")
-				a.showNotice(clientui.Feedback{Title: "管理权限已失效", Message: "请输入当前管理令牌重新加入网络。"})
+				a.showNotice(clientui.Feedback{Title: tr("管理权限已失效", "Admin access expired"), Message: tr("请输入当前管理令牌重新加入网络。", "Re-enter the current admin token to restore admin access.")})
 				return
 			}
-			a.setStatus("管理服务暂时不可用，打开管理面板后可重试。")
+			a.setStatus(tr("管理服务暂时不可用，打开管理面板后可重试。", "Admin service temporarily unavailable."))
 		})
 	}()
 }
@@ -339,6 +497,7 @@ func (a *desktop) setAdminMode(enabled bool, token string) {
 			a.showPage(pagePower)
 		}
 		a.invalidateRail()
+		a.requestCleanRelayout()
 		return
 	}
 	a.adminToken = token
@@ -350,6 +509,27 @@ func (a *desktop) setAdminMode(enabled bool, token string) {
 		a.railAdmin.SetVisible(true)
 	}
 	a.invalidateRail()
+	a.requestCleanRelayout()
+}
+
+func (a *desktop) setJoinBusy(busy bool) {
+	a.busy = busy
+	if a.joinButton != nil {
+		a.joinButton.SetEnabled(!busy)
+		if busy {
+			a.joinButton.SetText(tr("正在验证并登录…", "Signing in…"))
+		} else {
+			a.joinButton.SetText(tr("立即登录", "Sign In"))
+		}
+	}
+	for _, input := range []*walk.LineEdit{a.serverInput, a.stunInput, a.usernameInput, a.code} {
+		if input != nil {
+			input.SetEnabled(!busy)
+		}
+	}
+	if a.advancedButton != nil {
+		a.advancedButton.SetEnabled(!busy)
+	}
 }
 
 func (a *desktop) join() {
@@ -357,79 +537,366 @@ func (a *desktop) join() {
 		return
 	}
 	if a.engine != nil {
-		a.showNotice(clientui.Feedback{Title: "请先关闭虚拟网络", Message: "点击电源按钮关闭转发后，再输入新令牌。"})
+		a.showNotice(clientui.Feedback{Title: tr("请先关闭虚拟网络", "Disconnect Virtual LAN first"), Message: tr("点击断开连接后，再切换服务器或密钥。", "Disconnect before switching servers or keys.")})
 		return
 	}
 	if a.hasRunningFRP() {
-		a.showNotice(clientui.Feedback{Title: "请先停止内网穿透", Message: "切换入网身份前需要先停止所有受管内网穿透配置。"})
+		a.showNotice(clientui.Feedback{Title: tr("请先停止端口映射", "Stop Port Mapping first"), Message: tr("切换入网身份前需要先停止运行中的端口映射服务。", "Stop active port mappings before switching accounts.")})
 		return
+	}
+	if a.usernameInput != nil {
+		rawUser := strings.TrimSpace(a.usernameInput.Text())
+		if rawUser != "" {
+			validUser, uErr := validateCustomUsername(rawUser)
+			if uErr != nil {
+				a.showNotice(clientui.Feedback{Title: tr("用户名无效", "Invalid username"), Message: uErr.Error()})
+				a.usernameInput.SetFocus()
+				return
+			}
+			a.identity.DisplayName = validUser
+		}
 	}
 	code := strings.TrimSpace(a.token)
 	if code == "" {
-		a.showNotice(clientui.Feedback{Title: "请输入入网令牌", Message: "填入软件提供者给你的令牌，然后点击“加入”。"})
+		a.showNotice(clientui.Feedback{Title: tr("请输入入网密钥", "Join key required"), Message: tr("填写常规用户密钥或管理员密钥后点击登录。", "Enter a join key or admin token and click Sign In.")})
 		a.code.SetFocus()
 		return
 	}
-	if !validBundledURL(a.api.BaseURL) {
-		a.showNotice(clientui.Feedback{Title: "客户端尚未配置连接服务", Message: "请向软件提供者获取配置好服务器地址的客户端。"})
+	serverValue, stunValue := "", ""
+	if a.serverInput != nil {
+		serverValue = a.serverInput.Text()
+	}
+	if a.stunInput != nil {
+		stunValue = a.stunInput.Text()
+	}
+	base, effectiveSTUN, err := connectionEndpoints(serverValue, stunValue)
+	if err != nil {
+		a.showNotice(clientui.Feedback{Title: tr("服务器地址格式有误", "Invalid server address"), Message: err.Error(), Detail: tr("服务器示例：203.0.113.10:8443；STUN 示例：203.0.113.10:3478", "Server example: 203.0.113.10:8443; STUN example: 203.0.113.10:3478")})
+		if a.serverInput != nil {
+			a.serverInput.SetFocus()
+		}
 		return
 	}
 	after := a.joinAfter
-	a.joinAfter = nil
 	a.dismissNotice()
-	a.busy = true
-	a.joinButton.SetEnabled(false)
-	a.joinButton.SetText("正在加入…")
-	a.setStatus("正在验证令牌…")
-	api := *a.api
-	api.Token = ""
+	a.setJoinBusy(true)
+	a.setStatus(tr("正在连接服务器并验证令牌…", "Connecting and verifying key…"))
+	candidate := clientapi.New(base, "")
+	candidate.Context = a.ctx
+	candidate.AgentVersion = appVersion
 	go func() {
-		m, err := api.Enroll(code, a.identity.RegisterRequest(), a.identity.PrivateKey)
+		m, err := candidate.Enroll(code, a.identity.RegisterRequest(), a.identity.PrivateKey)
 		a.ui(func() {
-			a.busy = false
-			a.joinButton.SetEnabled(true)
-			a.joinButton.SetText("加入网络")
+			a.setJoinBusy(false)
 			if err != nil {
-				a.showError("加入网络", err)
+				a.showErrorWithAPI(tr("加入网络", "Join network"), err, candidate)
 				return
 			}
+			a.joinAfter = nil
 			a.code.SetText("")
 			a.token = ""
-			a.api.Token = m.Token
+			candidate.Token = m.Token
+			a.api = candidate
+			a.stun = effectiveSTUN
 			a.membership = m
+			a.serverDisplay = m.ServerDisplay
+			if m.Member.Name != "" {
+				a.identity.DisplayName = m.Member.Name
+			}
+			if a.deviceName != nil {
+				_ = a.deviceName.SetText(a.identity.DisplayName)
+			}
 			a.members = nil
 			a.setAdminMode(m.Admin, code)
-			a.refreshFRPIdentity()
-			a.applyMembership()
-			if err := a.remember(); err != nil {
-				a.showError("保存成员凭据", err)
+			a.frpPortRange = clientapi.DefaultFRPPortRange
+			if a.serverProbe != nil {
+				a.serverProbe.Reset()
+				a.refreshServerMetricsDisplay()
 			}
-			a.setStatus("已加入网络，点击电源开启连接。")
+			a.refreshFRPIdentity()
+			a.syncFRPServerHost()
+			a.refreshFRPPortRange()
+			a.applyMembership()
+			a.bootstrapFRPFromServer(nil)
+			if err := a.remember(); err != nil {
+				a.showError(tr("保存成员凭据", "Save credentials"), err)
+			}
+			a.setStatus(tr("已加入网络，点击电源开启连接。", "Joined network. Click Connect to start."))
 			if after != nil {
 				after()
 			}
 		})
 	}()
 }
-func validBundledURL(base string) bool {
-	u, err := url.Parse(base)
-	return err == nil && u.Host != "" && (u.Scheme == "https" || u.Scheme == "http") && u.User == nil && u.RawQuery == "" && u.Fragment == ""
+func displayEndpointOrDash(baseURL string) string {
+	hostPort := strings.TrimSpace(baseURL)
+	hostPort = strings.TrimPrefix(hostPort, "https://")
+	hostPort = strings.TrimPrefix(hostPort, "http://")
+	hostPort = strings.TrimSuffix(hostPort, "/")
+	if slash := strings.IndexByte(hostPort, '/'); slash >= 0 {
+		hostPort = hostPort[:slash]
+	}
+	if hostPort == "" {
+		return "—"
+	}
+	return hostPort
 }
+
+func formatEndpointSummary(baseURL, stun string) string {
+	hostPort := displayEndpointOrDash(baseURL)
+	if hostPort == "—" {
+		return "—"
+	}
+	stun = strings.TrimSpace(stun)
+	if stun == "" {
+		return hostPort
+	}
+	if apiHost, _, err := net.SplitHostPort(hostPort); err == nil {
+		if stunHost, stunPort, err := net.SplitHostPort(stun); err == nil && strings.EqualFold(apiHost, stunHost) {
+			return hostPort + " · STUN :" + stunPort
+		}
+	} else if stunHost, stunPort, err := net.SplitHostPort(stun); err == nil && strings.EqualFold(hostPort, stunHost) {
+		return hostPort + " · STUN :" + stunPort
+	}
+	return hostPort + " · STUN " + stun
+}
+
+func maskServerAddress(addr string) string {
+	trimmed := strings.TrimSpace(addr)
+	if trimmed == "" || trimmed == "—" {
+		return "—"
+	}
+	if host, port, err := net.SplitHostPort(trimmed); err == nil {
+		if net.ParseIP(host) != nil {
+			return "•••.•••.•••.•••:" + port
+		}
+		return "••••••:" + port
+	}
+	if net.ParseIP(trimmed) != nil {
+		return "•••.•••.•••.•••"
+	}
+	return "••••••"
+}
+
+func (a *desktop) connectedControlEndpoint() string {
+	if a != nil && a.api != nil {
+		return displayEndpointOrDash(a.api.BaseURL)
+	}
+	return "—"
+}
+
+func formatTrafficSummary(sent, recv uint64) string {
+	return trf("上传 ↑ %s   下载 ↓ %s", "Up ↑ %s   Down ↓ %s", formatTraffic(sent), formatTraffic(recv))
+}
+
+func setLabelIfChanged(lbl *walk.Label, text string) bool {
+	if lbl == nil || lbl.IsDisposed() {
+		return false
+	}
+	if lbl.Text() == text {
+		return false
+	}
+	_ = lbl.SetText(text)
+	return true
+}
+
+func setLabelColorIfChanged(lbl *walk.Label, color walk.Color) bool {
+	if lbl == nil || lbl.IsDisposed() {
+		return false
+	}
+	if lbl.TextColor() == color {
+		return false
+	}
+	lbl.SetTextColor(color)
+	return true
+}
+
+func setButtonTextIfChanged(btn *walk.PushButton, text string) bool {
+	if btn == nil || btn.IsDisposed() {
+		return false
+	}
+	if btn.Text() == text {
+		return false
+	}
+	_ = btn.SetText(text)
+	_ = btn.Invalidate()
+	return true
+}
+
+func setButtonEnabledIfChanged(btn *walk.PushButton, enabled bool) bool {
+	if btn == nil || btn.IsDisposed() {
+		return false
+	}
+	if btn.Enabled() == enabled {
+		return false
+	}
+	btn.SetEnabled(enabled)
+	_ = btn.Invalidate()
+	return true
+}
+
+func widgetOwnVisible(w walk.Widget) bool {
+	if w == nil || w.IsDisposed() {
+		return false
+	}
+	h := w.Handle()
+	if h == 0 {
+		return false
+	}
+	return win.GetWindowLong(h, win.GWL_STYLE)&win.WS_VISIBLE != 0
+}
+
+func (a *desktop) updateConnectedServerDisplays() {
+	if a == nil {
+		return
+	}
+	if a.serverIdentity != nil {
+		mode := strings.ToLower(strings.TrimSpace(a.serverDisplay.Mode))
+		alias := strings.TrimSpace(a.serverDisplay.Alias)
+		showEye := true
+		value := a.connectedControlEndpoint()
+		if mode == "alias" && alias != "" {
+			showEye = false
+			value = alias
+		} else if a.powerServerHidden {
+			value = maskServerAddress(value)
+		}
+		setLabelIfChanged(a.serverIdentity, value)
+		if a.powerServerEye != nil {
+			prevVisible := widgetOwnVisible(a.powerServerEye)
+			if prevVisible != showEye {
+				a.powerServerEye.SetVisible(showEye)
+				if a.page == pagePower {
+					_ = a.powerServerEye.Invalidate()
+					a.requestCleanRelayout()
+				}
+			}
+		}
+	}
+	if a.frpServerAddrLabel != nil {
+		host := strings.TrimSpace(a.frpServerHost())
+		if host == "" {
+			host = strings.TrimSpace(a.frpSnapshot.ServerHost)
+		}
+		endpoint := "—"
+		if host != "" {
+			endpoint = host
+		}
+		if a.frpServerHidden {
+			endpoint = maskServerAddress(endpoint)
+		}
+		if setLabelIfChanged(a.frpServerAddrLabel, endpoint) && a.frpServerEye != nil {
+			_ = a.frpServerEye.Invalidate()
+		}
+	}
+}
+
+func (a *desktop) togglePowerServerEye() {
+	a.powerServerHidden = !a.powerServerHidden
+	a.updateConnectedServerDisplays()
+	if a.powerServerEye != nil {
+		_ = a.powerServerEye.Invalidate()
+	}
+}
+
+func (a *desktop) toggleFRPServerEye() {
+	a.frpServerHidden = !a.frpServerHidden
+	a.updateConnectedServerDisplays()
+	if a.frpServerEye != nil {
+		_ = a.frpServerEye.Invalidate()
+	}
+}
+
+func (a *desktop) syncServerDisplay() {
+	if a == nil || a.api == nil || a.api.Token == "" || a.smokeMode {
+		return
+	}
+	api := *a.api
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		api.Context = ctx
+		m, err := api.Session()
+		cancel()
+		if err != nil {
+			return
+		}
+		a.ui(func() {
+			a.serverDisplay = m.ServerDisplay
+			a.updateConnectedServerDisplays()
+		})
+	}()
+}
+
+func (a *desktop) setEmptyState(visible bool, text string) {
+	if a.empty != nil && text != "" {
+		setLabelIfChanged(a.empty, text)
+	}
+	if a.empty != nil && widgetOwnVisible(a.empty) != visible {
+		a.empty.SetVisible(visible)
+	}
+	if a.emptyArea != nil && widgetOwnVisible(a.emptyArea) != visible {
+		a.emptyArea.SetVisible(visible)
+	}
+}
+
 func (a *desktop) applyMembership() {
 	a.address.SetText(a.membership.Member.VirtualIP)
 	a.networkTitle.SetText(a.membership.Network.Name)
-	a.badge.SetText("已关闭")
+	a.badge.SetText("● " + tr("未连接", "Offline"))
 	a.badge.SetTextColor(uiMuted)
 	a.offNetwork.SetText(a.membership.Network.Name)
+	if a.deviceName != nil && a.identity.DisplayName != "" {
+		_ = a.deviceName.SetText(a.identity.DisplayName)
+	}
+	a.updateConnectedServerDisplays()
 	a.setPoweredOff()
 }
+func (a *desktop) toggleAdvancedConnection() {
+	if a.advancedPanel == nil {
+		return
+	}
+	visible := !a.advancedPanel.Visible()
+	a.advancedPanel.SetVisible(visible)
+	if a.advancedButton != nil {
+		if visible {
+			a.advancedButton.SetText(tr("收起 STUN", "Hide STUN"))
+		} else {
+			a.advancedButton.SetText(tr("STUN 设置", "STUN"))
+		}
+	}
+	a.requestCleanRelayout()
+}
+
+func (a *desktop) updateSTUNCue() {
+	if a.stunInput == nil || a.serverInput == nil {
+		return
+	}
+	if derived, err := STUNAddressForServer(a.serverInput.Text()); err == nil {
+		if a.stunAuto && a.stunInput.Text() != "" {
+			_ = a.stunInput.SetText("")
+		}
+		_ = a.stunInput.SetCueBanner(tr("留空自动：", "Auto: ") + derived)
+	} else {
+		_ = a.stunInput.SetCueBanner(tr("留空自动跟随服务器", "Auto from server host if empty"))
+	}
+}
+
+func (a *desktop) markSTUNInput() {
+	if a.advancedPanel == nil {
+		return
+	}
+	if a.stunInput != nil {
+		a.stunAuto = strings.TrimSpace(a.stunInput.Text()) == ""
+	}
+}
+
 func (a *desktop) changeCode() {
 	if a.busy || a.engine != nil {
-		a.showNotice(clientui.Feedback{Title: "请先关闭虚拟网络", Message: "关闭电源后即可输入其他入网令牌。"})
+		a.showNotice(clientui.Feedback{Title: tr("请先关闭虚拟网络", "Disconnect Virtual LAN first"), Message: tr("断开连接后即可重新输入服务器地址或入网密钥。", "Disconnect before changing server or join key.")})
 		return
 	}
 	if a.hasRunningFRP() {
-		a.showNotice(clientui.Feedback{Title: "请先停止内网穿透", Message: "切换入网身份前需要先停止所有受管内网穿透配置。"})
+		a.showNotice(clientui.Feedback{Title: tr("请先停止端口映射", "Stop Port Mapping first"), Message: tr("切换入网身份前需要先停止所有运行中的端口映射。", "Stop active port mappings before switching accounts.")})
 		return
 	}
 	a.dismissNotice()
@@ -443,7 +910,7 @@ func (a *desktop) togglePower() {
 	if a.api.Token == "" {
 		a.showPage(pageJoin)
 		a.code.SetFocus()
-		a.setStatus("先输入令牌加入网络，再开启电源。")
+		a.setStatus(tr("先输入服务器与密钥登录，再开启电源。", "Sign in with a server and join key first."))
 		return
 	}
 	if a.engine != nil {
@@ -460,9 +927,9 @@ func (a *desktop) startPower() {
 	a.busy = true
 	a.powerState = 2
 	a.updatePowerButtons()
-	a.offState.SetText("正在连接网络")
-	a.offHint.SetText("正在创建加密通道，请稍候…")
-	a.badge.SetText("正在开启…")
+	a.setOffState(tr("连接中…", "Connecting…"), uiWarning)
+	a.badge.SetText("● " + tr("连接中…", "Connecting…"))
+	a.badge.SetTextColor(uiWarning)
 	ctx, cancel := context.WithCancel(a.ctx)
 	a.sessionCancel = cancel
 	session := &desktopSession{done: make(chan struct{})}
@@ -485,7 +952,7 @@ func (a *desktop) startPower() {
 			err = validateFRPMeshStart(ctx, frpManagers, m.Network.CIDR)
 		}
 		if err == nil {
-			engine, err = mesh.Start(ctx, mesh.Options{API: &api, Identity: a.identity, Network: m.Network, Member: m.Member, InterfaceName: "LANMesh", STUNServer: a.stun, RelayOnly: a.settings.RelayOnly})
+			engine, err = mesh.Start(ctx, mesh.Options{API: &api, Identity: a.identity, Network: m.Network, Member: m.Member, InterfaceName: "TLAN", STUNServer: a.stun, RelayOnly: a.settings.RelayOnly, MTU: a.settings.MTU, ReplicateSmallPackets: a.settings.MultipathReplication})
 		}
 		if err == nil {
 			err = updateFRPMeshCIDR(frpManagers, m.Network.CIDR)
@@ -503,9 +970,9 @@ func (a *desktop) startPower() {
 			if engine != nil {
 				if closeErr := engine.Close(); closeErr != nil {
 					if err != nil {
-						err = fmt.Errorf("%w；虚拟网卡清理不完整: %v", err, closeErr)
+						err = fmt.Errorf("%w; adapter cleanup incomplete: %v", err, closeErr)
 					} else {
-						err = fmt.Errorf("虚拟网卡清理不完整: %w", closeErr)
+						err = fmt.Errorf("adapter cleanup incomplete: %w", closeErr)
 					}
 				}
 			}
@@ -520,7 +987,7 @@ func (a *desktop) startPower() {
 				a.busy = false
 				a.setPoweredOff()
 				if err != nil {
-					a.showError("开启虚拟网络", err)
+					a.showError(tr("开启虚拟网络", "Connect Virtual LAN"), err)
 				}
 			})
 			return
@@ -533,31 +1000,30 @@ func (a *desktop) startPower() {
 			a.updatePowerButtons()
 			a.address.SetText(m.Member.VirtualIP)
 			a.networkTitle.SetText(m.Network.Name)
-			a.offState.SetText("虚拟网络已开启")
-			a.offHint.SetText("加密转发已运行，可随时停止网络或查看成员。")
+			a.setOffState(tr("已连接", "Connected"), uiSuccess)
 			a.offNetwork.SetText(m.Network.Name)
 			a.showPage(pagePower)
-			a.badge.SetText("●  在线")
-			a.badge.SetTextColor(uiBlue)
+			a.badge.SetText("● " + tr("本机在线", "Online"))
+			a.badge.SetTextColor(uiSuccess)
 			if err := a.remember(); err != nil {
-				a.showError("保存成员凭据", err)
+				a.showError(tr("保存成员凭据", "Save credentials"), err)
 			}
-			a.setStatus("虚拟网络已开启")
+			a.setStatus(tr("虚拟局域网已连接", "Virtual LAN connected"))
 			a.refreshMembers()
 			a.updateStatus()
 			if recovery := engine.RecoveryStatus(); recovery.HasIssues() {
 				var detail strings.Builder
 				for i, issue := range recovery.Issues {
 					if i >= 8 {
-						fmt.Fprintf(&detail, "…另有 %d 项\n", len(recovery.Issues)-i)
+						fmt.Fprintf(&detail, tr("…另有 %d 项\n", "…and %d more\n"), len(recovery.Issues)-i)
 						break
 					}
 					fmt.Fprintf(&detail, "%s · %s/%s: %s\n", issue.Resource.Type, issue.Resource.Name, issue.Resource.Prefix, issue.Error)
 				}
 				a.showNotice(clientui.Feedback{
-					Title:   "发现历史 Mesh 资源残留",
-					Message: fmt.Sprintf("已恢复 %d 项，失败 %d 项，无法证明归属 %d 项。无法证明归属的资源不会被自动删除，请查看诊断后人工处理。", recovery.Recovered, recovery.Failed, recovery.Unproven),
-					Detail:  clientui.Redact(strings.TrimSpace(detail.String()), a.api.Token),
+					Title:   tr("发现历史网络资源残留", "Stale virtual network resources detected"),
+					Message: trf("已恢复 %d 项，失败 %d 项，无法证明归属 %d 项。请查看诊断。", "Recovered %d, failed %d, unproven %d. Check diagnostics for details.", recovery.Recovered, recovery.Failed, recovery.Unproven),
+					Detail:  clientui.RedactLang(currentLang(), strings.TrimSpace(detail.String()), a.api.Token),
 				})
 			}
 		})
@@ -579,9 +1045,9 @@ func (a *desktop) stopPower() {
 	a.busy = true
 	a.powerState = 2
 	a.updatePowerButtons()
-	a.offState.SetText("正在关闭网络")
-	a.offHint.SetText("正在释放虚拟网卡和路由，请稍候…")
-	a.badge.SetText("正在关闭…")
+	a.setOffState(tr("断开中…", "Disconnecting…"), uiWarning)
+	a.badge.SetText("● " + tr("断开中…", "Disconnecting…"))
+	a.badge.SetTextColor(uiWarning)
 	engine := a.engine
 	a.engine = nil
 	if a.sessionCancel != nil {
@@ -595,17 +1061,17 @@ func (a *desktop) stopPower() {
 			a.busy = false
 			a.setPoweredOff()
 			if closeErr != nil {
-				a.setStatus("虚拟网络已关闭，但本机资源清理不完整。")
+				a.setStatus(tr("虚拟网络已关闭，但本机资源清理不完整。", "Disconnected with incomplete local cleanup."))
 				a.showNotice(clientui.Feedback{
-					Title:   "虚拟网络已关闭，但资源清理不完整",
-					Message: "虚拟网卡、路由或防火墙规则可能仍有残留。请勿继续依赖该网络，重启客户端后可重试幂等清理。",
-					Detail:  clientui.Redact(closeErr.Error(), a.api.Token),
+					Title:   tr("虚拟网络已关闭，但资源清理不完整", "Disconnected with incomplete cleanup"),
+					Message: tr("虚拟网卡、路由或防火墙规则可能仍有残留，重启客户端后可自动清理。", "Virtual adapter, route, or firewall rules may remain. Restart the client to retry cleanup."),
+					Detail:  clientui.RedactLang(currentLang(), closeErr.Error(), a.api.Token),
 				})
 				return
 			}
-			a.setStatus("转发已关闭，虚拟网卡和路由已释放。")
+			a.setStatus(tr("转发已关闭，虚拟网卡和路由已释放。", "Disconnected and virtual adapter released."))
 			if err != nil {
-				a.showNotice(clientui.Feedback{Title: "本机转发已关闭", Message: "成员离线状态暂未同步，服务器会在心跳超时后标记离线。", Detail: clientui.Redact(err.Error(), a.api.Token)})
+				a.showNotice(clientui.Feedback{Title: tr("本机转发已关闭", "Local forwarding stopped"), Message: tr("成员离线状态暂未同步，服务器会在心跳超时后标记离线。", "Offline status sync failed; server will mark offline after heartbeat timeout."), Detail: clientui.RedactLang(currentLang(), err.Error(), a.api.Token)})
 			}
 		})
 	}()
@@ -629,11 +1095,11 @@ func validateFRPMeshStart(ctx context.Context, managers []*frp.Manager, cidr str
 			continue
 		}
 		if err := manager.ValidateMeshStart(ctx, cidr); err != nil {
-			name := "当前穿透配置"
+			name := tr("当前端口映射", "Port Mapping")
 			if cfg, ok := manager.Config(); ok && cfg.Profile.Name != "" {
 				name = cfg.Profile.Name
 			}
-			return fmt.Errorf("穿透配置“%s”与待启动组网冲突: %w", name, err)
+			return fmt.Errorf(tr("端口映射“%s”与虚拟局域网网段冲突: %w", "port mapping %q conflicts with virtual LAN subnet: %w"), name, err)
 		}
 	}
 	return nil
@@ -641,17 +1107,127 @@ func validateFRPMeshStart(ctx context.Context, managers []*frp.Manager, cidr str
 func (a *desktop) setPoweredOff() {
 	a.powerState = 0
 	a.updatePowerButtons()
-	a.offState.SetText("虚拟网络已关闭")
-	a.offHint.SetText("点击圆形按钮或“启动网络”，开启设备间的加密转发。")
+	a.setOffState(tr("未连接", "Offline"), uiDanger)
+	if a.offHint != nil {
+		a.offHint.SetVisible(false)
+		_ = a.offHint.SetText("")
+	}
 	a.offNetwork.SetText(a.membership.Network.Name)
-	a.badge.SetText("已关闭")
+	a.badge.SetText("● " + tr("未连接", "Offline"))
 	a.badge.SetTextColor(uiMuted)
 	a.peers.SetVisible(false)
-	a.empty.SetText("虚拟网络已关闭\r\n点击电源按钮，开启设备间的加密转发。")
-	a.empty.SetVisible(true)
-	a.traffic.SetText("转发已关闭")
-	a.memberCount.SetText("转发已关闭")
+	a.setEmptyState(true, tr("虚拟局域网未连接\r\n连接后此处将显示成员列表与延迟", "Virtual LAN not connected\r\nConnect to display members and latency"))
+	setLabelIfChanged(a.traffic, formatTrafficSummary(0, 0))
+	setLabelIfChanged(a.memberCount, tr("未连接", "Offline"))
 	a.showPage(pagePower)
+}
+
+func (a *desktop) showTransientHint(text string) {
+	if a.offHint == nil {
+		return
+	}
+	a.offHintSeq++
+	seq := a.offHintSeq
+	_ = a.offHint.SetText(text)
+	a.offHint.SetVisible(true)
+	a.requestCleanRelayout()
+	time.AfterFunc(2500*time.Millisecond, func() {
+		a.ui(func() {
+			if seq == a.offHintSeq && a.offHint != nil && !a.offHint.IsDisposed() {
+				a.offHint.SetVisible(false)
+				_ = a.offHint.SetText("")
+				a.requestCleanRelayout()
+			}
+		})
+	})
+}
+
+func (a *desktop) copyLocalIP() {
+	ip := strings.TrimSpace(a.membership.Member.VirtualIP)
+	if ip == "" && a.address != nil {
+		ip = strings.TrimSpace(a.address.Text())
+	}
+	if ip == "" || ip == "尚未分配 IP" || ip == "No IP" {
+		return
+	}
+	if err := walk.Clipboard().SetText(ip); err != nil {
+		a.showError(tr("复制虚拟 IP", "Copy virtual IP"), err)
+		return
+	}
+	a.setStatus(tr("已复制本机 IP: ", "Copied local IP: ") + ip)
+	a.showTransientHint(tr("已复制本机 IP: ", "Copied local IP: ") + ip)
+}
+
+func (a *desktop) copySelectedPeerIP() {
+	if a.peers == nil {
+		return
+	}
+	a.copyPeerIPAt(a.peers.CurrentIndex())
+}
+
+func (a *desktop) copyPeerIPAt(index int) {
+	if a.peerModel == nil || index < 0 || index >= len(a.peerModel.rows) {
+		return
+	}
+	row := a.peerModel.rows[index]
+	if len(row) < 2 {
+		return
+	}
+	ip := strings.TrimSpace(row[1])
+	if ip == "" || ip == "—" {
+		return
+	}
+	if err := walk.Clipboard().SetText(ip); err != nil {
+		a.showError(tr("复制成员 IP", "Copy member IP"), err)
+		return
+	}
+	a.setStatus(tr("已复制 IP: ", "Copied IP: ") + ip)
+	if a.peerCopyHint != nil {
+		a.peerCopySeq++
+		seq := a.peerCopySeq
+		_ = a.peerCopyHint.SetText(tr("已复制 ", "Copied ") + ip)
+		a.peerCopyHint.SetVisible(true)
+		time.AfterFunc(2500*time.Millisecond, func() {
+			a.ui(func() {
+				if seq == a.peerCopySeq && a.peerCopyHint != nil {
+					a.peerCopyHint.SetVisible(false)
+					_ = a.peerCopyHint.SetText("")
+				}
+			})
+		})
+	}
+}
+
+func (a *desktop) handlePeerTableMouseUp(button walk.MouseButton) {
+	if button != walk.LeftButton || a.peers == nil || a.peers.IsDisposed() {
+		return
+	}
+	var pt win.POINT
+	if !win.GetCursorPos(&pt) {
+		return
+	}
+	const (
+		gwChild    = 5
+		gwHwndNext = 2
+	)
+	for child := win.GetWindow(a.peers.Handle(), gwChild); child != 0; child = win.GetWindow(child, gwHwndNext) {
+		if !win.IsWindowVisible(child) {
+			continue
+		}
+		var cr win.RECT
+		win.GetClientRect(child, &cr)
+		localPt := pt
+		win.ScreenToClient(child, &localPt)
+		if localPt.X < cr.Left || localPt.X >= cr.Right || localPt.Y < cr.Top || localPt.Y >= cr.Bottom {
+			continue
+		}
+		hti := win.LVHITTESTINFO{Pt: localPt}
+		win.SendMessage(child, win.LVM_SUBITEMHITTEST, 0, uintptr(unsafe.Pointer(&hti)))
+		if hti.IItem >= 0 && hti.ISubItem == 1 {
+			a.copyPeerIPAt(int(hti.IItem))
+		}
+		return
+	}
 }
 func (a *desktop) refreshMembers() {
 	if a.refreshing || a.membership.Network.ID == "" || a.engine == nil {
@@ -662,13 +1238,27 @@ func (a *desktop) refreshMembers() {
 	nid := core.NetworkID(a.membership.Network.ID)
 	go func() {
 		members, err := api.ListDevices(nid)
+		var sessionSnapshot *clientapi.Membership
+		if s, sErr := api.Session(); sErr == nil {
+			cp := s
+			sessionSnapshot = &cp
+		}
 		a.ui(func() {
 			a.refreshing = false
+			if sessionSnapshot != nil {
+				a.serverDisplay = sessionSnapshot.ServerDisplay
+				if name := strings.TrimSpace(sessionSnapshot.Network.Name); name != "" && name != a.membership.Network.Name {
+					a.membership.Network.Name = name
+					setLabelIfChanged(a.networkTitle, name)
+					setLabelIfChanged(a.offNetwork, name)
+				}
+				a.updateConnectedServerDisplays()
+			}
 			if a.engine == nil || core.NetworkID(a.membership.Network.ID) != nid {
 				return
 			}
 			if err != nil {
-				a.setStatus("成员列表暂时无法更新，正在等待下次刷新。")
+				a.setStatus(tr("成员列表暂时无法更新，正在等待下次刷新。", "Unable to refresh member list; retrying soon."))
 				return
 			}
 			a.members = members
@@ -684,7 +1274,7 @@ func (a *desktop) updateStatus() {
 	if !s.Running {
 		if !a.busy {
 			a.stopPower()
-			a.showError("运行虚拟网络", fmt.Errorf("%s", s.LastError))
+			a.showError(tr("运行虚拟网络", "Virtual LAN"), fmt.Errorf("%s", s.LastError))
 		}
 		return
 	}
@@ -707,19 +1297,29 @@ func (a *desktop) updateStatus() {
 	}
 	sort.SliceStable(members, func(i, j int) bool { return rank(members[i]) < rank(members[j]) })
 	for _, member := range members {
-		name, state, path, delay := member.Name, "离线", "—", "—"
+		name, state, path, delay := member.Name, tr("离线", "Offline"), "—", "—"
 		if member.ID == a.identity.DeviceID.String() {
-			name += "（本机）"
-			state = "在线"
-			path = "本机"
+			name += tr("（本机）", " (You)")
+			state = tr("在线", "Online")
+			path = tr("本机", "Local")
 			online++
+			if member.Name != "" && member.Name != a.identity.DisplayName {
+				a.identity.DisplayName = member.Name
+				if a.deviceName != nil {
+					_ = a.deviceName.SetText(member.Name)
+				}
+			}
 		} else if member.Online {
-			state = "连接中"
+			state = tr("连接中", "Connecting")
 			p, ok := peers[member.ID]
 			if ok {
-				path = map[string]string{"direct UDP": "直连", "relay TCP/TLS": "中继", "checking": "探测中"}[p.Path]
+				path = map[string]string{
+					"direct UDP":    tr("直连", "Direct"),
+					"relay TCP/TLS": tr("中继", "Relay"),
+					"checking":      tr("探测中", "Probing"),
+				}[p.Path]
 				if p.Reachable {
-					state = "在线"
+					state = tr("在线", "Online")
 					delay = fmt.Sprintf("%.0f ms", float64(p.RTT)/float64(time.Millisecond))
 					online++
 				}
@@ -728,11 +1328,12 @@ func (a *desktop) updateStatus() {
 		rows = append(rows, []string{name, member.VirtualIP, state, path, delay})
 	}
 	a.peerModel.setRows(rows)
-	a.peers.SetVisible(len(rows) > 0)
-	a.empty.SetVisible(len(rows) == 0)
-	a.empty.SetText("网络已开启\r\n正在获取加入成员…")
-	a.memberCount.SetText(fmt.Sprintf("%d / %d 在线", online, len(rows)))
-	a.traffic.SetText(fmt.Sprintf("↑ %s    ↓ %s", formatTraffic(s.Sent), formatTraffic(s.Received)))
+	if widgetOwnVisible(a.peers) != (len(rows) > 0) {
+		a.peers.SetVisible(len(rows) > 0)
+	}
+	a.setEmptyState(len(rows) == 0, tr("正在获取在线成员…", "Loading members…"))
+	setLabelIfChanged(a.memberCount, trf("%d / %d 在线", "%d / %d online", online, len(rows)))
+	setLabelIfChanged(a.traffic, formatTrafficSummary(s.Sent, s.Received))
 }
 func (a *desktop) hasRunningFRP() bool {
 	for _, manager := range a.frpManagers {
@@ -747,11 +1348,11 @@ func (a *desktop) hasRunningFRP() bool {
 }
 func (a *desktop) leaveNetwork() {
 	if a.busy || a.engine != nil {
-		a.showNotice(clientui.Feedback{Title: "请先关闭电源", Message: "关闭转发后可退出当前网络。"})
+		a.showNotice(clientui.Feedback{Title: tr("请先关闭电源", "Disconnect first"), Message: tr("关闭转发后可退出当前网络。", "Disconnect Virtual LAN before leaving the network.")})
 		return
 	}
 	if a.hasRunningFRP() {
-		a.showNotice(clientui.Feedback{Title: "请先停止内网穿透", Message: "退出网络前需要先停止所有受管内网穿透配置。"})
+		a.showNotice(clientui.Feedback{Title: tr("请先停止端口映射", "Stop Port Mapping first"), Message: tr("退出网络前需要先停止运行中的端口映射服务。", "Stop active port mappings before leaving the network.")})
 		return
 	}
 	if a.membership.Network.ID == "" {
@@ -765,43 +1366,60 @@ func (a *desktop) leaveNetwork() {
 		a.ui(func() {
 			a.busy = false
 			if err != nil {
-				a.showError("退出网络", err)
+				a.showError(tr("退出网络", "Leave network"), err)
 				return
 			}
 			a.setAdminMode(false, "")
+			if a.serverProbe != nil {
+				a.serverProbe.Reset()
+				a.refreshServerMetricsDisplay()
+			}
 			a.membership = clientapi.Membership{}
 			a.api.Token = ""
 			a.members = nil
 			a.code.SetText("")
 			a.token = ""
-			a.address.SetText("尚未分配 IP")
-			a.badge.SetText("未加入网络")
-			a.networkTitle.SetText("私人网络")
+			a.address.SetText(tr("尚未分配 IP", "No IP"))
+			a.badge.SetText("● " + tr("未加入", "Not joined"))
+			a.badge.SetTextColor(uiMuted)
+			a.networkTitle.SetText(tr("私人网络", "Private Network"))
 			a.memberCount.SetText("")
 			a.showPage(pageJoin)
-			a.empty.SetText("输入令牌，即可加入你的私人网络。")
+			a.setEmptyState(true, tr("虚拟局域网未连接", "Virtual LAN not connected"))
 			a.dismissNotice()
 			if err := a.remember(); err != nil {
-				a.showError("保存本机配置", err)
+				a.showError(tr("保存本机配置", "Save settings"), err)
 			}
-			a.setStatus("已退出网络")
+			a.setStatus(tr("已退出网络", "Left network"))
 		})
 	}()
 }
 func (a *desktop) diagnose() {
 	var meshChecks []clientapi.DiagnosticCheck
+	var meshQuality *meshQualityDiagnostic
 	if a.engine != nil {
 		meshChecks = a.engine.Diagnostics()
+		samples := a.engine.Quality()
+		if len(samples) > 0 {
+			meshQuality = &meshQualityDiagnostic{
+				SchemaVersion: 1,
+				Summary:       a.engine.QualitySummary(),
+				Samples:       samples,
+			}
+		}
 	}
 	frpSources := a.frpDiagnosticSources()
-	if a.engine == nil && len(frpSources) == 0 {
-		a.showNotice(clientui.Feedback{Title: "暂无可诊断的连接", Message: "开启虚拟网络或配置内网穿透后，再生成连接诊断。"})
-		return
-	}
 	api := clientapi.Client{}
 	if a.api != nil {
 		api = *a.api
 	}
+	stunAddr := strings.TrimSpace(a.stun)
+	hasServer := strings.TrimSpace(api.BaseURL) != ""
+	if a.engine == nil && len(frpSources) == 0 && !hasServer {
+		a.showNotice(clientui.Feedback{Title: tr("暂无可诊断的连接", "Nothing to diagnose"), Message: tr("请先配置服务器，或开启虚拟局域网 / 端口映射后再运行诊断。", "Sign in or start Virtual LAN / Port Mapping before running diagnostics.")})
+		return
+	}
+	_, probeStats := a.serverProbe.Snapshot()
 	nid := core.NetworkID(a.membership.Network.ID)
 	deviceID := a.identity.DeviceID
 	secrets := frpDiagnosticSecretValues(frpSources, []string{api.Token})
@@ -810,8 +1428,70 @@ func (a *desktop) diagnose() {
 		if ctx == nil {
 			ctx = context.Background()
 		}
+		var checks []clientapi.DiagnosticCheck
+		if hasServer {
+			healthCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+			probeClient := clientapi.Client{BaseURL: api.BaseURL, HTTP: api.HTTP}
+			rtt, healthErr := probeClient.HealthProbe(healthCtx)
+			cancel()
+			if healthErr != nil {
+				checks = append(checks, clientapi.DiagnosticCheck{
+					Name:   "control_health",
+					Status: "fail",
+					Detail: clientui.RedactLang(currentLang(), healthErr.Error(), secrets...),
+				})
+			} else {
+				ms := float64(rtt) / float64(time.Millisecond)
+				if ms < 1 {
+					ms = 1
+				}
+				checks = append(checks, clientapi.DiagnosticCheck{
+					Name:   "control_health",
+					Status: "pass",
+					Detail: trf("控制服务响应耗时 %.0f ms", "Control service responded in %.0f ms", ms),
+				})
+			}
+		}
+		if stunAddr != "" {
+			stunCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+			stunClient := network.NewUDPSTUNClient()
+			stunClient.Timeout = 2 * time.Second
+			started := time.Now()
+			mapped, stunErr := stunClient.Probe(stunCtx, stunAddr)
+			cancel()
+			if stunErr != nil {
+				checks = append(checks, clientapi.DiagnosticCheck{
+					Name:   "stun_probe",
+					Status: "warn",
+					Detail: tr("UDP 打洞探测失败: ", "STUN UDP probe failed: ") + clientui.RedactLang(currentLang(), stunErr.Error(), secrets...),
+				})
+			} else {
+				ms := float64(time.Since(started)) / float64(time.Millisecond)
+				if ms < 1 {
+					ms = 1
+				}
+				checks = append(checks, clientapi.DiagnosticCheck{
+					Name:   "stun_probe",
+					Status: "pass",
+					Detail: trf("UDP 公网映射 %s (%.0f ms)", "UDP mapped %s (%.0f ms)", mapped.MappedAddress, ms),
+				})
+			}
+		}
+		if probeStats.Count > 0 {
+			status := "pass"
+			if probeStats.LatestRTTMillis < 0 {
+				status = "fail"
+			} else if probeStats.LossPercent >= 15 {
+				status = "warn"
+			}
+			checks = append(checks, clientapi.DiagnosticCheck{
+				Name:   "server_link",
+				Status: status,
+				Detail: trf("当前延迟 %s · 平均 %.0f ms · 丢包 %.1f%% (%s)", "RTT %s · Avg %.0f ms · Loss %.1f%% (%s)", formatLatencyText(probeStats.LatestRTTMillis), probeStats.AvgRTTMillis, probeStats.LossPercent, probeStats.Mode),
+			})
+		}
 		frpReport, frpChecks := buildFRPDiagnosticExport(ctx, frpSources, secrets, time.Now().UTC())
-		checks := append([]clientapi.DiagnosticCheck(nil), meshChecks...)
+		checks = append(checks, meshChecks...)
 		checks = append(checks, frpChecks...)
 		export := diagnosticExport{
 			SchemaVersion: diagnosticSchemaVersion,
@@ -819,7 +1499,9 @@ func (a *desktop) diagnose() {
 			GeneratedAt:   time.Now().UTC(),
 			Checks:        checks,
 			FRP:           frpReport,
+			MeshQuality:   meshQuality,
 		}
+		summary := buildDiagnosticSummary(export, probeStats, api.BaseURL, stunAddr)
 		identityPath, err := clientidentity.DefaultPath()
 		var jsonPath, textPath string
 		if err == nil {
@@ -829,22 +1511,22 @@ func (a *desktop) diagnose() {
 		if err == nil && api.Token != "" && nid != "" && deviceID != "" {
 			uploadErr = uploadFRPDiagnosticReport(&api, nid, deviceID, checks, frpReport, secrets)
 		}
-		detail := export.Text() + "\r\nJSON: " + jsonPath + "\r\n文本: " + textPath
+		detail := summary.plainText("") + tr("\r\n--- 详细报告 ---\r\n", "\r\n--- Raw Report ---\r\n") + export.Text() + "\r\nJSON: " + jsonPath + tr("\r\n文本: ", "\r\nText: ") + textPath
 		a.ui(func() {
 			if err != nil {
-				a.showError("保存诊断", err)
+				a.showError(tr("保存诊断", "Save diagnostics"), err)
 				return
 			}
-			message := "报告已保存为 JSON 和文本"
+			message := tr("已保存至本地目录", "Saved locally")
 			switch {
 			case uploadErr != nil:
-				message = "报告已保存，但同步失败：" + clientui.Redact(uploadErr.Error(), secrets...)
+				message = tr("已保存至本地，同步失败：", "Saved locally; sync failed: ") + clientui.RedactLang(currentLang(), uploadErr.Error(), secrets...)
 			case api.Token == "":
-				message += "（当前未登录，未上传）"
+				message += tr("（未登录，未上传）", " (not signed in; not uploaded)")
 			default:
-				message += "并同步至私人服务器。"
+				message += tr("，并已同步至服务器。", ", and synced to server.")
 			}
-			a.showTextDialog("连接诊断", message, clientui.Redact(detail, secrets...))
+			a.showDiagnosticsDialog(summary, message, clientui.RedactLang(currentLang(), detail, secrets...))
 		})
 	}()
 }
@@ -853,22 +1535,23 @@ func runUITest(path string) {
 		os.WriteFile(path, []byte("FAIL: "+err.Error()), 0600)
 		os.Exit(1)
 	}
-	os.WriteFile(path, []byte("PASS: integrated Mesh workspace, FRP page, admin-only management panel, tray actions, close policy, version control, power-off transition, member/rule tables, navigation accessibility states and antialiased drawing calls; no network or adapter created\n"), 0600)
+	os.WriteFile(path, []byte("PASS: self-hosted server validation, light/dark redraw, bilingual ZH/EN UI, custom username, enrollment rollback, integrated Mesh workspace, FRP page, admin panel, tray actions, close policy, member/rule tables, accessibility and antialiased drawing; no external network or adapter created\n"), 0600)
 }
 func runAdapterTest(path string) {
 	os.WriteFile(path, []byte("RUNNING\n"), 0600)
-	adapter, err := platform.OpenTunnel("LANMesh-Test", netip.MustParsePrefix("10.254.253.1/30"), mesh.MTU)
+	adapter, err := platform.OpenTunnel("TLAN-Test", netip.MustParsePrefix("10.254.253.1/30"), mesh.MTU)
 	report := ""
 	if err != nil {
 		report = "FAIL: " + err.Error()
 	} else {
 		name, _ := adapter.Name()
 		_, lookErr := net.InterfaceByName(name)
+		desc, descErr := platform.QueryAdapterDescription(name)
 		closeErr := adapter.Close()
-		if lookErr != nil || closeErr != nil {
-			report = fmt.Sprintf("FAIL: lookup=%v close=%v", lookErr, closeErr)
+		if lookErr != nil || descErr != nil || closeErr != nil {
+			report = fmt.Sprintf("FAIL: lookup=%v descErr=%v close=%v", lookErr, descErr, closeErr)
 		} else {
-			report = "PASS: created, configured and released " + name
+			report = fmt.Sprintf("PASS: created, configured and released %s (desc=%q)", name, desc)
 		}
 	}
 	os.WriteFile(path, []byte(report+"\n"), 0600)

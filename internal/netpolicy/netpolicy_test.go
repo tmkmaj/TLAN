@@ -29,7 +29,7 @@ func TestCheckForbiddenLiteralAddress(t *testing.T) {
 func TestCheckForbiddenRouteInterface(t *testing.T) {
 	forbidden := []netip.Prefix{netip.MustParsePrefix("100.64.0.0/10")}
 	observer := staticObserver{routes: []Route{{
-		Destination: netip.MustParseAddr("198.51.100.8"), InterfaceName: "LANMesh",
+		Destination: netip.MustParseAddr("198.51.100.8"), InterfaceName: "TLAN",
 		InterfacePrefixes: []netip.Prefix{netip.MustParsePrefix("100.64.0.1/10")},
 	}}}
 	if err := CheckForbidden(context.Background(), observer, "frp.example.test", 7000, forbidden); !errors.Is(err, ErrForbiddenRoute) {

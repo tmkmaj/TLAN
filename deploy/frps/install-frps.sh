@@ -10,7 +10,7 @@ Usage: sudo bash install-frps.sh [OPTIONS]
   --help, -h        Show this help
 Existing /etc/tlan-frp configuration and token files are never overwritten.
 Required public ports: TCP 7000, UDP 7002, UDP 7003, TCP 18080-18083,
-TCP 18443-18444, and TCP/UDP 30000-30999. TCP 7001 stays loopback-only.
+TCP 18443-18444, and TCP/UDP 60000-61000. TCP 7001 stays loopback-only.
 HELP
 }
 
@@ -105,12 +105,12 @@ check_capabilities() {
 check_capabilities "${CONFIG_DIR}/frps.toml" "main" \
   bindAddr:0.0.0.0 bindPort:7000 kcpBindPort:7002 quicBindPort:7003 \
   proxyBindAddr:0.0.0.0 vhostHTTPPort:18080 vhostHTTPSPort:18443 \
-  tcpmuxHTTPConnectPort:18081 subDomainHost:frp.8-163-21-82.nip.io \
+  tcpmuxHTTPConnectPort:18081 subDomainHost:frp.example.com \
   transport.tls.force:true
 check_capabilities "${CONFIG_DIR}/frps-wss.toml" "wss" \
   bindAddr:127.0.0.1 bindPort:7001 proxyBindAddr:0.0.0.0 \
   vhostHTTPPort:18082 vhostHTTPSPort:18444 tcpmuxHTTPConnectPort:18083 \
-  subDomainHost:frp.8-163-21-82.nip.io transport.tls.force:false
+  subDomainHost:frp.example.com transport.tls.force:false
 
 "${DEST}/frps" verify -c "${CONFIG_DIR}/frps.toml"
 "${DEST}/frps" verify -c "${CONFIG_DIR}/frps-wss.toml"
@@ -148,13 +148,13 @@ elif command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 
       firewall-cmd --zone="$zone" --add-port="$port" || FIREWALL_OK=0
       firewall-cmd --permanent --zone="$zone" --add-port="$port" || FIREWALL_OK=0
     done
-    for port in 7002/udp 7003/udp 30000-30999/tcp 30000-30999/udp; do
+    for port in 7002/udp 7003/udp 60000-61000/tcp 60000-61000/udp; do
       firewall-cmd --zone="$zone" --add-port="$port" || FIREWALL_OK=0
       firewall-cmd --permanent --zone="$zone" --add-port="$port" || FIREWALL_OK=0
     done
   done
 elif command -v ufw >/dev/null 2>&1 && ufw status | grep -q '^Status: active'; then
-  for port in 7000/tcp 18080/tcp 18081/tcp 18082/tcp 18083/tcp 18443/tcp 18444/tcp 7002/udp 7003/udp 30000:30999/tcp 30000:30999/udp; do
+  for port in 7000/tcp 18080/tcp 18081/tcp 18082/tcp 18083/tcp 18443/tcp 18444/tcp 7002/udp 7003/udp 60000:61000/tcp 60000:61000/udp; do
     ufw allow "$port" || FIREWALL_OK=0
   done
 else
@@ -181,5 +181,5 @@ if (( ! FIREWALL_OK )); then
   exit 3
 fi
 
-echo "FRPS public ports: TCP 7000; UDP 7002/7003; TCP 18080-18083; TCP 18443-18444; TCP/UDP 30000-30999."
+echo "FRPS public ports: TCP 7000; UDP 7002/7003; TCP 18080-18083; TCP 18443-18444; TCP/UDP 60000-61000."
 echo "WSS loopback only: 127.0.0.1:7001 (do not expose it)."

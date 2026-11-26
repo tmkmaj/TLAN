@@ -43,8 +43,19 @@ func (p *frpLeaseProvider) UpdateIdentity(networkID, deviceID string) {
 	p.mu.Unlock()
 }
 
+func (p *frpLeaseProvider) UpdateClient(api *clientapi.Client) {
+	if p == nil || api == nil {
+		return
+	}
+	p.mu.Lock()
+	p.api = api
+	p.mu.Unlock()
+}
+
 func (p *frpLeaseProvider) client(ctx context.Context) *clientapi.Client {
+	p.mu.Lock()
 	copy := *p.api
+	p.mu.Unlock()
 	copy.Context = ctx
 	return &copy
 }

@@ -140,12 +140,13 @@ type LeaseResponse struct {
 // Capabilities describes the managed FRP control-plane contract. It is
 // intentionally metadata-only and never includes a token or capability.
 type Capabilities struct {
-	Mode        string   `json:"mode"`
-	CoreVersion string   `json:"core_version"`
-	ServerID    string   `json:"server_id"`
-	LeaseTTL    int64    `json:"lease_ttl_seconds"`
-	PluginOps   []string `json:"plugin_ops"`
-	Features    []string `json:"features"`
+	Mode         string      `json:"mode"`
+	CoreVersion  string      `json:"core_version"`
+	ServerID     string      `json:"server_id"`
+	LeaseTTL     int64       `json:"lease_ttl_seconds"`
+	AllowedPorts []PortRange `json:"allowed_ports,omitempty"`
+	PluginOps    []string    `json:"plugin_ops"`
+	Features     []string    `json:"features"`
 }
 
 // LeaseStatus is the server-side observation of a managed lease. It lets a
@@ -171,8 +172,8 @@ type Limits struct {
 
 // PortRange is an inclusive server-side remote-port range.
 type PortRange struct {
-	Start int
-	End   int
+	Start int `json:"start"`
+	End   int `json:"end"`
 }
 
 // Options configures a managed authorization store.

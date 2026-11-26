@@ -53,11 +53,29 @@ type Device struct {
 	LastSeen   time.Time `json:"last_seen"`
 }
 
+type ServerDisplayConfig struct {
+	Mode  string `json:"mode"`
+	Alias string `json:"alias,omitempty"`
+}
+
+type FRPBootstrapConfig struct {
+	Enabled       bool   `json:"enabled"`
+	Mode          string `json:"mode,omitempty"`
+	Host          string `json:"host,omitempty"`
+	Port          int    `json:"port,omitempty"`
+	Transport     string `json:"transport,omitempty"`
+	TLSServerName string `json:"tls_server_name,omitempty"`
+	ServerID      string `json:"server_id,omitempty"`
+	Token         string `json:"token,omitempty"`
+	CAPEM         string `json:"ca_pem,omitempty"`
+}
+
 type Membership struct {
-	Network Network `json:"network"`
-	Member  Device  `json:"member"`
-	Token   string  `json:"token,omitempty"`
-	Admin   bool    `json:"admin,omitempty"`
+	Network       Network             `json:"network"`
+	Member        Device              `json:"member"`
+	Token         string              `json:"token,omitempty"`
+	Admin         bool                `json:"admin,omitempty"`
+	ServerDisplay ServerDisplayConfig `json:"server_display,omitempty"`
 }
 
 func (c *Client) Enroll(code string, device core.RegisterDeviceRequest, privateKey string) (Membership, error) {
@@ -86,6 +104,11 @@ func (c *Client) Session() (Membership, error) {
 func (c *Client) SetForwarding(nid core.NetworkID, did core.DeviceID, enabled bool) (Device, error) {
 	var d Device
 	err := c.request(http.MethodPost, "/api/v1/networks/"+nid.String()+"/devices/"+did.String()+"/forwarding", map[string]bool{"enabled": enabled}, &d)
+	return d, err
+}
+func (c *Client) RenameSelf(nid core.NetworkID, did core.DeviceID, name string) (Device, error) {
+	var d Device
+	err := c.request(http.MethodPost, "/api/v1/networks/"+nid.String()+"/devices/"+did.String()+"/name", map[string]string{"name": name}, &d)
 	return d, err
 }
 
@@ -480,6 +503,70 @@ func (c *Client) DenyFRPService(serviceID string) (frpauth.ServiceResponse, erro
 	var response frpauth.ServiceResponse
 	err := c.request(http.MethodPost, "/api/v1/frp/services/"+serviceID+"/deny", nil, &response)
 	return response, err
+}
+
+type PortRange struct {
+	Start int `json:"start"`
+	End   int `json:"end"`
+}
+
+var DefaultFRPPortRange = PortRange{Start: 60000, End: 61000}
+
+func (c *Client) HealthProbe(ctx context.Context) (time.Duration, error) {
+	if c == nil || c.BaseURL == "" {
+		return 0, fmt.Errorf("server URL is required")
+	}
+	if ctx == nil {
+		ctx = c.Context
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	httpClient := c.HTTP
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+"/health", nil)
+	if err != nil {
+		return 0, err
+	}
+	started := time.Now()
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return 0, fmt.Errorf("health status %d", resp.StatusCode)
+	}
+	rtt := time.Since(started)
+	if rtt <= 0 {
+		rtt = time.Microsecond
+	}
+	return rtt, nil
+}
+
+func (c *Client) FRPCapabilities() (frpauth.Capabilities, error) {
+	var response frpauth.Capabilities
+	err := c.request(http.MethodGet, "/api/v1/frp/capabilities", nil, &response)
+	return response, err
+}
+
+func (c *Client) FRPBootstrap() (FRPBootstrapConfig, error) {
+	var response FRPBootstrapConfig
+	err := c.request(http.MethodGet, "/api/v1/frp/bootstrap", nil, &response)
+	return response, err
+}
+
+func (c *Client) FRPPortRange() (PortRange, error) {
+	var response PortRange
+	if err := c.request(http.MethodGet, "/api/v1/frp/port-range", nil, &response); err != nil {
+		return DefaultFRPPortRange, err
+	}
+	if response.Start < 1 || response.End > 65535 || response.Start > response.End {
+		return DefaultFRPPortRange, nil
+	}
+	return response, nil
 }
 
 func (c *Client) RevokeFRPServiceApproval(serviceID string) error {

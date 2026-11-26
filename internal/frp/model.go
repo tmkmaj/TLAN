@@ -33,7 +33,7 @@ const (
 	DefaultWSSHTTPPort   = 18082
 	DefaultWSSTCPMuxPort = 18083
 	DefaultWSSHTTPSPort  = 18444
-	DefaultSubdomainHost = "frp.8-163-21-82.nip.io"
+	DefaultSubdomainHost = "frp.example.com"
 	MaxConfigBytes       = 64 * 1024
 	MaxTokenBytes        = 4096
 	MaxCABytes           = 4 * 1024 * 1024
@@ -69,7 +69,8 @@ type Server struct {
 	Port                      int    `json:"port"`
 	Transport                 string `json:"transport"`
 	TLSServerName             string `json:"tlsServerName"`
-	TrustedCAPath             string `json:"trustedCAPath"`
+	TrustedCAPath             string `json:"trustedCAPath,omitempty"`
+	UseSystemCA               bool   `json:"useSystemCA,omitempty"`
 	CredentialRef             string `json:"credentialRef"`
 	ServerID                  string `json:"serverId,omitempty"`
 	PublicHTTPPort            int    `json:"publicHttpPort,omitempty"`

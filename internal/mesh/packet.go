@@ -55,6 +55,13 @@ func encapsulate(packet []byte, source, target netip.Addr) []byte {
 }
 
 func decapsulate(packet []byte, local netip.Addr, prefix netip.Prefix, peers map[netip.Addr]bool) ([]byte, error) {
+	return decapsulateWithLimit(packet, local, prefix, peers, MTU)
+}
+
+func decapsulateWithLimit(packet []byte, local netip.Addr, prefix netip.Prefix, peers map[netip.Addr]bool, maxPacket int) ([]byte, error) {
+	if maxPacket <= 0 {
+		maxPacket = MTU
+	}
 	source, dest, err := ipv4(packet)
 	if err != nil || len(packet) < envelopeSize+20 || packet[0] != 0x45 || packet[9] != 253 ||
 		string(packet[20:24]) != "LM01" || dest != local || !peers[source] {
@@ -62,8 +69,17 @@ func decapsulate(packet []byte, local netip.Addr, prefix netip.Prefix, peers map
 	}
 	inner := packet[envelopeSize:]
 	innerSource, innerDest, err := ipv4(inner)
-	if err != nil || len(inner) > MTU || innerSource != source || (innerDest != local && !broadcast(innerDest, prefix)) {
+	if err != nil || len(inner) > maxPacket || innerSource != source || (innerDest != local && !broadcast(innerDest, prefix)) {
 		return nil, errors.New("invalid inner packet ownership or destination")
 	}
 	return inner, nil
+}
+
+func normalizeMeshMTU(value int) int {
+	const minMeshMTU = 576
+	const maxMeshMTU = 1500
+	if value < minMeshMTU || value > maxMeshMTU {
+		return MTU
+	}
+	return value
 }

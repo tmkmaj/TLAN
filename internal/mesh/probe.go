@@ -26,8 +26,15 @@ func measuredRTT(d time.Duration) time.Duration {
 
 // Probes travel inside WireGuard over whichever authenticated path is selected,
 // so relay latency is measured to the other device rather than to the server.
-func probePacket(source, target netip.Addr, reply bool, nonce [8]byte) []byte {
-	p := make([]byte, 33)
+func probePacket(source, target netip.Addr, mtu int, reply bool, nonce [8]byte) []byte {
+	if mtu <= 0 {
+		mtu = MTU
+	}
+	size := 33
+	if size < mtu {
+		size = mtu
+	}
+	p := make([]byte, size)
 	p[0] = 0x45
 	p[8] = 64
 	p[9] = 253
@@ -38,7 +45,7 @@ func probePacket(source, target netip.Addr, reply bool, nonce [8]byte) []byte {
 	if reply {
 		p[24] = 1
 	}
-	copy(p[25:], nonce[:])
+	copy(p[25:33], nonce[:])
 	var sum uint32
 	for i := 0; i < 20; i += 2 {
 		sum += uint32(binary.BigEndian.Uint16(p[i : i+2]))
@@ -49,6 +56,7 @@ func probePacket(source, target netip.Addr, reply bool, nonce [8]byte) []byte {
 	binary.BigEndian.PutUint16(p[10:12], ^uint16(sum))
 	return p
 }
+
 func (t *tunnel) probePeers() {
 	t.mu.RLock()
 	peers := make([]netip.Addr, 0, len(t.peers))
@@ -80,11 +88,11 @@ func (t *tunnel) probePeers() {
 		state.Sent = time.Now()
 		t.probes[ip] = state
 		t.probeMu.Unlock()
-		t.submit(probePacket(t.local, ip, false, nonce))
+		t.submit(probePacket(t.local, ip, t.mtu, false, nonce))
 	}
 }
 func (t *tunnel) handleProbe(p []byte) bool {
-	if len(p) != 33 || p[0] != 0x45 || p[9] != 253 || string(p[20:24]) != "LMP1" || p[24] > 1 {
+	if len(p) < 33 || len(p) > t.mtu || p[0] != 0x45 || p[9] != 253 || string(p[20:24]) != "LMP1" || p[24] > 1 {
 		return false
 	}
 	source, target, err := ipv4(p)
@@ -94,7 +102,7 @@ func (t *tunnel) handleProbe(p []byte) bool {
 	var nonce [8]byte
 	copy(nonce[:], p[25:])
 	if p[24] == 0 {
-		t.submit(probePacket(t.local, source, true, nonce))
+		t.submit(probePacket(t.local, source, t.mtu, true, nonce))
 		return true
 	}
 	t.probeMu.Lock()

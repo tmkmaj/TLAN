@@ -1,28 +1,34 @@
-.bin/
-.tmp-*/
-.tmp-server.*
-data/
-dist/
-tnlan-config.yml
-
-# Go test and profiling output
-*.test
-*.out
-*.prof
-coverage.*
-
-# Local runtime state, logs and generated credentials
-*.log
-*.pid
-logs/
-.env
-.env.*
-!.env.example
-
-# Local package/installer outputs
+# Binaries and build artifacts
+tlan-server
+tlan
+tlan.exe
+client.exe
+lanmesh-client.exe
+lanmesh-server
+*.exe
+*.syso
+*.run
+*.run.sha256
 *.zip
 *.tar.gz
-*.run
 
-# Screenshots containing test join-code text are kept out of the source baseline
-docs/screenshots/token-*.png
+# Generated config and state
+tlan-config.yml
+state.json
+data/
+
+# Output and temporary directories
+dist/
+tmp/
+output/
+.tmp-*
+.cache/
+.worktrees/
+.impeccable/
+%SystemDrive%/
+
+# Legacy local nested copy and scratch artifacts
+RadminLanPrivate/
+$null
+64
+r

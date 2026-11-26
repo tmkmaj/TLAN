@@ -1,6 +1,6 @@
 # TLAN 内置 FRPC 完整开发方案
 
-编写日期：2026-10-18。适用项目：当前目录中的 TmkNetworkLAN（本文简称 TLAN），Windows 10/11 amd64 客户端、Debian amd64 服务端。
+编写日期：2026-10-18。适用项目：当前目录中的 TLAN（本文简称 TLAN），Windows 10/11 amd64 客户端、Debian amd64 服务端。
 
 文档性质：基于现有源码和 FRP 官方资料的设计提案；本文新增模块、接口、配置和验收指标均为待开发内容，不代表已经实现或通过测试。此次只输出方案，不修改运行中的网络、服务器或现有业务代码。
 
@@ -30,7 +30,7 @@
 | --- | --- | --- |
 | Windows GUI 直接持有一个 mesh.Engine | cmd/client/desktop_windows.go：desktop、startPower、stopPower | 需要上移独立运行管理层，不能在 mesh.Start 内附带启动 frpc |
 | 关闭窗口取消根上下文并关闭引擎 | 同文件 runDesktop | 第一阶段仍保持“退出软件停止全部”；托盘/服务常驻必须显式开发 |
-| GUI manifest 要求管理员权限 | cmd/client/TmkNetworkLAN.exe.manifest | 普通 exec 启动的 frpc 继承高权限，不会自动降权 |
+| GUI manifest 要求管理员权限 | cmd/client/TLAN.exe.manifest | 普通 exec 启动的 frpc 继承高权限，不会自动降权 |
 | Wintun 是 L3 IPv4；默认 MTU 1280 | internal/platform/tunnel_windows.go、internal/mesh/packet.go | 不等于完整二层桥；FRP UDP 不能补齐广播发现和任意以太帧 |
 | 配置虚拟地址，不设置网关；虚拟接口 metric=5 | platform.openTunnel | 普通公网 FRP 流量不会仅因 metric 小就进入虚拟网卡；仍需按目的地址核验路由 |
 | 添加 255.255.255.255/32、224.0.0.0/4 路由 | 同上 | 广播/组播存在已有接口选择影响，不能用 FRP 再复制一次 |
@@ -226,7 +226,7 @@ PortRegistry 必须识别 0.0.0.0 与具体 IPv4 监听的覆盖关系、IPv6 du
 - FRP 只发布指定服务；不把 255.255.255.255、组播地址或虚拟子网广播当作 backend。
 - 不开启 ICS、网桥或默认 IP 转发。游戏发现继续由当前 Mesh 的 IPv4 广播/组播机制负责。
 - 既有 224.0.0.0/4 低 metric 路由可能影响多网卡应用的组播选择，这是已有设计风险。后续可做按游戏/组播组缩小范围的策略，但不能为了 FRP 一次性删除原有广播能力。
-- 同一游戏同时收到虚拟 LAN 发现结果与 FRP 公网入口时，可能出现重复房间、选错地址、源地址识别变化；UI 应明确推荐一个访问入口。FRP 不保证解决 Steam/EOS 或 Dark Hours 自身问题。
+- 同一游戏同时收到虚拟 LAN 发现结果与 FRP 公网入口时，可能出现重复房间、选错地址、源地址识别变化；UI 应明确推荐一个访问入口。FRP 不保证解决 Steam/EOS 或 SampleGame 自身问题。
 - FRP 到回环时不受 Wintun 1280 MTU 限制；到 TLAN 对端时，后端 TCP 由 OS 按路径处理，UDP 必须测试。IPv4 无选项时，1280 MTU 对应 UDP payload 上界 1252 字节；这是内层不分片预算，不是完整互联网路径的保证。
 - FRP 的 udpPacketSize 与 Mesh MTU 是两个不同参数，不能一键都改成 1500 或 1280。记录超大报文、丢包、重组失败，按目标模式和实际传输测试；保守游戏模板可从 1200 字节应用数据开始验证。
 - 普通代理通常改变后端看到的来源；只有服务明确支持时才开启 PROXY protocol。向普通游戏端口强插 PROXY 头会破坏协议。
@@ -358,7 +358,7 @@ frpc 自己负责活进程内的连接重试；Supervisor 只负责进程退出�
 
 ```text
 安装目录（管理员可写，普通用户不可改）
-  TmkNetworkLAN.exe
+  TLAN.exe
   wintun.dll
   runtime/frp/0.71.1/windows-amd64/frpc.exe
   runtime/frp/0.71.1/manifest.json
@@ -565,7 +565,7 @@ type MeshLease struct {
 
 ### 11.1 必须增加 FRPS
 
-只有内置 frpc 还不能提供公网穿透，现有 tmknetworklan-server 的 HTTP Upgrade 中继不理解 FRP 协议。建议在同一 VPS 上增加独立 frps 二进制、独立 systemd unit 和独立服务账户；由安装/部署工具统一管理。不要把 frps 代码直接塞进现有 control.Server，也不要把 FRP 原始 TCP 数据发到当前 /api/v1/relay/stream。
+只有内置 frpc 还不能提供公网穿透，现有 TLAN-server 的 HTTP Upgrade 中继不理解 FRP 协议。建议在同一 VPS 上增加独立 frps 二进制、独立 systemd unit 和独立服务账户；由安装/部署工具统一管理。不要把 frps 代码直接塞进现有 control.Server，也不要把 FRP 原始 TCP 数据发到当前 /api/v1/relay/stream。
 
 | 服务 | 建议监听 | 说明 |
 | --- | --- | --- |
@@ -605,7 +605,7 @@ log.level = "info"
 
 allowPorts 是服务端可发布端口的总范围，不等于每用户资源所有权；maxPortsPerClient 也不能取代账户级配额和连接限流。TLS 证书应包含实际 FRP 域名 SAN。未配置 dashboard/vhost/KCP/QUIC 等功能就不额外开放它们的端口。参数需用固定版本 frps verify/启动验证，不能只凭示例判断上线可用。[服务端参数文档](https://gofrp.org/en/docs/reference/server-configures/)、[固定版本完整配置](https://raw.githubusercontent.com/fatedier/frp/v0.71.1/conf/frps_full_example.toml)。
 
-建议部署布局：/opt/tlan-frp/<version>/frps、/etc/tlan-frp/frps.toml、/var/lib/tlan-frp/，unit 名 tlan-frps.service，独立账户 tlan-frp。配置/密钥仅服务账户及管理员读取；高端口不需要 root/CAP_NET_ADMIN。资源限制按压测设置，日志轮转和磁盘上限必须启用；默认不设 DependsOn=tmknetworklan.service 导致组网维护时 FRP 必停。托管授权服务的可用性策略另外声明。
+建议部署布局：/opt/tlan-frp/<version>/frps、/etc/tlan-frp/frps.toml、/var/lib/tlan-frp/，unit 名 tlan-frps.service，独立账户 tlan-frp。配置/密钥仅服务账户及管理员读取；高端口不需要 root/CAP_NET_ADMIN。资源限制按压测设置，日志轮转和磁盘上限必须启用；默认不设 DependsOn=TLAN.service 导致组网维护时 FRP 必停。托管授权服务的可用性策略另外声明。
 
 ### 11.3 Caddy、域名和 HTTP/HTTPS
 
@@ -622,7 +622,7 @@ allowPorts 是服务端可发布端口的总范围，不等于每用户资源所
 
 ### 11.4 配置兼容与部署回滚
 
-现有 tnlan-config.yml 使用严格未知字段检查；不能直接给旧服务加入 frp: 字段，否则旧版会拒绝启动。P1 保持独立 frps.toml，P2 先升级 TLAN 配置 schema/迁移代码再增加托管字段。新增状态文件或版本化持久化结构，不覆盖现有 state.json 的成员/IP 信息。
+现有 tlan-config.yml 使用严格未知字段检查；不能直接给旧服务加入 frp: 字段，否则旧版会拒绝启动。P1 保持独立 frps.toml，P2 先升级 TLAN 配置 schema/迁移代码再增加托管字段。新增状态文件或版本化持久化结构，不覆盖现有 state.json 的成员/IP 信息。
 
 部署顺序：备份非敏感配置和受保护凭据 → 检查版本/哈希 → 校验证书、端口和配置 → 启动授权适配（如启用） → 启动 FRPS → 本地健康检查 → 外部 FRPC 注册和真实业务探测 → 发布客户端。失败时只回滚 FRP 服务，不重建现有网络。
 

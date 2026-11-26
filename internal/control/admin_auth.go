@@ -173,7 +173,7 @@ func (a *adminAuth) login(w http.ResponseWriter, r *http.Request) {
 	a.mu.Unlock()
 	a.resetLoginFailures(r)
 	http.SetCookie(w, &http.Cookie{
-		Name: adminSessionCookie, Value: sessionID, Path: "/admin", MaxAge: int(adminSessionTTL.Seconds()),
+		Name: adminSessionCookie, Value: sessionID, Path: "/", MaxAge: int(adminSessionTTL.Seconds()),
 		HttpOnly: true, Secure: a.secure, SameSite: http.SameSiteStrictMode,
 	})
 	writeJSON(w, http.StatusOK, map[string]string{"csrf_token": csrf})
@@ -190,7 +190,7 @@ func (a *adminAuth) logout(w http.ResponseWriter, r *http.Request) {
 		delete(a.sessions, adminSessionKey(cookie.Value))
 		a.mu.Unlock()
 	}
-	http.SetCookie(w, &http.Cookie{Name: adminSessionCookie, Value: "", Path: "/admin", MaxAge: -1, HttpOnly: true, Secure: a.secure, SameSite: http.SameSiteStrictMode})
+	http.SetCookie(w, &http.Cookie{Name: adminSessionCookie, Value: "", Path: "/", MaxAge: -1, HttpOnly: true, Secure: a.secure, SameSite: http.SameSiteStrictMode})
 	w.WriteHeader(http.StatusNoContent)
 }
 

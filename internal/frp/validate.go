@@ -714,9 +714,10 @@ func ValidateServer(server Server) error {
 		return err
 	}
 	if server.TrustedCAPath == "" {
-		return unsupported("a trusted CA file is required; insecure certificate verification is never enabled")
-	}
-	if !filepath.IsAbs(server.TrustedCAPath) {
+		if !server.UseSystemCA {
+			return unsupported("a trusted CA file is required; insecure certificate verification is never enabled")
+		}
+	} else if !filepath.IsAbs(server.TrustedCAPath) {
 		return unsupported("trusted CA path must be absolute")
 	}
 	if server.CredentialRef == "" || !identifierValid(server.CredentialRef) {
@@ -761,8 +762,10 @@ func ValidateRunInputs(cfg Config, token string) error {
 	if strings.ContainsAny(token, "\x00\r\n") {
 		return codedError(CodeAuthRejected, "FRP token contains an invalid control character")
 	}
-	if err := ValidateCAFile(cfg.Profile.Server.TrustedCAPath); err != nil {
-		return withCode(CodeTLSUntrusted, err)
+	if cfg.Profile.Server.TrustedCAPath != "" || !cfg.Profile.Server.UseSystemCA {
+		if err := ValidateCAFile(cfg.Profile.Server.TrustedCAPath); err != nil {
+			return withCode(CodeTLSUntrusted, err)
+		}
 	}
 	return nil
 }
@@ -782,23 +785,32 @@ func ValidateCAFile(path string) error {
 	if err != nil {
 		return fmt.Errorf("read trusted CA: %w", err)
 	}
-	found := false
-	for len(data) > 0 {
-		block, rest := pem.Decode(data)
+	return ValidateCAPEM(data)
+}
+
+// ValidateCAPEM verifies PEM certificate contents without reading from disk.
+func ValidateCAPEM(data []byte) error {
+	if len(data) == 0 || len(data) > MaxCABytes {
+		return fmt.Errorf("trusted CA size must be between 1 and %d bytes", MaxCABytes)
+	}
+	var rest = data
+	var parsed int
+	for len(rest) > 0 {
+		var block *pem.Block
+		block, rest = pem.Decode(rest)
 		if block == nil {
 			break
 		}
-		data = rest
 		if block.Type != "CERTIFICATE" {
-			continue
+			return fmt.Errorf("trusted CA contains unexpected PEM block %q", block.Type)
 		}
 		if _, err := x509.ParseCertificate(block.Bytes); err != nil {
 			return fmt.Errorf("parse trusted CA certificate: %w", err)
 		}
-		found = true
+		parsed++
 	}
-	if !found {
-		return errors.New("trusted CA file contains no PEM certificate")
+	if parsed == 0 {
+		return errors.New("trusted CA file contains no X.509 certificates")
 	}
 	return nil
 }

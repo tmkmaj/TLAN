@@ -22,10 +22,13 @@ func classifyStartupError(message string) error {
 		strings.Contains(lower, "mesh lease"):
 		return codedError(CodeMeshDependencyDown, "%s", message)
 	case strings.Contains(lower, "port not allowed") || strings.Contains(lower, "not allowed") ||
-		strings.Contains(lower, "allowports") || strings.Contains(lower, "port range"):
+		strings.Contains(lower, "allowports") || strings.Contains(lower, "port range") ||
+		strings.Contains(lower, "port denied") || strings.Contains(lower, "not in allowed"):
 		return codedError(CodeRemotePortDenied, "%s", message)
 	case strings.Contains(lower, "port already used") || strings.Contains(lower, "already used") ||
-		strings.Contains(lower, "port is occupied") || strings.Contains(lower, "port occupied"):
+		strings.Contains(lower, "port is occupied") || strings.Contains(lower, "port occupied") ||
+		strings.Contains(lower, "port unavailable") || strings.Contains(lower, "remote_port is already leased") ||
+		strings.Contains(lower, "already leased"):
 		return codedError(CodeRemotePortBusy, "%s", message)
 	case strings.Contains(lower, "bind") && (strings.Contains(lower, "address already in use") ||
 		strings.Contains(lower, "only one usage")):
@@ -43,10 +46,43 @@ func classifyStartupError(message string) error {
 }
 
 func classifyProxyError(message string) error {
-	if strings.TrimSpace(message) == "" {
+	trimmed := strings.TrimSpace(message)
+	if trimmed == "" {
 		return nil
 	}
-	return classifyStartupError(message)
+	lower := strings.ToLower(trimmed)
+	switch {
+	case strings.Contains(lower, "port already used") || strings.Contains(lower, "already used") ||
+		strings.Contains(lower, "port unavailable") || strings.Contains(lower, "port is occupied") ||
+		strings.Contains(lower, "port occupied") || strings.Contains(lower, "address already in use") ||
+		strings.Contains(lower, "only one usage") || strings.Contains(lower, "remote_port is already leased") ||
+		strings.Contains(lower, "already leased") || strings.Contains(lower, "already exists"):
+		return codedError(CodeRemotePortBusy, "%s", trimmed)
+	case strings.Contains(lower, "port not allowed") || strings.Contains(lower, "not allowed") ||
+		strings.Contains(lower, "allowports") || strings.Contains(lower, "port range") ||
+		strings.Contains(lower, "port denied") || strings.Contains(lower, "frp_port_denied"):
+		return codedError(CodeRemotePortDenied, "%s", trimmed)
+	}
+	return classifyStartupError(trimmed)
+}
+
+func classifyLeaseAcquireError(err error) error {
+	if err == nil {
+		return nil
+	}
+	lower := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(lower, "remote_port is already leased") || strings.Contains(lower, "already leased") ||
+		strings.Contains(lower, "port already used") || strings.Contains(lower, "port occupied") ||
+		strings.Contains(lower, "port unavailable"):
+		return withCode(CodeRemotePortBusy, err)
+	case strings.Contains(lower, "port denied") || strings.Contains(lower, "port not allowed") ||
+		strings.Contains(lower, "not in allowed") || strings.Contains(lower, "allowports") ||
+		strings.Contains(lower, "port range"):
+		return withCode(CodeRemotePortDenied, err)
+	default:
+		return withCode(CodeAuthRejected, err)
+	}
 }
 
 func terminalStartupLog(message string) bool {

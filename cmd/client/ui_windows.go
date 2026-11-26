@@ -5,33 +5,41 @@ package main
 import (
 	"fmt"
 	"math"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/lxn/walk"
 	. "github.com/lxn/walk/declarative"
 	"github.com/lxn/win"
+	"github.com/private-radminlan/lanmesh/internal/clientapi"
 	"github.com/private-radminlan/lanmesh/internal/clientui"
 )
 
 var (
-	uiBlue         = walk.RGB(37, 99, 235)
-	uiBlueDeep     = walk.RGB(29, 78, 216)
-	uiBlueHover    = walk.RGB(31, 86, 214)
-	uiBlueSelected = walk.RGB(24, 72, 184)
-	uiBlueSoft     = walk.RGB(235, 242, 255)
-	uiBlueHalo     = walk.RGB(225, 236, 255)
-	uiBlueBorder   = walk.RGB(188, 210, 251)
-	uiInk          = walk.RGB(17, 24, 39)
-	uiMuted        = walk.RGB(107, 114, 128)
-	uiBackground   = walk.RGB(244, 247, 252)
-	uiSidebar      = walk.RGB(255, 255, 255)
-	uiWhite        = walk.RGB(255, 255, 255)
-	uiBorder       = walk.RGB(226, 232, 240)
-	uiBorderStrong = walk.RGB(203, 213, 225)
-	uiTableAlt     = walk.RGB(248, 250, 255)
+	uiBlue         walk.Color
+	uiBlueDeep     walk.Color
+	uiBlueHover    walk.Color
+	uiBlueSelected walk.Color
+	uiBlueSoft     walk.Color
+	uiBlueHalo     walk.Color
+	uiBlueBorder   walk.Color
+	uiInk          walk.Color
+	uiMuted        walk.Color
+	uiBackground   walk.Color
+	uiSidebar      walk.Color
+	uiWhite        walk.Color
+	uiBorder       walk.Color
+	uiBorderStrong walk.Color
+	uiTableAlt     walk.Color
+	uiOnAccent     walk.Color
+	uiFocus        walk.Color
+	uiButtonHover  walk.Color
+	uiButtonDown   walk.Color
+	uiDisabled     walk.Color
+	uiDanger       walk.Color
+	uiWarning      walk.Color
+	uiSuccess      walk.Color
+	uiPowerTrack   walk.Color
 )
 
 const (
@@ -42,9 +50,9 @@ const (
 )
 
 const (
-	appName     = "TmkNetworkLAN"
-	windowTitle = "TmkNetwork - TLAN"
-	appVersion  = "v0.6.0"
+	appName     = "TLAN"
+	windowTitle = "TLAN"
+	appVersion  = "v1.0.0"
 )
 
 type desktopTableModel struct {
@@ -58,11 +66,11 @@ func (m *desktopTableModel) Value(r, c int) interface{} {
 		return ""
 	}
 	value := m.rows[r][c]
-	if c == 2 && value == "在线" && len(m.rows[r]) > 3 && m.rows[r][3] != "—" {
-		return "● 在线 · " + m.rows[r][3]
+	if c == 2 && (value == "在线" || value == "Online") && len(m.rows[r]) > 3 && m.rows[r][3] != "—" {
+		return "● " + value + " · " + m.rows[r][3]
 	}
-	if c == 2 && value == "离线" {
-		return "○ 离线"
+	if c == 2 && (value == "离线" || value == "Offline") {
+		return "○ " + value
 	}
 	return value
 }
@@ -83,146 +91,315 @@ func (m *desktopTableModel) setRows(rows [][]string) {
 	m.PublishRowsReset()
 }
 
-func caption(text string) Label { return Label{Text: text, TextColor: uiMuted, NoPrefix: true} }
+func caption(text string) Label {
+	return Label{Text: text, TextColor: uiMuted, Font: uiFont(9, false), NoPrefix: true}
+}
 func heading(text string) Label {
-	return Label{Text: text, TextColor: uiInk, Font: Font{PointSize: 12, Bold: true}, NoPrefix: true}
+	return Label{Text: text, TextColor: uiInk, Font: uiFont(12, true), NoPrefix: true}
 }
 
-func pageHeader(title, glyph string, actions ...Widget) Composite {
-	children := []Widget{
-		roundView{Composite: Composite{MinSize: Size{Width: 34, Height: 34}, MaxSize: Size{Width: 34, Height: 34}, Background: SolidColorBrush{Color: uiBlueSoft}, Layout: VBox{MarginsZero: true}, Children: []Widget{
-			TextLabel{Text: glyph, TextColor: uiBlue, Font: Font{Family: "Segoe UI Symbol", PointSize: 15, Bold: true}, TextAlignment: AlignHCenterVCenter},
-		}}, fill: uiBlueSoft, radius: 9},
-		Label{Text: title, TextColor: uiInk, Font: Font{Family: "Microsoft YaHei UI", PointSize: 14, Bold: true}, NoPrefix: true},
-		HSpacer{},
-	}
-	children = append(children, actions...)
-	return Composite{Background: SolidColorBrush{Color: uiBackground}, Layout: HBox{MarginsZero: true, Spacing: 10}, Children: children}
-}
-
-func (a *desktop) powerView(assign **walk.ImageView, size int) ImageView {
+func (a *desktop) brandLogoView(size int, bg func() walk.Color) ImageView {
 	image := walk.NewPaintFuncImagePixels(walk.Size{Width: size, Height: size}, func(canvas *walk.Canvas, bounds walk.Rectangle) error {
 		r := win.RECT{Left: int32(bounds.X), Top: int32(bounds.Y), Right: int32(bounds.X + bounds.Width), Bottom: int32(bounds.Y + bounds.Height)}
-		fillNative(canvas.HDC(), r, uiWhite)
-		c := newSmoothCanvas(canvas.HDC())
-		c.power(r, a.powerState, false)
-		c.dispose()
-		return c.err
+		return drawBufferedSmooth(canvas.HDC(), r, bg(), func(c *smoothCanvas, local win.RECT) {
+			c.brandEmblem(local)
+		})
 	})
 	return ImageView{
+		Image:   image,
+		MinSize: Size{Width: size, Height: size},
+		MaxSize: Size{Width: size, Height: size},
+		Mode:    ImageViewModeIdeal,
+	}
+}
+
+func (a *desktop) joinBlueprintView(width, height int) ImageView {
+	image := walk.NewPaintFuncImagePixels(walk.Size{Width: width, Height: height}, func(canvas *walk.Canvas, bounds walk.Rectangle) error {
+		r := win.RECT{Left: int32(bounds.X), Top: int32(bounds.Y), Right: int32(bounds.X + bounds.Width), Bottom: int32(bounds.Y + bounds.Height)}
+		return drawBufferedSmooth(canvas.HDC(), r, uiSidebar, func(c *smoothCanvas, local win.RECT) {
+			c.joinBlueprintAnimated(local, a.animPhase)
+		})
+	})
+	return ImageView{
+		AssignTo: &a.joinBlueprint,
+		Image:    image,
+		MinSize:  Size{Width: width, Height: height},
+		MaxSize:  Size{Width: width, Height: height},
+		Mode:     ImageViewModeIdeal,
+	}
+}
+
+func (a *desktop) powerView(assign **walk.ImageView, width, height int) clickableImageView {
+	image := walk.NewPaintFuncImagePixels(walk.Size{Width: width, Height: height}, func(canvas *walk.Canvas, bounds walk.Rectangle) error {
+		r := win.RECT{Left: int32(bounds.X), Top: int32(bounds.Y), Right: int32(bounds.X + bounds.Width), Bottom: int32(bounds.Y + bounds.Height)}
+		return drawBufferedSmooth(canvas.HDC(), r, uiWhite, func(c *smoothCanvas, local win.RECT) {
+			c.powerAnimated(local, a.powerState, a.powerHover, a.powerGlow, a.animPhase)
+		})
+	})
+	return clickableImageView{ImageView: ImageView{
 		AssignTo:      assign,
 		Image:         image,
-		MinSize:       Size{Width: size, Height: size},
-		MaxSize:       Size{Width: size, Height: size},
+		MinSize:       Size{Width: width, Height: height},
+		MaxSize:       Size{Width: width, Height: height},
 		Mode:          ImageViewModeIdeal,
-		ToolTipText:   "点击开启或关闭虚拟网络",
-		Accessibility: Accessibility{Name: "虚拟网络电源状态", Description: "点击圆形图标开启或关闭虚拟网络"},
+		Accessibility: Accessibility{Name: tr("虚拟网络开关", "Virtual LAN Switch"), Description: tr("点击开启或关闭虚拟局域网", "Click to toggle Virtual LAN")},
+		OnMouseMove: func(_, _ int, _ walk.MouseButton) {
+			a.ensureAnimLoop()
+		},
 		OnMouseDown: func(_, _ int, button walk.MouseButton) {
 			if button == walk.LeftButton {
 				a.togglePower()
 			}
 		},
-	}
-}
-
-func loadApplicationLogo() walk.Image {
-	candidates := []string{}
-	if executable, err := os.Executable(); err == nil {
-		candidates = append(candidates, filepath.Join(filepath.Dir(executable), "tmknetworklan-icon.png"))
-	}
-	candidates = append(candidates, filepath.Join("assets", "branding", "tmknetworklan-icon.png"))
-	for _, path := range candidates {
-		if _, err := os.Stat(path); err != nil {
-			continue
-		}
-		image, err := walk.NewImageFromFileForDPI(path, 96)
-		if err == nil {
-			return image
-		}
-	}
-	return nil
+	}}
 }
 
 func (a *desktop) build() error {
 	if err := initSmoothDrawing(); err != nil {
 		return err
 	}
+	if a.serverProbe == nil {
+		a.serverProbe = newServerProbeHistory(serverProbeCapacity)
+	}
+	a.animPhase = 0.18
+	a.animationsEnabled = !a.smokeMode
+	setUIAnimationsEnabled(a.animationsEnabled)
 	icon, err := walk.NewIconFromResource("APP")
 	if err != nil {
 		return fmt.Errorf("load application icon: %w", err)
 	}
 	a.appIcon = icon
-	a.logoImage = loadApplicationLogo()
 	a.peerModel = &desktopTableModel{}
 	a.initializeFRPUI()
 	a.initializeTrayActions()
 	name := a.identity.DisplayName
 	if name == "" {
-		name = "我的电脑"
+		name = tr("我的电脑", "My PC")
 	}
 
-	join := actionButton(&a.joinButton, "加入网络", true, 0, a.join)
-	join.MinSize = Size{Width: 380, Height: 44}
-	join.MaxSize = Size{Height: 44}
-	join.Font = Font{Family: "Microsoft YaHei UI", PointSize: 11, Bold: true}
-	frpEntry := actionButton(&a.frpEntryButton, "配置内网穿透", false, 0, a.openFRP)
-	frpEntry.MinSize = Size{Width: 380, Height: 40}
-	frpEntry.MaxSize = Size{Height: 40}
-	joinCard := roundView{Composite: Composite{MinSize: Size{Width: 460}, MaxSize: Size{Width: 460}, Background: SolidColorBrush{Color: uiWhite}, Layout: VBox{Margins: Margins{Left: 40, Top: 34, Right: 40, Bottom: 32}, Spacing: 14}, Children: []Widget{
-		ImageView{Image: a.logoImage, MinSize: Size{Width: 64, Height: 64}, MaxSize: Size{Width: 64, Height: 64}, Mode: ImageViewModeShrink, Alignment: AlignHCenterVCenter},
-		Label{Text: "加入虚拟网卡组网", TextColor: uiInk, Font: Font{PointSize: 17, Bold: true}, TextAlignment: AlignCenter, NoPrefix: true},
-		TextLabel{Text: "输入熟人分享的入网令牌，设备会自动分配虚拟 IP。", TextColor: uiMuted, MinSize: Size{Width: 380}, TextAlignment: AlignHCenterVCenter},
-		tokenInputView{assign: &a.code, value: &a.token, submit: a.join},
-		join,
-		frpEntry,
-		Label{Text: "输入令牌验证身份后，才可配置端口映射；令牌仅由当前 Windows 用户加密保存", TextColor: uiMuted, Font: Font{PointSize: 8}, TextAlignment: AlignCenter, NoPrefix: true},
-	}}, fill: uiWhite, radius: 16, border: borderColor(uiBorder)}
-	joinPage := Composite{AssignTo: &a.joinPage, StretchFactor: 1, Background: SolidColorBrush{Color: uiBackground}, Layout: VBox{Margins: Margins{Left: 28, Top: 28, Right: 28, Bottom: 28}, SpacingZero: true}, Children: []Widget{
+	savedSTUN := ""
+	if savedBase, _ := normalizeServerURL(a.settings.ServerURL); a.api != nil && savedBase == a.api.BaseURL {
+		savedSTUN = a.settings.STUNServer
+		if derived, err := STUNAddressForServer(savedBase); err == nil && (savedSTUN == "" || savedSTUN == derived) {
+			a.stunAuto = true
+		}
+	}
+	if a.settings.ServerURL == "" {
+		a.stunAuto = true
+	}
+	serverValue := bundledServerURL
+	if a.api != nil && a.api.BaseURL != "" {
+		serverValue = a.api.BaseURL
+	}
+
+	var joinFeat1, joinFeat2, joinFeat3 *walk.Label
+	var joinTitleLabel, joinServerLabel, joinSTUNLabel, joinUserLabel, joinKeyLabel *walk.Label
+	var powerLocalIPLabel, powerUserLabel, powerTrafficLabel, membersHeading, serverMetricsHeading *walk.Label
+
+	join := heroButton(&a.joinButton, tr("立即登录", "Sign In"), 0, a.join)
+	join.MinSize = Size{Width: 400, Height: 40}
+
+	advanced := compactButton(&a.advancedButton, tr("STUN 设置", "STUN"), btnGhost, 96, a.toggleAdvancedConnection)
+	joinThemeButton := compactButton(&a.joinThemeButton, tr("切换深色", "Dark"), btnSecondary, 82, a.cycleTheme)
+	joinLangButton := compactButton(&a.joinLangButton, tr("English", "中文"), btnSecondary, 74, a.toggleLanguage)
+
+	serverInput := textInputView{
+		assign:     &a.serverInput,
+		text:       displayServerEndpoint(serverValue),
+		cue:        tr("例如 203.0.113.10:8443（默认 HTTPS）", "e.g. 203.0.113.10:8443 (HTTPS)"),
+		accessible: tr("服务器地址", "Server Address"),
+		maxLength:  512,
+		submit:     a.join,
+		changed:    a.updateSTUNCue,
+	}
+	stunInput := textInputView{
+		assign:     &a.stunInput,
+		text:       savedSTUN,
+		cue:        tr("留空自动跟随服务器", "Auto from server host if empty"),
+		accessible: tr("STUN 地址", "STUN Address"),
+		maxLength:  256,
+		submit:     a.join,
+		changed:    a.markSTUNInput,
+	}
+	usernameInput := textInputView{
+		assign:     &a.usernameInput,
+		text:       name,
+		cue:        tr("输入自定义用户名", "Enter custom username"),
+		accessible: tr("用户名", "Username"),
+		maxLength:  64,
+		submit:     a.join,
+	}
+
+	joinLeftPane := roundView{Composite: Composite{MinSize: Size{Width: 286}, MaxSize: Size{Width: 286}, Background: SolidColorBrush{Color: uiSidebar}, Layout: VBox{Margins: Margins{Left: 20, Top: 20, Right: 20, Bottom: 18}, Spacing: 10}, Children: []Widget{
+		Composite{Background: SolidColorBrush{Color: uiSidebar}, Layout: HBox{MarginsZero: true, Spacing: 10}, Children: []Widget{
+			a.brandLogoView(38, func() walk.Color { return uiSidebar }),
+			Label{Text: appName, TextColor: uiInk, Font: uiFont(12, true), NoPrefix: true},
+			HSpacer{},
+		}},
+		VSpacer{Size: 2},
+		a.joinBlueprintView(242, 174),
+		VSpacer{Size: 2},
+		Label{AssignTo: &joinFeat1, Text: tr("· 普通密钥：加入虚拟局域网与端口映射", "· Join Key: Join LAN & port mapping"), TextColor: uiInk, Font: uiFont(9, false), NoPrefix: true},
+		Label{AssignTo: &joinFeat2, Text: tr("· 管理员密钥：解锁成员与端口管理", "· Admin Token: Unlock member management"), TextColor: uiInk, Font: uiFont(9, false), NoPrefix: true},
+		Label{AssignTo: &joinFeat3, Text: tr("· 优先 P2P 直连，受限时自动中继", "· P2P direct first, auto relay fallback"), TextColor: uiInk, Font: uiFont(9, false), NoPrefix: true},
 		VSpacer{StretchFactor: 1},
-		Composite{Layout: HBox{MarginsZero: true}, Children: []Widget{HSpacer{}, joinCard, HSpacer{}}},
+		Composite{Background: SolidColorBrush{Color: uiSidebar}, Layout: HBox{MarginsZero: true, Spacing: 6}, Children: []Widget{
+			Label{Text: appVersion, TextColor: uiMuted, Font: uiMonoFont(8, false), NoPrefix: true},
+			HSpacer{},
+			joinLangButton,
+			joinThemeButton,
+		}},
+	}}, fill: uiSidebar, radius: 10, border: borderColor(uiBorder), hud: false}
+
+	joinRightPane := Composite{StretchFactor: 1, Background: SolidColorBrush{Color: uiWhite}, Layout: VBox{Margins: Margins{Left: 30, Top: 22, Right: 30, Bottom: 20}, Spacing: 8}, Children: []Widget{
+		Label{AssignTo: &joinTitleLabel, Text: tr("登录私有网络", "Sign In"), TextColor: uiInk, Font: uiFont(16, true), NoPrefix: true},
+		VSpacer{Size: 2},
+		Composite{Background: SolidColorBrush{Color: uiWhite}, Layout: HBox{MarginsZero: true, Spacing: 8}, Children: []Widget{
+			Label{AssignTo: &joinServerLabel, Text: tr("服务器地址 (IP:端口)", "Server Address (Host:Port)"), TextColor: uiInk, Font: uiFont(9, true), NoPrefix: true},
+			HSpacer{},
+			advanced,
+		}},
+		serverInput,
+		Composite{AssignTo: &a.advancedPanel, Visible: false, Background: SolidColorBrush{Color: uiWhite}, Layout: VBox{MarginsZero: true, Spacing: 4}, Children: []Widget{
+			Label{AssignTo: &joinSTUNLabel, Text: tr("自定义 STUN 地址（可选）", "Custom STUN Address (Optional)"), TextColor: uiMuted, Font: uiFont(9, false), NoPrefix: true},
+			stunInput,
+		}},
+		Label{AssignTo: &joinUserLabel, Text: tr("用户名", "Username"), TextColor: uiInk, Font: uiFont(9, true), NoPrefix: true},
+		usernameInput,
+		Label{AssignTo: &joinKeyLabel, Text: tr("入网密钥", "Join Key"), TextColor: uiInk, Font: uiFont(9, true), NoPrefix: true},
+		tokenInputView{assign: &a.code, value: &a.token, submit: a.join},
+		VSpacer{StretchFactor: 1},
+		join,
+	}}
+
+	joinCard := roundView{Composite: Composite{MinSize: Size{Width: 780, Height: 470}, MaxSize: Size{Width: 780}, Background: SolidColorBrush{Color: uiWhite}, Layout: HBox{Margins: Margins{Left: 6, Top: 6, Right: 6, Bottom: 6}, Spacing: 6}, Children: []Widget{
+		joinLeftPane,
+		joinRightPane,
+	}}, fill: uiWhite, radius: 14, border: borderColor(uiBorder)}
+
+	joinPage := Composite{AssignTo: &a.joinPage, StretchFactor: 1, Alignment: AlignHNearVNear, Background: SolidColorBrush{Color: uiBackground}, Layout: VBox{Margins: Margins{Left: 28, Top: 20, Right: 28, Bottom: 20}, SpacingZero: true}, Children: []Widget{
+		VSpacer{StretchFactor: 1},
+		Composite{Background: SolidColorBrush{Color: uiBackground}, Layout: HBox{MarginsZero: true}, Children: []Widget{HSpacer{}, joinCard, HSpacer{}}},
 		VSpacer{StretchFactor: 1},
 	}}
 
-	toggleAction := actionButton(&a.toggleButton, "启动网络", true, 178, a.togglePower)
-	membersAction := actionButton(&a.membersButton, "刷新成员", false, 126, a.refreshMembers)
-	powerCard := roundView{Composite: Composite{Background: SolidColorBrush{Color: uiWhite}, Layout: HBox{Margins: Margins{Left: 42, Top: 34, Right: 42, Bottom: 34}, Spacing: 48}, Children: []Widget{
-		Composite{StretchFactor: 1, Background: SolidColorBrush{Color: uiWhite}, Layout: HBox{MarginsZero: true}, Children: []Widget{HSpacer{}, a.powerView(&a.powerVisual, 200), HSpacer{}}},
-		Composite{MinSize: Size{Width: 390}, MaxSize: Size{Width: 390}, Background: SolidColorBrush{Color: uiWhite}, Layout: VBox{MarginsZero: true, Spacing: 10}, Children: []Widget{
-			VSpacer{StretchFactor: 1},
-			Label{AssignTo: &a.offState, Text: "虚拟网络已关闭", TextColor: uiInk, Font: Font{PointSize: 17, Bold: true}, NoPrefix: true, EllipsisMode: EllipsisEnd},
-			TextLabel{AssignTo: &a.offHint, Text: "启动后，加入同一网络的设备可以通过虚拟 IP 互相访问。", TextColor: uiMuted, MinSize: Size{Width: 380}, MaxSize: Size{Height: 52}},
-			Label{AssignTo: &a.offNetwork, Text: a.membership.Network.Name, TextColor: uiBlue, Font: Font{PointSize: 11, Bold: true}, NoPrefix: true, EllipsisMode: EllipsisEnd},
-			VSpacer{Size: 6},
-			Composite{Layout: HBox{MarginsZero: true, Spacing: 10}, Children: []Widget{toggleAction, membersAction, HSpacer{}}},
-			VSpacer{StretchFactor: 1},
-		}},
-	}}, fill: uiWhite, radius: 12, border: borderColor(uiBorder)}
-	powerHeader := pageHeader("虚拟网卡组网", "⚡", actionButton(nil, "连接诊断", false, 88, a.diagnose))
-	powerHeader.Row = 0
-	powerCard.Row = 1
+	copyIPButton := compactButton(&a.copyLocalIPButton, tr("复制 IP", "Copy IP"), btnSecondary, 76, a.copyLocalIP)
+	renameSelfButton := compactButton(&a.renameSelfButton, tr("改名", "Rename"), btnSecondary, 76, a.showRenameSelfDialog)
+	toggleAction := heroButton(&a.toggleButton, tr("连接虚拟网络", "Connect"), 264, a.togglePower)
 
-	localCard := roundView{Composite: Composite{MinSize: Size{Width: 800}, Background: SolidColorBrush{Color: uiWhite}, Layout: HBox{Margins: Margins{Left: 14, Top: 10, Right: 16, Bottom: 10}, Spacing: 12}, Children: []Widget{
-		Composite{MinSize: Size{Width: 4}, MaxSize: Size{Width: 4}, Background: SolidColorBrush{Color: uiBlue}},
-		a.powerView(&a.compactPowerVisual, 52),
-		Composite{StretchFactor: 1, Background: SolidColorBrush{Color: uiWhite}, Layout: VBox{MarginsZero: true, Spacing: 2}, Children: []Widget{
-			Label{AssignTo: &a.deviceName, Text: name, TextColor: uiInk, Font: Font{PointSize: 10, Bold: true}, NoPrefix: true, EllipsisMode: EllipsisEnd},
-			Label{AssignTo: &a.address, Text: a.membership.Member.VirtualIP, Font: Font{Family: "Consolas", PointSize: 17}, TextColor: uiBlue},
-			Label{AssignTo: &a.badge, Text: "● 在线", TextColor: uiBlue, Font: Font{PointSize: 9}},
+	subCard := func(margins Margins, spacing int, children []Widget) roundView {
+		return roundView{
+			Composite: Composite{
+				Background: SolidColorBrush{Color: uiTableAlt},
+				Layout:     VBox{Margins: margins, Spacing: spacing},
+				Children:   children,
+			},
+			fill:   uiTableAlt,
+			radius: 10,
+			border: borderColor(uiBorder),
+			hud:    false,
+		}
+	}
+
+	localIPCard := subCard(Margins{Left: 14, Top: 8, Right: 12, Bottom: 9}, 4, []Widget{
+		Composite{Background: SolidColorBrush{Color: uiTableAlt}, Layout: HBox{MarginsZero: true, Spacing: 6}, Children: []Widget{
+			Label{AssignTo: &powerLocalIPLabel, Text: tr("本机虚拟 IPv4", "Local Virtual IPv4"), TextColor: uiMuted, Font: uiFont(8, false), NoPrefix: true},
+			HSpacer{},
+			Label{AssignTo: &a.badge, Text: "● " + tr("未连接", "Offline"), TextColor: uiMuted, Font: uiFont(8, true), NoPrefix: true},
 		}},
-		HSpacer{},
-		Label{Text: "本机设备", TextColor: uiMuted, Font: Font{PointSize: 9}, NoPrefix: true},
-	}}, fill: uiWhite, radius: 11, border: borderColor(uiBorder)}
-	membersCard := roundView{Composite: Composite{MinSize: Size{Width: 800}, Background: SolidColorBrush{Color: uiWhite}, StretchFactor: 1, Layout: VBox{Margins: Margins{Left: 16, Top: 12, Right: 16, Bottom: 12}, Spacing: 8}, Children: []Widget{
+		Composite{Background: SolidColorBrush{Color: uiTableAlt}, Layout: HBox{MarginsZero: true, Spacing: 8}, Children: []Widget{
+			Label{AssignTo: &a.address, Text: a.membership.Member.VirtualIP, Font: uiMonoFont(15, true), TextColor: uiBlue, NoPrefix: true, EllipsisMode: EllipsisEnd},
+			HSpacer{},
+			copyIPButton,
+		}},
+	})
+
+	localUserCard := subCard(Margins{Left: 14, Top: 8, Right: 12, Bottom: 9}, 4, []Widget{
+		Composite{Background: SolidColorBrush{Color: uiTableAlt}, Layout: HBox{MarginsZero: true}, Children: []Widget{
+			Label{AssignTo: &powerUserLabel, Text: tr("当前用户名", "Username"), TextColor: uiMuted, Font: uiFont(8, false), NoPrefix: true},
+			HSpacer{},
+		}},
+		Composite{Background: SolidColorBrush{Color: uiTableAlt}, Layout: HBox{MarginsZero: true, Spacing: 8}, Children: []Widget{
+			Label{AssignTo: &a.deviceName, Text: name, TextColor: uiInk, Font: uiFont(13, true), NoPrefix: true, EllipsisMode: EllipsisEnd},
+			HSpacer{},
+			renameSelfButton,
+		}},
+	})
+
+	localTrafficCard := subCard(Margins{Left: 14, Top: 8, Right: 12, Bottom: 9}, 4, []Widget{
+		Composite{Background: SolidColorBrush{Color: uiTableAlt}, Layout: HBox{MarginsZero: true}, Children: []Widget{
+			Label{AssignTo: &powerTrafficLabel, Text: tr("上传与下载", "Traffic"), TextColor: uiMuted, Font: uiFont(8, false), NoPrefix: true},
+			HSpacer{},
+		}},
+		Composite{Background: SolidColorBrush{Color: uiTableAlt}, Layout: HBox{MarginsZero: true, Spacing: 0}, Children: []Widget{
+			Label{AssignTo: &a.traffic, Text: formatTrafficSummary(0, 0), TextColor: uiInk, Font: uiMonoFont(10, true), TextAlignment: AlignCenter, NoPrefix: true, EllipsisMode: EllipsisEnd, StretchFactor: 1},
+		}},
+	})
+
+	serverDisplayCard := subCard(Margins{Left: 14, Top: 8, Right: 10, Bottom: 8}, 3, []Widget{
+		Label{AssignTo: &a.serverDisplayTitle, Text: tr("当前连接服务器", "Connected Server"), TextColor: uiMuted, Font: uiFont(8, false), NoPrefix: true},
+		Composite{Background: SolidColorBrush{Color: uiTableAlt}, Layout: HBox{MarginsZero: true, Spacing: 6}, Children: []Widget{
+			Label{AssignTo: &a.serverIdentity, Text: displayEndpointOrDash(serverValue), TextColor: uiInk, Font: uiMonoFont(9, true), NoPrefix: true, EllipsisMode: EllipsisEnd},
+			HSpacer{},
+			eyeButton(&a.powerServerEye, tr("显示或隐藏服务器 IP", "Show or hide server IP"), func() bool { return !a.powerServerHidden }, a.togglePowerServerEye),
+		}},
+	})
+
+	powerCard := roundView{Composite: Composite{MinSize: Size{Width: 300}, MaxSize: Size{Width: 300}, Background: SolidColorBrush{Color: uiWhite}, Layout: VBox{Margins: Margins{Left: 18, Top: 14, Right: 18, Bottom: 14}, Spacing: 8}, Children: []Widget{
 		Composite{Background: SolidColorBrush{Color: uiWhite}, Layout: HBox{MarginsZero: true, Spacing: 8}, Children: []Widget{
-			Label{Text: "成员列表", TextColor: uiInk, Font: Font{PointSize: 11, Bold: true}, NoPrefix: true},
-			Label{AssignTo: &a.networkTitle, Text: a.membership.Network.Name, TextColor: uiBlue, NoPrefix: true, EllipsisMode: EllipsisEnd, StretchFactor: 1},
-			Label{AssignTo: &a.memberCount, TextColor: uiMuted},
-			actionButton(nil, "刷新", false, 62, a.refreshMembers),
-			actionButton(nil, "诊断", false, 62, a.diagnose),
+			Label{AssignTo: &a.offNetwork, Text: a.membership.Network.Name, TextColor: uiInk, Font: uiFont(12, true), NoPrefix: true, EllipsisMode: EllipsisEnd},
+			HSpacer{},
+			Label{AssignTo: &a.offState, Text: tr("未连接", "Offline"), TextColor: uiDanger, Font: uiFont(10, true), NoPrefix: true},
 		}},
-		TableView{AssignTo: &a.peers, Visible: false, Model: a.peerModel, Background: SolidColorBrush{Color: uiWhite}, StretchFactor: 1, MinSize: Size{Height: 150}, CustomRowHeight: 30, CustomHeaderHeight: 28, LastColumnStretched: true, SelectionHiddenWithoutFocus: true, AlternatingRowBG: true, Columns: []TableViewColumn{
-			{Title: "设备", Width: 230}, {Title: "虚拟 IP", Width: 160}, {Title: "连接状态", Width: 210}, {Title: "路径", Hidden: true}, {Title: "延迟", Width: 90, Alignment: AlignFar},
-		}, StyleCell: func(s *walk.CellStyle) {
+		a.powerView(&a.powerVisual, 264, 98),
+		Label{AssignTo: &a.offHint, Visible: false, Text: "", TextColor: uiMuted, Font: uiFont(8, false), NoPrefix: true, EllipsisMode: EllipsisEnd},
+		localIPCard,
+		localUserCard,
+		localTrafficCard,
+		serverDisplayCard,
+		VSpacer{StretchFactor: 1},
+		toggleAction,
+	}}, fill: uiWhite, radius: 12, border: borderColor(uiBorder), hud: false}
+
+	membersRefresh := compactButton(&a.membersButton, tr("刷新", "Refresh"), btnSecondary, 74, a.refreshMembers)
+
+	peersTable := TableView{
+		AssignTo:                    &a.peers,
+		Visible:                     false,
+		Model:                       a.peerModel,
+		Background:                  SolidColorBrush{Color: uiWhite},
+		Font:                        uiFont(9, false),
+		StretchFactor:               1,
+		MinSize:                     Size{Height: 150},
+		CustomRowHeight:             32,
+		CustomHeaderHeight:          28,
+		LastColumnStretched:         true,
+		SelectionHiddenWithoutFocus: true,
+		AlternatingRowBG:            true,
+		OnItemActivated:             a.copySelectedPeerIP,
+		OnMouseUp: func(_, _ int, button walk.MouseButton) {
+			a.handlePeerTableMouseUp(button)
+		},
+		ContextMenuItems: []MenuItem{
+			Action{AssignTo: &a.peerCopyMenuAction, Text: tr("复制虚拟 IP", "Copy Virtual IP"), OnTriggered: a.copySelectedPeerIP},
+			Separator{},
+			Action{AssignTo: &a.peerRefreshMenuAction, Text: tr("刷新成员", "Refresh Members"), OnTriggered: a.refreshMembers},
+		},
+		Columns: []TableViewColumn{
+			{Title: tr("设备", "User / Device"), Width: 156},
+			{Title: tr("虚拟 IP", "Virtual IP"), Width: 132},
+			{Title: tr("连接方式", "Connection"), Width: 126},
+			{Title: tr("路径", "Path"), Hidden: true},
+			{Title: tr("延迟", "Latency"), Width: 78, Alignment: AlignFar},
+		},
+		StyleCell: func(s *walk.CellStyle) {
+			if s.Row() < 0 {
+				titles := []string{tr("设备", "User / Device"), tr("虚拟 IP", "Virtual IP"), tr("连接方式", "Connection"), tr("路径", "Path"), tr("延迟", "Latency")}
+				if s.Col() >= 0 && s.Col() < len(titles) {
+					styleTableHeader(s, titles[s.Col()], s.Col() == 4)
+				}
+				return
+			}
 			s.TextColor = uiInk
 			if s.Row()%2 == 1 {
 				s.BackgroundColor = uiTableAlt
@@ -233,35 +410,89 @@ func (a *desktop) build() error {
 				return
 			}
 			row := a.peerModel.rows[s.Row()]
-			if row[2] == "离线" {
+			switch row[2] {
+			case "离线", "Offline":
 				s.TextColor = uiMuted
-			} else if s.Col() == 1 || s.Col() == 2 || s.Col() == 4 {
-				s.TextColor = uiBlue
+			case "连接中", "Connecting":
+				if s.Col() == 2 {
+					s.TextColor = uiWarning
+				} else if s.Col() == 1 {
+					s.TextColor = uiBlue
+				}
+			default:
+				if s.Col() == 1 {
+					s.TextColor = uiBlue
+				} else if s.Col() == 2 {
+					s.TextColor = uiSuccess
+				}
 			}
+		},
+	}
+
+	connectedArea := Composite{AssignTo: &a.connectedArea, Visible: false, StretchFactor: 1, Background: SolidColorBrush{Color: uiWhite}, Layout: VBox{MarginsZero: true, SpacingZero: true}, Children: []Widget{
+		peersTable,
+	}}
+
+	membersCard := roundView{Composite: Composite{StretchFactor: 1, Background: SolidColorBrush{Color: uiWhite}, Layout: VBox{Margins: Margins{Left: 18, Top: 14, Right: 18, Bottom: 12}, Spacing: 8}, Children: []Widget{
+		Composite{Background: SolidColorBrush{Color: uiWhite}, Layout: HBox{MarginsZero: true, Spacing: 8}, Children: []Widget{
+			Label{AssignTo: &membersHeading, Text: tr("在线成员", "Members"), TextColor: uiInk, Font: uiFont(12, true), NoPrefix: true},
+			Label{AssignTo: &a.memberCount, Text: tr("未连接", "Offline"), TextColor: uiBlue, Font: uiFont(9, true), NoPrefix: true},
+			Label{AssignTo: &a.peerCopyHint, Visible: false, Text: "", TextColor: uiSuccess, Font: uiFont(9, true), NoPrefix: true},
+			HSpacer{},
+			Label{AssignTo: &a.networkTitle, Text: a.membership.Network.Name, TextColor: uiMuted, Font: uiFont(9, false), NoPrefix: true, EllipsisMode: EllipsisEnd},
+			membersRefresh,
 		}},
-		TextLabel{AssignTo: &a.empty, Text: "正在获取网络成员…", TextColor: uiMuted, MinSize: Size{Width: 360, Height: 160}, StretchFactor: 1, TextAlignment: AlignHCenterVCenter},
-	}}, fill: uiWhite, radius: 12, border: borderColor(uiBorder)}
-	membersCard.Composite.StretchFactor = 1
-	membersFooter := Composite{Layout: HBox{MarginsZero: true}, Children: []Widget{
-		Label{AssignTo: &a.traffic, Text: "↑ 0 B    ↓ 0 B", TextColor: uiMuted, StretchFactor: 1},
-		Label{Text: "● 端到端加密", TextColor: uiBlue, Font: Font{PointSize: 9}, NoPrefix: true},
-	}}
-	connectedArea := Composite{AssignTo: &a.connectedArea, Visible: false, MinSize: Size{Width: 800}, Layout: VBox{MarginsZero: true, Spacing: 10}, Children: []Widget{
-		localCard,
-		membersCard,
-		membersFooter,
-	}}
-	connectedArea.Row = 2
-	powerPage := Composite{AssignTo: &a.powerPage, Visible: false, StretchFactor: 1, Background: SolidColorBrush{Color: uiBackground}, Layout: Grid{Columns: 1, Margins: Margins{Left: 20, Top: 16, Right: 20, Bottom: 18}, Spacing: 14}, Children: []Widget{
-		powerHeader,
-		powerCard,
 		connectedArea,
+		Composite{AssignTo: &a.emptyArea, StretchFactor: 1, Background: SolidColorBrush{Color: uiWhite}, Layout: VBox{MarginsZero: true, SpacingZero: true}, Children: []Widget{
+			VSpacer{StretchFactor: 1},
+			Label{AssignTo: &a.empty, Text: tr("尚未连接\r\n连接后将显示成员列表与延迟", "Not connected\r\nConnect to view members and latency"), TextColor: uiMuted, Font: uiFont(9, false), NoPrefix: true, TextAlignment: AlignCenter},
+			VSpacer{StretchFactor: 1},
+		}},
+	}}, fill: uiWhite, radius: 12, border: borderColor(uiBorder), hud: false}
+
+	metricPill := func(fill, brd walk.Color, child Widget) roundView {
+		return roundView{
+			Composite: Composite{
+				MinSize:    Size{Height: 24},
+				MaxSize:    Size{Height: 24},
+				Background: SolidColorBrush{Color: fill},
+				Layout:     HBox{Margins: Margins{Left: 9, Top: 3, Right: 9, Bottom: 3}, SpacingZero: true},
+				Children:   []Widget{child},
+			},
+			fill:   fill,
+			radius: 6,
+			border: borderColor(brd),
+			hud:    false,
+		}
+	}
+
+	serverMetricsCard := roundView{Composite: Composite{MinSize: Size{Height: 168}, MaxSize: Size{Height: 184}, Background: SolidColorBrush{Color: uiWhite}, Layout: VBox{Margins: Margins{Left: 18, Top: 14, Right: 18, Bottom: 12}, Spacing: 10}, Children: []Widget{
+		Composite{Background: SolidColorBrush{Color: uiWhite}, Layout: HBox{MarginsZero: true, Spacing: 6}, Children: []Widget{
+			Label{AssignTo: &serverMetricsHeading, Text: tr("服务器连接质量", "Server Link Quality"), TextColor: uiInk, Font: uiFont(11, true), NoPrefix: true},
+			metricPill(uiBlueSoft, uiBorder, Label{AssignTo: &a.serverProbeModeLabel, Text: tr("待检测", "Pending"), TextColor: uiBlue, Font: uiFont(9, true), NoPrefix: true}),
+			HSpacer{},
+			metricPill(uiTableAlt, uiBorder, Label{AssignTo: &a.serverLatencyLabel, Text: tr("延迟 --", "RTT --"), TextColor: uiMuted, Font: uiFont(9, true), NoPrefix: true}),
+			metricPill(uiTableAlt, uiBorder, Label{AssignTo: &a.serverAvgLabel, Text: tr("均值 --", "Avg --"), TextColor: uiMuted, Font: uiFont(9, false), NoPrefix: true}),
+			metricPill(uiTableAlt, uiBorder, Label{AssignTo: &a.serverLossLabel, Text: tr("丢包 --", "Loss --"), TextColor: uiMuted, Font: uiFont(9, true), NoPrefix: true}),
+		}},
+		a.serverChartWidget(),
+	}}, fill: uiWhite, radius: 12, border: borderColor(uiBorder), hud: false}
+
+	rightColumn := Composite{StretchFactor: 1, Background: SolidColorBrush{Color: uiBackground}, Layout: VBox{MarginsZero: true, Spacing: 12}, Children: []Widget{
+		membersCard,
+		serverMetricsCard,
 	}}
+
+	powerPage := Composite{AssignTo: &a.powerPage, Visible: false, StretchFactor: 1, Background: SolidColorBrush{Color: uiBackground}, Layout: HBox{Margins: Margins{Left: 20, Top: 16, Right: 20, Bottom: 18}, Spacing: 14}, Children: []Widget{
+		powerCard,
+		rightColumn,
+	}}
+
 	frpPage := a.buildFRPPage()
 	a.admin = newAdminPanel(a)
 	adminPage := a.admin.view()
 
-	adminNav := navButton(&a.railAdmin, "admin", "管理面板", func() bool { return a.page == pageAdmin && a.railSelection == 0 }, func() {
+	adminNav := navButton(&a.railAdmin, "admin", tr("管理面板", "Admin Panel"), func() bool { return a.page == pageAdmin && a.railSelection == 0 }, func() {
 		if !a.adminMode {
 			return
 		}
@@ -270,80 +501,249 @@ func (a *desktop) build() error {
 		a.showPage(pageAdmin)
 	})
 	adminNav.Visible = a.adminMode
-	moreNav := navButton(&a.railMore, "more", "更多操作", nil, a.showRailMenu)
-	moreNav.ContextMenuItems = []MenuItem{
-		Action{Text: "连接诊断", OnTriggered: a.diagnose},
+	settingsNav := navButton(&a.railMore, "settings", tr("设置", "Settings"), nil, a.showRailMenu)
+	settingsNav.ContextMenuItems = []MenuItem{
+		Action{AssignTo: &a.menuSettingsAction, Text: tr("常规设置", "Settings"), OnTriggered: a.showClientSettings},
+		Action{AssignTo: &a.menuAboutAction, Text: tr("关于 ", "About ") + appName, OnTriggered: a.showVersionInfo},
+		Action{AssignTo: &a.menuSwitchAction, Text: tr("切换服务器 / 密钥", "Switch Server / Key"), OnTriggered: a.changeCode},
 		Separator{},
-		Action{Text: "客户端设置", OnTriggered: a.showClientSettings},
-		Action{Text: "更换入网令牌", OnTriggered: a.changeCode},
-		Action{Text: "退出当前网络", OnTriggered: a.leaveNetwork},
+		Action{AssignTo: &a.menuLeaveAction, Text: tr("退出当前网络", "Leave Network"), OnTriggered: a.leaveNetwork},
 	}
-	rail := Composite{MinSize: Size{Width: 72}, MaxSize: Size{Width: 72}, Alignment: AlignHNearVNear, Background: SystemColorBrush{Color: walk.SysColorWindow}, Layout: VBox{Margins: Margins{Left: 13, Top: 16, Right: 13, Bottom: 14}, SpacingZero: true}, Children: []Widget{
-		roundView{Composite: Composite{MinSize: Size{Width: 46, Height: 46}, MaxSize: Size{Width: 46, Height: 46}, Background: SolidColorBrush{Color: uiBlueSoft}, Layout: VBox{MarginsZero: true}, Children: []Widget{
-			ImageView{Image: a.logoImage, MinSize: Size{Width: 38, Height: 38}, MaxSize: Size{Width: 38, Height: 38}, Mode: ImageViewModeShrink, Alignment: AlignHCenterVCenter},
-		}}, fill: uiBlueSoft, radius: 12},
-		VSpacer{Size: 18},
-		navButton(&a.railPower, "power", "虚拟网卡组网", func() bool { return a.page == pagePower && a.railSelection == 0 }, func() {
+
+	brandZone := Composite{MinSize: Size{Width: 236}, MaxSize: Size{Width: 236}, Background: SolidColorBrush{Color: uiSidebar}, Layout: HBox{MarginsZero: true, Spacing: 10}, Children: []Widget{
+		a.brandLogoView(36, func() walk.Color { return uiSidebar }),
+		Composite{Background: SolidColorBrush{Color: uiSidebar}, Layout: VBox{MarginsZero: true, Spacing: 1}, Children: []Widget{
+			Label{Text: appName, TextColor: uiInk, Font: uiFont(10, true), NoPrefix: true},
+			Label{Text: appVersion, TextColor: uiMuted, Font: uiMonoFont(8, false), NoPrefix: true},
+		}},
+		HSpacer{StretchFactor: 1},
+		Composite{MinSize: Size{Width: 1, Height: 24}, MaxSize: Size{Width: 1, Height: 24}, Background: SolidColorBrush{Color: uiBorderStrong}},
+	}}
+	centerNavZone := Composite{StretchFactor: 1, Background: SolidColorBrush{Color: uiSidebar}, Layout: HBox{MarginsZero: true, Spacing: 8}, Children: []Widget{
+		HSpacer{StretchFactor: 1},
+		navButton(&a.railPower, "power", tr("虚拟局域网", "Virtual LAN"), func() bool { return a.page == pagePower && a.railSelection == 0 }, func() {
 			a.railSelection = 0
 			a.invalidateRail()
 			a.showPage(pagePower)
 		}),
-		VSpacer{Size: 6},
-		navButton(&a.railFRP, "frp", "内网穿透", func() bool { return a.page == pageFRP && a.railSelection == 0 }, a.openFRP),
-		VSpacer{Size: 6},
-		VSpacer{Size: 6},
+		navButton(&a.railFRP, "frp", tr("端口映射", "Port Mapping"), func() bool { return a.page == pageFRP && a.railSelection == 0 }, a.openFRP),
 		adminNav,
-		VSpacer{StretchFactor: 1},
-		Composite{MinSize: Size{Width: 28, Height: 1}, MaxSize: Size{Width: 28, Height: 1}, Background: SystemColorBrush{Color: walk.SysColorBtnFace}, Alignment: AlignHCenterVNear},
-		VSpacer{Size: 12},
-		navButton(&a.railVersion, "info", "版本信息", func() bool { return a.railSelection == 2 }, a.openVersionInfo),
-		VSpacer{Size: 6},
-		moreNav,
-		VSpacer{Size: 10},
-		themeLabelView{Label: Label{Text: appVersion, TextColor: navSecondaryTextColor(), Font: Font{PointSize: 8}, TextAlignment: AlignCenter, NoPrefix: true}, color: navSecondaryTextColor},
+		HSpacer{StretchFactor: 1},
 	}}
+	utilityZone := Composite{MinSize: Size{Width: 236}, MaxSize: Size{Width: 236}, Background: SolidColorBrush{Color: uiSidebar}, Layout: HBox{MarginsZero: true, Spacing: 8}, Children: []Widget{
+		HSpacer{StretchFactor: 1},
+		navButton(&a.railDiag, "diag", tr("连接诊断", "Diagnostics"), nil, a.diagnose),
+		settingsNav,
+	}}
+	topDeck := Composite{MinSize: Size{Height: 62}, MaxSize: Size{Height: 62}, Background: SolidColorBrush{Color: uiSidebar}, Layout: HBox{Margins: Margins{Left: 20, Top: 10, Right: 20, Bottom: 10}, Spacing: 10}, Children: []Widget{
+		brandZone,
+		centerNavZone,
+		utilityZone,
+	}}
+	deckDivider := Composite{
+		AssignTo:   &a.deckScanView,
+		MinSize:    Size{Height: 1},
+		MaxSize:    Size{Height: 1},
+		Background: SolidColorBrush{Color: uiBorder},
+	}
 	contentHost := Composite{StretchFactor: 1, Background: SolidColorBrush{Color: uiBackground}, Layout: VBox{MarginsZero: true, SpacingZero: true, Alignment: AlignHNearVNear}, Children: []Widget{powerPage, frpPage, adminPage}}
-	railDivider := Composite{MinSize: Size{Width: 1}, MaxSize: Size{Width: 1}, Background: SystemColorBrush{Color: walk.SysColorBtnFace}}
-	shellPage := Composite{AssignTo: &a.shellPage, Visible: false, StretchFactor: 1, Background: SolidColorBrush{Color: uiBackground}, Layout: HBox{MarginsZero: true, SpacingZero: true, Alignment: AlignHNearVNear}, Children: []Widget{rail, railDivider, contentHost}}
+	shellPage := Composite{AssignTo: &a.shellPage, Visible: false, StretchFactor: 1, Background: SolidColorBrush{Color: uiBackground}, Layout: VBox{MarginsZero: true, SpacingZero: true, Alignment: AlignHNearVNear}, Children: []Widget{topDeck, deckDivider, contentHost}}
 
-	err = (MainWindow{AssignTo: &a.window, Title: windowTitle, Icon: icon, Visible: !a.startHidden, Size: Size{Width: 1020, Height: 720}, MinSize: Size{Width: 940, Height: 620}, Font: Font{Family: "Microsoft YaHei UI", PointSize: 10}, Background: SolidColorBrush{Color: uiBackground}, Layout: VBox{MarginsZero: true, SpacingZero: true}, Children: []Widget{
+	err = (MainWindow{AssignTo: &a.window, Title: windowTitle, Icon: icon, Visible: !a.startHidden, Size: Size{Width: 1020, Height: 720}, MinSize: Size{Width: 940, Height: 620}, OnSizeChanged: a.handleWindowResized, Font: uiFont(10, false), Background: SolidColorBrush{Color: uiBackground}, Layout: VBox{MarginsZero: true, SpacingZero: true, Alignment: AlignHNearVNear}, Children: []Widget{
 		joinPage, shellPage,
 		Composite{AssignTo: &a.notice, Visible: false, Background: SolidColorBrush{Color: uiBlueSoft}, Layout: HBox{Margins: Margins{Left: 22, Top: 12, Right: 22, Bottom: 12}, Spacing: 12}, Children: []Widget{
-			Label{Text: "!", TextColor: uiWhite, Font: Font{Family: "Segoe UI", PointSize: 10, Bold: true}, TextAlignment: AlignCenter, MinSize: Size{Width: 22, Height: 22}, MaxSize: Size{Width: 22, Height: 22}, Background: SolidColorBrush{Color: uiBlue}, NoPrefix: true},
-			Composite{StretchFactor: 1, Layout: VBox{MarginsZero: true, Spacing: 2}, Children: []Widget{
-				Label{AssignTo: &a.noticeTitle, TextColor: uiInk, Font: Font{Bold: true, PointSize: 10}},
-				TextLabel{AssignTo: &a.noticeMessage, MinSize: Size{Width: 320}, TextColor: uiMuted},
+			Label{Text: "!", TextColor: uiOnAccent, Font: uiFont(10, true), TextAlignment: AlignCenter, MinSize: Size{Width: 22, Height: 22}, MaxSize: Size{Width: 22, Height: 22}, Background: SolidColorBrush{Color: uiBlue}, NoPrefix: true},
+			Composite{StretchFactor: 1, Background: SolidColorBrush{Color: uiBlueSoft}, Layout: VBox{MarginsZero: true, Spacing: 2}, Children: []Widget{
+				Label{AssignTo: &a.noticeTitle, TextColor: uiInk, Font: uiFont(10, true), NoPrefix: true},
+				Label{AssignTo: &a.noticeMessage, MinSize: Size{Width: 320}, TextColor: uiMuted, Font: uiFont(9, false), NoPrefix: true, EllipsisMode: EllipsisEnd},
 			}},
-			actionButton(nil, "详情", false, 56, a.showErrorDetails),
-			actionButton(nil, "收起", false, 56, a.dismissNotice),
+			compactButton(&a.noticeDetailButton, tr("详情", "Details"), btnSecondary, 74, a.showErrorDetails),
+			compactButton(&a.noticeDismissButton, tr("收起", "Dismiss"), btnGhost, 74, a.dismissNotice),
 		}},
 		Label{AssignTo: &a.status, Visible: false},
 	}}).Create()
 	if err != nil {
 		icon.Dispose()
-		if a.logoImage != nil {
-			a.logoImage.Dispose()
-		}
 		return err
 	}
-	a.window.Disposing().Attach(a.disposeTray)
+
+	a.onLang(func() {
+		if a.window != nil && !a.window.IsDisposed() {
+			_ = a.window.SetTitle(windowTitle)
+		}
+		if joinFeat1 != nil {
+			_ = joinFeat1.SetText(tr("· 普通密钥：加入虚拟局域网与端口映射", "· Join Key: Join LAN & port mapping"))
+		}
+		if joinFeat2 != nil {
+			_ = joinFeat2.SetText(tr("· 管理员密钥：解锁成员与端口管理", "· Admin Token: Unlock member management"))
+		}
+		if joinFeat3 != nil {
+			_ = joinFeat3.SetText(tr("· 优先 P2P 直连，受限时自动中继", "· P2P direct first, auto relay fallback"))
+		}
+		if joinTitleLabel != nil {
+			_ = joinTitleLabel.SetText(tr("登录私有网络", "Sign In"))
+		}
+		if joinServerLabel != nil {
+			_ = joinServerLabel.SetText(tr("服务器地址 (IP:端口)", "Server Address (Host:Port)"))
+		}
+		if joinSTUNLabel != nil {
+			_ = joinSTUNLabel.SetText(tr("自定义 STUN 地址（可选）", "Custom STUN Address (Optional)"))
+		}
+		if joinUserLabel != nil {
+			_ = joinUserLabel.SetText(tr("用户名", "Username"))
+		}
+		if joinKeyLabel != nil {
+			_ = joinKeyLabel.SetText(tr("入网密钥", "Join Key"))
+		}
+		if a.serverInput != nil {
+			_ = a.serverInput.SetCueBanner(tr("例如 203.0.113.10:8443（默认 HTTPS）", "e.g. 203.0.113.10:8443 (HTTPS)"))
+		}
+		if a.usernameInput != nil {
+			_ = a.usernameInput.SetCueBanner(tr("输入自定义用户名", "Enter custom username"))
+		}
+		if a.code != nil {
+			_ = a.code.SetCueBanner(tr("输入常规用户密钥或管理员密钥", "Enter join key or admin token"))
+		}
+		if a.joinLangButton != nil {
+			_ = a.joinLangButton.SetText(tr("English", "中文"))
+			_ = a.joinLangButton.Invalidate()
+		}
+		if a.joinButton != nil {
+			if a.busy {
+				_ = a.joinButton.SetText(tr("正在验证并登录…", "Signing in…"))
+			} else {
+				_ = a.joinButton.SetText(tr("立即登录", "Sign In"))
+			}
+			_ = a.joinButton.Invalidate()
+		}
+		if a.advancedButton != nil {
+			if a.advancedPanel != nil && a.advancedPanel.Visible() {
+				_ = a.advancedButton.SetText(tr("收起 STUN", "Hide STUN"))
+			} else {
+				_ = a.advancedButton.SetText(tr("STUN 设置", "STUN"))
+			}
+			_ = a.advancedButton.Invalidate()
+		}
+		if powerLocalIPLabel != nil {
+			_ = powerLocalIPLabel.SetText(tr("本机虚拟 IPv4", "Local Virtual IPv4"))
+		}
+		if powerUserLabel != nil {
+			_ = powerUserLabel.SetText(tr("当前用户名", "Username"))
+		}
+		if powerTrafficLabel != nil {
+			_ = powerTrafficLabel.SetText(tr("上传与下载", "Traffic"))
+		}
+		if a.serverDisplayTitle != nil {
+			_ = a.serverDisplayTitle.SetText(tr("当前连接服务器", "Connected Server"))
+		}
+		a.updateConnectedServerDisplays()
+		if a.copyLocalIPButton != nil {
+			_ = a.copyLocalIPButton.SetText(tr("复制 IP", "Copy IP"))
+			_ = a.copyLocalIPButton.Invalidate()
+		}
+		if a.renameSelfButton != nil {
+			_ = a.renameSelfButton.SetText(tr("改名", "Rename"))
+			_ = a.renameSelfButton.Invalidate()
+		}
+		if membersHeading != nil {
+			_ = membersHeading.SetText(tr("在线成员", "Members"))
+		}
+		if a.membersButton != nil {
+			_ = a.membersButton.SetText(tr("刷新", "Refresh"))
+			_ = a.membersButton.Invalidate()
+		}
+		if serverMetricsHeading != nil {
+			_ = serverMetricsHeading.SetText(tr("服务器连接质量", "Server Link Quality"))
+		}
+		if a.peerCopyMenuAction != nil {
+			_ = a.peerCopyMenuAction.SetText(tr("复制虚拟 IP", "Copy Virtual IP"))
+		}
+		if a.peerRefreshMenuAction != nil {
+			_ = a.peerRefreshMenuAction.SetText(tr("刷新成员", "Refresh Members"))
+		}
+		if a.railPower != nil {
+			_ = a.railPower.SetText(tr("虚拟局域网", "Virtual LAN"))
+			applyNavButtonSize(a.railPower, "power")
+			_ = a.railPower.Invalidate()
+		}
+		if a.railFRP != nil {
+			_ = a.railFRP.SetText(tr("端口映射", "Port Mapping"))
+			applyNavButtonSize(a.railFRP, "frp")
+			_ = a.railFRP.Invalidate()
+		}
+		if a.traffic != nil && a.engine == nil {
+			_ = a.traffic.SetText(formatTrafficSummary(0, 0))
+		}
+		if a.railAdmin != nil {
+			_ = a.railAdmin.SetText(tr("管理面板", "Admin Panel"))
+			applyNavButtonSize(a.railAdmin, "admin")
+			_ = a.railAdmin.Invalidate()
+		}
+		if a.railDiag != nil {
+			_ = a.railDiag.SetText(tr("连接诊断", "Diagnostics"))
+			applyNavButtonSize(a.railDiag, "diag")
+			_ = a.railDiag.Invalidate()
+		}
+		if a.railMore != nil {
+			_ = a.railMore.SetText(tr("设置", "Settings"))
+			applyNavButtonSize(a.railMore, "settings")
+			_ = a.railMore.Invalidate()
+		}
+		a.requestCleanRelayout()
+		if a.menuSettingsAction != nil {
+			_ = a.menuSettingsAction.SetText(tr("常规设置", "Settings"))
+		}
+		if a.menuAboutAction != nil {
+			_ = a.menuAboutAction.SetText(tr("关于 ", "About ") + appName)
+		}
+		if a.menuSwitchAction != nil {
+			_ = a.menuSwitchAction.SetText(tr("切换服务器 / 密钥", "Switch Server / Key"))
+		}
+		if a.menuLeaveAction != nil {
+			_ = a.menuLeaveAction.SetText(tr("退出当前网络", "Leave Network"))
+		}
+		if a.noticeDetailButton != nil {
+			_ = a.noticeDetailButton.SetText(tr("详情", "Details"))
+			_ = a.noticeDetailButton.Invalidate()
+		}
+		if a.noticeDismissButton != nil {
+			_ = a.noticeDismissButton.SetText(tr("收起", "Dismiss"))
+			_ = a.noticeDismissButton.Invalidate()
+		}
+		if a.peers != nil && !a.peers.IsDisposed() {
+			_ = a.peers.Invalidate()
+		}
+	})
+
+	a.window.Disposing().Attach(func() {
+		a.closing.Store(true)
+		setUIAnimationsEnabled(false)
+		a.disposeTray()
+	})
 	a.window.Disposing().Attach(icon.Dispose)
-	if a.logoImage != nil {
-		a.window.Disposing().Attach(a.logoImage.Dispose)
-	}
-	style := win.GetWindowLong(a.peers.Handle(), win.GWL_STYLE)
-	win.SetWindowLong(a.peers.Handle(), win.GWL_STYLE, style&^win.WS_BORDER)
-	ex := win.GetWindowLong(a.peers.Handle(), win.GWL_EXSTYLE)
-	win.SetWindowLong(a.peers.Handle(), win.GWL_EXSTYLE, ex&^win.WS_EX_CLIENTEDGE)
-	win.SetWindowPos(a.peers.Handle(), 0, 0, 0, 0, 0, win.SWP_FRAMECHANGED|win.SWP_NOMOVE|win.SWP_NOSIZE|win.SWP_NOZORDER|win.SWP_NOACTIVATE)
-	a.peers.SetGridlines(false)
+	styleFramelessTable(a.peers)
 	a.configureFRPTable()
-	a.animationsEnabled = true
+	if a.admin != nil {
+		styleFramelessTable(a.admin.table)
+	}
+	a.updateThemeButton()
+	a.applyNativeControlThemes()
 	a.updatePowerButtons()
 	if a.api.Token != "" {
 		a.showPage(pagePower)
 	} else {
 		a.showPage(pageJoin)
+	}
+	if a.animationsEnabled {
+		time.AfterFunc(150*time.Millisecond, func() {
+			if a.closing.Load() || a.window == nil || a.window.IsDisposed() {
+				return
+			}
+			a.window.Synchronize(func() {
+				a.pageTransitionsReady = true
+				a.ensureAnimLoop()
+			})
+		})
 	}
 	return nil
 }
@@ -357,7 +757,7 @@ func (a *desktop) showRailMenu() {
 	}
 	var bounds win.RECT
 	win.GetWindowRect(a.railMore.Handle(), &bounds)
-	position := uintptr(uint32(uint16(bounds.Right)) | uint32(uint16(bounds.Top))<<16)
+	position := uintptr(uint32(uint16(bounds.Left)) | uint32(uint16(bounds.Bottom))<<16)
 	a.railMore.SendMessage(win.WM_CONTEXTMENU, uintptr(a.railMore.Handle()), position)
 }
 
@@ -382,16 +782,7 @@ func (a *desktop) invalidateRail() {
 	setState(a.railPower, navState(a.page == pagePower && a.railSelection == 0))
 	setState(a.railFRP, navState(a.page == pageFRP && a.railSelection == 0))
 	setState(a.railAdmin, navState(a.page == pageAdmin && a.railSelection == 0))
-	setState(a.railVersion, walk.AccStateFocusable)
 	setState(a.railMore, walk.AccStateFocusable|walk.AccStateHasPopup)
-}
-
-func (a *desktop) openVersionInfo() {
-	a.railSelection = 2
-	a.invalidateRail()
-	a.showVersionInfo()
-	a.railSelection = 0
-	a.invalidateRail()
 }
 
 func (a *desktop) showVersionInfo() {
@@ -399,33 +790,87 @@ func (a *desktop) showVersionInfo() {
 	var closeButton *walk.PushButton
 	err := (Dialog{
 		AssignTo:      &dlg,
-		Title:         "版本信息",
+		Title:         tr("关于 ", "About ") + appName,
 		Icon:          a.appIcon,
-		Size:          Size{Width: 520, Height: 380},
-		MinSize:       Size{Width: 480, Height: 340},
-		Font:          Font{Family: "Microsoft YaHei UI", PointSize: 10},
+		Size:          Size{Width: 400, Height: 290},
+		MinSize:       Size{Width: 360, Height: 260},
+		Font:          uiFont(10, false),
 		Background:    SolidColorBrush{Color: uiWhite},
-		Layout:        VBox{Margins: Margins{Left: 30, Top: 26, Right: 30, Bottom: 24}, Spacing: 12},
+		Layout:        VBox{Margins: Margins{Left: 28, Top: 24, Right: 28, Bottom: 22}, Spacing: 10},
 		CancelButton:  &closeButton,
 		DefaultButton: &closeButton,
 		Children: []Widget{
-			ImageView{Image: a.logoImage, MinSize: Size{Width: 72, Height: 72}, MaxSize: Size{Width: 72, Height: 72}, Mode: ImageViewModeShrink, Alignment: AlignHCenterVCenter},
-			Label{Text: appName, TextColor: uiInk, Font: Font{PointSize: 18, Bold: true}, TextAlignment: AlignCenter, NoPrefix: true},
-			Label{Text: "版本 " + appVersion, TextColor: uiBlue, Font: Font{PointSize: 11, Bold: true}, TextAlignment: AlignCenter, NoPrefix: true},
-			TextLabel{Text: "Windows 10/11 amd64 原生客户端\n功能：虚拟网卡组网、TCP/UDP 内网穿透", TextColor: uiMuted, MinSize: Size{Width: 400}, TextAlignment: AlignHCenterVCenter},
+			Composite{Background: SolidColorBrush{Color: uiWhite}, Layout: HBox{MarginsZero: true}, Children: []Widget{HSpacer{}, a.brandLogoView(64, func() walk.Color { return uiWhite }), HSpacer{}}},
+			VSpacer{Size: 2},
+			Label{Text: appName, TextColor: uiInk, Font: uiFont(16, true), TextAlignment: AlignCenter, NoPrefix: true},
+			Label{Text: tr("版本 ", "Version ") + appVersion, TextColor: uiBlue, Font: uiFont(10, true), TextAlignment: AlignCenter, NoPrefix: true},
 			VSpacer{StretchFactor: 1},
-			Composite{Layout: HBox{MarginsZero: true}, Children: []Widget{
+			Composite{Background: SolidColorBrush{Color: uiWhite}, Layout: HBox{MarginsZero: true}, Children: []Widget{
 				HSpacer{},
-				actionButton(&closeButton, "关闭", true, 92, func() { dlg.Accept() }),
+				actionButton(&closeButton, tr("关闭", "Close"), true, 92, func() { dlg.Accept() }),
 			}},
 		},
 	}).Create(a.window)
 	if err != nil {
-		walk.MsgBox(a.window, "版本信息", appName+" "+appVersion, walk.MsgBoxOK|walk.MsgBoxIconInformation)
+		walk.MsgBox(a.window, tr("版本信息", "Version"), appName+" "+appVersion, walk.MsgBoxOK|walk.MsgBoxIconInformation)
 		return
 	}
 	defer dlg.Dispose()
-	dlg.Run()
+	runThemedDialog(dlg)
+}
+
+func (a *desktop) repaintWindowTree() {
+	if a.window == nil || a.window.IsDisposed() {
+		return
+	}
+	win.RedrawWindow(a.window.Handle(), nil, 0, win.RDW_INVALIDATE|win.RDW_ERASE|win.RDW_FRAME|win.RDW_ALLCHILDREN)
+}
+
+func (a *desktop) requestCleanRelayout() {
+	if a.window == nil || a.window.IsDisposed() {
+		return
+	}
+	a.window.RequestLayout()
+	a.repaintWindowTree()
+}
+
+func (a *desktop) handleWindowResized() {
+	if a.window == nil || a.window.IsDisposed() || a.closing.Load() {
+		return
+	}
+	if !win.IsIconic(a.window.Handle()) {
+		a.ensureAnimLoop()
+	}
+	a.resizeSyncSeq++
+	seq := a.resizeSyncSeq
+	if !a.animationsEnabled || !a.window.Visible() {
+		a.repaintWindowTree()
+		return
+	}
+	time.AfterFunc(24*time.Millisecond, func() {
+		if a.closing.Load() || a.window == nil || a.window.IsDisposed() {
+			return
+		}
+		a.window.Synchronize(func() {
+			if a.closing.Load() || seq != a.resizeSyncSeq || a.window == nil || a.window.IsDisposed() {
+				return
+			}
+			cb := a.window.ClientBoundsPixels()
+			noticeHidden := a.notice == nil || !a.notice.Visible()
+			if a.shellPage != nil && a.shellPage.Visible() {
+				sb := a.shellPage.BoundsPixels()
+				if sb.Width != cb.Width || (noticeHidden && sb.Height != cb.Height) || sb.Height > cb.Height {
+					a.window.RequestLayout()
+				}
+			} else if a.joinPage != nil && a.joinPage.Visible() {
+				jb := a.joinPage.BoundsPixels()
+				if jb.Width != cb.Width || (noticeHidden && jb.Height != cb.Height) || jb.Height > cb.Height {
+					a.window.RequestLayout()
+				}
+			}
+			a.repaintWindowTree()
+		})
+	})
 }
 
 func (a *desktop) showPage(page int) {
@@ -443,7 +888,7 @@ func (a *desktop) showPage(page int) {
 	}
 	a.page = page
 	a.window.SetSuspended(false)
-	a.window.RequestLayout()
+	a.requestCleanRelayout()
 	a.invalidateRail()
 	switch page {
 	case pageJoin:
@@ -451,7 +896,9 @@ func (a *desktop) showPage(page int) {
 	case pagePower:
 		a.toggleButton.SetFocus()
 	case pageFRP:
-		if a.frpToggleButton != nil {
+		if a.frpQuickLocalPort != nil {
+			_ = a.frpQuickLocalPort.SetFocus()
+		} else if a.frpToggleButton != nil {
 			a.frpToggleButton.SetFocus()
 		}
 		a.refreshFRP()
@@ -460,96 +907,134 @@ func (a *desktop) showPage(page int) {
 			a.admin.refreshData()
 		}
 	}
+	if page == pageJoin || page == pagePower {
+		a.ensureAnimLoop()
+	}
 }
 
-func (a *desktop) setConnectedVisible(show bool) {
-	if a.connectedArea == nil || show == a.connectedArea.Visible() {
+func (a *desktop) ensureAnimLoop() {
+	if a.animLoopActive || !a.animationsEnabled || a.closing.Load() || highContrastEnabled() || a.window == nil || a.window.IsDisposed() {
 		return
 	}
-	if !a.animationsEnabled || !a.window.Visible() {
-		a.connectedArea.SetVisible(show)
+	if !win.IsWindowVisible(a.window.Handle()) || win.IsIconic(a.window.Handle()) {
 		return
 	}
-	a.connectedAnimToken++
-	token := a.connectedAnimToken
-	if show {
-		a.connectedArea.SetVisible(true)
-		time.AfterFunc(20*time.Millisecond, func() {
-			if a.closing.Load() {
-				return
-			}
-			a.window.Synchronize(func() {
-				if a.closing.Load() || token != a.connectedAnimToken || !a.connectedArea.Visible() {
-					return
-				}
-				final := a.connectedArea.BoundsPixels()
-				if final.Width <= 0 || final.Height <= 0 {
-					return
-				}
-				start := final
-				start.Y = final.Y + final.Height + 10
-				_ = a.connectedArea.SetBoundsPixels(start)
-				a.slideConnectedArea(start, final, false, 0, token, walk.Rectangle{})
-			})
-		})
+	if a.page != pageJoin && a.page != pagePower {
 		return
 	}
-	current := a.connectedArea.BoundsPixels()
-	end := current
-	end.Y = current.Y + current.Height + 10
-	a.slideConnectedArea(current, end, true, 0, token, current)
-}
-
-func (a *desktop) slideConnectedArea(start, end walk.Rectangle, hide bool, step int, token uint64, restore walk.Rectangle) {
-	if a.closing.Load() || token != a.connectedAnimToken {
-		return
-	}
-	const totalSteps = 12
-	progress := float64(step+1) / totalSteps
-	eased := 1 - math.Pow(1-progress, 3)
-	bounds := start
-	bounds.Y = int(math.Round(float64(start.Y) + float64(end.Y-start.Y)*eased))
-	_ = a.connectedArea.SetBoundsPixels(bounds)
-	if step+1 >= totalSteps {
-		if hide {
-			a.connectedArea.SetVisible(false)
-			if restore.Width > 0 && restore.Height > 0 {
-				_ = a.connectedArea.SetBoundsPixels(restore)
-			}
-		}
-		return
-	}
+	a.animLoopActive = true
 	time.AfterFunc(16*time.Millisecond, func() {
-		if a.closing.Load() {
+		if a.closing.Load() || a.window == nil || a.window.IsDisposed() {
 			return
 		}
-		a.window.Synchronize(func() {
-			a.slideConnectedArea(start, end, hide, step+1, token, restore)
-		})
+		a.window.Synchronize(a.stepAnimLoop)
 	})
 }
 
-func (a *desktop) updatePowerButtons() {
-	toggleText := "启动网络"
-	if a.powerState == 1 {
-		toggleText = "停止网络"
-	} else if a.powerState == 2 {
-		toggleText = "正在连接…"
+func (a *desktop) stepAnimLoop() {
+	if a.closing.Load() || !a.animationsEnabled || highContrastEnabled() || a.window == nil || a.window.IsDisposed() || !win.IsWindowVisible(a.window.Handle()) || win.IsIconic(a.window.Handle()) {
+		a.animLoopActive = false
+		return
 	}
-	for _, visual := range []*walk.ImageView{a.powerVisual, a.compactPowerVisual} {
-		if visual != nil {
-			visual.SetEnabled(!a.busy)
-			visual.Invalidate()
+	nextDelay := 33 * time.Millisecond
+	keepRunning := false
+	switch a.page {
+	case pageJoin:
+		a.animPhase = math.Mod(a.animPhase+0.0085, 1.0)
+		if a.joinBlueprint != nil && !a.joinBlueprint.IsDisposed() {
+			_ = a.joinBlueprint.Invalidate()
+		}
+		keepRunning = true
+	case pagePower:
+		hoverTarget := 0.0
+		if a.powerVisual != nil && !a.powerVisual.IsDisposed() {
+			var pt win.POINT
+			var rect win.RECT
+			if win.GetCursorPos(&pt) && win.GetWindowRect(a.powerVisual.Handle(), &rect) {
+				if pt.X >= rect.Left && pt.X <= rect.Right && pt.Y >= rect.Top && pt.Y <= rect.Bottom {
+					hoverTarget = 1.0
+				}
+			}
+		}
+		glowTarget := 0.0
+		if a.powerState == 1 {
+			glowTarget = 1.0
+		} else if a.powerState == 2 {
+			glowTarget = 0.55
+		}
+		transitioning := false
+		if diff := hoverTarget - a.powerHover; math.Abs(diff) < 0.02 {
+			a.powerHover = hoverTarget
+		} else {
+			a.powerHover += diff * 0.28
+			transitioning = true
+		}
+		if diff := glowTarget - a.powerGlow; math.Abs(diff) < 0.02 {
+			a.powerGlow = glowTarget
+		} else {
+			a.powerGlow += diff * 0.22
+			transitioning = true
+		}
+		if a.powerState == 1 || a.powerState == 2 || a.powerHover > 0.02 || a.powerGlow > 0.02 || transitioning {
+			step := 0.007
+			if a.powerState == 2 {
+				step = 0.016
+				nextDelay = 16 * time.Millisecond
+			} else if transitioning {
+				nextDelay = 16 * time.Millisecond
+			}
+			a.animPhase = math.Mod(a.animPhase+step, 1.0)
+			if a.powerVisual != nil && !a.powerVisual.IsDisposed() {
+				_ = a.powerVisual.Invalidate()
+			}
+			keepRunning = true
+		}
+	}
+	if !keepRunning {
+		a.animLoopActive = false
+		return
+	}
+	time.AfterFunc(nextDelay, func() {
+		if a.closing.Load() || a.window == nil || a.window.IsDisposed() {
+			return
+		}
+		a.window.Synchronize(a.stepAnimLoop)
+	})
+}
+
+func (a *desktop) setConnectedVisible(show bool) {
+	if a.connectedArea == nil || show == widgetOwnVisible(a.connectedArea) {
+		return
+	}
+	a.connectedArea.SetVisible(show)
+	a.requestCleanRelayout()
+}
+
+func (a *desktop) updatePowerButtons() {
+	toggleText := tr("连接虚拟网络", "Connect")
+	if a.powerState == 1 {
+		toggleText = tr("断开连接", "Disconnect")
+	} else if a.powerState == 2 {
+		toggleText = tr("连接中…", "Connecting…")
+	}
+	if a.powerVisual != nil {
+		enabled := !a.busy
+		if a.powerVisual.Enabled() != enabled {
+			a.powerVisual.SetEnabled(enabled)
+			_ = a.powerVisual.Invalidate()
 		}
 	}
 	if a.toggleButton != nil {
-		a.toggleButton.SetText(toggleText)
-		a.toggleButton.SetEnabled(!a.busy)
-		a.toggleButton.Invalidate()
+		textChanged := setButtonTextIfChanged(a.toggleButton, toggleText)
+		enabledChanged := setButtonEnabledIfChanged(a.toggleButton, !a.busy)
+		if textChanged || enabledChanged {
+			_ = a.toggleButton.Invalidate()
+		}
 	}
 	if a.membersButton != nil {
-		a.membersButton.SetEnabled(!a.busy && a.engine != nil)
-		a.membersButton.Invalidate()
+		if setButtonEnabledIfChanged(a.membersButton, !a.busy && a.engine != nil) {
+			_ = a.membersButton.Invalidate()
+		}
 	}
 	if a.connectedArea != nil {
 		a.setConnectedVisible(a.engine != nil)
@@ -557,32 +1042,41 @@ func (a *desktop) updatePowerButtons() {
 	if a.railPower != nil {
 		a.railPower.Invalidate()
 	}
+	a.ensureAnimLoop()
 	a.updateTrayMenu()
 }
 
 func (a *desktop) showError(action string, err error) {
-	f := clientui.Explain(action, err, a.api.Token, a.adminToken)
+	a.showErrorWithAPI(action, err, a.api)
+}
+
+func (a *desktop) showErrorWithAPI(action string, err error, api *clientapi.Client) {
+	token := ""
+	if api != nil {
+		token = api.Token
+	}
+	f := clientui.ExplainLang(currentLang(), action, err, token, a.adminToken)
 	switch f.Title {
 	case "网络密码不正确":
 		f.Title = "入网令牌不正确"
 		f.Message = "请确认令牌后重新输入。"
 	case "访问令牌未通过验证":
-		f.Title = "需要重新验证令牌"
-		f.Message = "关闭电源后，从左侧菜单选择“更换入网令牌”。"
+		f.Title = "需要重新验证密钥"
+		f.Message = "断开连接后，点击右上角“设置 → 切换服务器 / 密钥”。"
 	case "找不到服务器地址", "暂时无法连接服务器", "服务器响应超时", "与服务器的连接中断":
-		f.Message = "请检查当前网络后重试。若仍无法连接，请联系软件提供者检查服务。"
+		f.Message = "请检查当前网络后重试，或联系服务器管理员。"
 	case "无法验证服务器证书":
-		f.Message = "请检查电脑日期和时间。若仍失败，请联系软件提供者检查证书。"
+		f.Message = "请检查本机日期与时间，或联系服务器管理员检查证书。"
 	case "服务器地址或响应不正确":
-		f.Message = "入网服务未正确响应，请联系软件提供者检查服务端。"
+		f.Message = "控制服务未正确响应，请确认服务器地址。"
 	case "虚拟网段与现有网络冲突":
-		f.Message = "请先关闭使用相同网段的其他 VPN。若仍冲突，请联系软件提供者调整配置。"
+		f.Message = "请先断开网段冲突的其他 VPN 后重试。"
 	case "无法读取本机加密配置":
-		f.Message = "请使用原来的 Windows 用户运行客户端，或重新输入令牌加入网络。"
+		f.Message = "请使用原有 Windows 用户运行，或重新输入入网密钥。"
 	case "本机已退出该网络":
-		f.Message = "关闭电源后，从左侧菜单选择“更换入网令牌”。"
+		f.Message = "断开连接后，点击右上角“设置 → 切换服务器 / 密钥”。"
 	case "网络成员已满", "虚拟网段格式不正确":
-		f.Message = "请联系软件提供者调整私人网络配置。"
+		f.Message = "请联系服务器管理员调整网络配置。"
 	}
 	a.showNotice(f)
 }
@@ -592,28 +1086,38 @@ func (a *desktop) showNotice(f clientui.Feedback) {
 	a.noticeMessage.SetText(f.Message)
 	a.notice.SetVisible(true)
 	a.status.SetText(f.Title)
+	a.requestCleanRelayout()
 }
-func (a *desktop) dismissNotice() { a.notice.SetVisible(false); a.feedback = clientui.Feedback{} }
+func (a *desktop) dismissNotice() {
+	a.notice.SetVisible(false)
+	a.feedback = clientui.Feedback{}
+	a.requestCleanRelayout()
+}
 func (a *desktop) showErrorDetails() {
 	if a.feedback.Title != "" {
 		detail := a.feedback.Detail
 		if detail == "" {
-			detail = "此提示没有额外技术详情。"
+			detail = tr("没有额外技术详情。", "No additional technical details.")
 		}
 		a.showTextDialog(a.feedback.Title, a.feedback.Message, detail)
 	}
 }
 func (a *desktop) showTextDialog(title, message, detail string) {
-	detail = clientui.Redact(detail, a.api.Token, a.adminToken)
+	detail = clientui.RedactLang(currentLang(), detail, a.api.Token, a.adminToken)
 	var dlg *walk.Dialog
 	var closeButton *walk.PushButton
-	err := (Dialog{AssignTo: &dlg, Title: title, Icon: a.appIcon, Size: Size{Width: 620, Height: 400}, MinSize: Size{Width: 520, Height: 320}, Font: Font{Family: "Microsoft YaHei UI", PointSize: 10}, Background: SolidColorBrush{Color: uiWhite}, Layout: VBox{Margins: Margins{Left: 24, Top: 22, Right: 24, Bottom: 22}, Spacing: 16}, CancelButton: &closeButton, DefaultButton: &closeButton, Children: []Widget{heading(title), TextLabel{Text: message, MinSize: Size{Width: 440}, TextColor: uiMuted}, TextEdit{Text: detail, ReadOnly: true, VScroll: true, StretchFactor: 1}, Composite{Layout: HBox{MarginsZero: true}, Children: []Widget{caption("可选中并复制详情"), HSpacer{}, actionButton(&closeButton, "关闭", false, 88, func() { dlg.Accept() })}}}}).Create(a.window)
+	err := (Dialog{AssignTo: &dlg, Title: title, Icon: a.appIcon, Size: Size{Width: 620, Height: 400}, MinSize: Size{Width: 520, Height: 320}, Font: uiFont(10, false), Background: SolidColorBrush{Color: uiWhite}, Layout: VBox{Margins: Margins{Left: 24, Top: 22, Right: 24, Bottom: 22}, Spacing: 14}, CancelButton: &closeButton, DefaultButton: &closeButton, Children: []Widget{
+		heading(title),
+		TextLabel{Text: message, MinSize: Size{Width: 440}, TextColor: uiMuted, Font: uiFont(9, false)},
+		TextEdit{Text: detail, ReadOnly: true, VScroll: true, StretchFactor: 1, Font: uiMonoFont(9, false), TextColor: uiInk, Background: SolidColorBrush{Color: uiWhite}},
+		Composite{Background: SolidColorBrush{Color: uiWhite}, Layout: HBox{MarginsZero: true}, Children: []Widget{HSpacer{}, actionButton(&closeButton, tr("关闭", "Close"), false, 88, func() { dlg.Accept() })}},
+	}}).Create(a.window)
 	if err != nil {
-		walk.MsgBox(a.window, "提示", message, walk.MsgBoxOK|walk.MsgBoxIconInformation)
+		walk.MsgBox(a.window, tr("提示", "Notice"), message, walk.MsgBoxOK|walk.MsgBoxIconInformation)
 		return
 	}
 	defer dlg.Dispose()
-	dlg.Run()
+	runThemedDialog(dlg)
 }
 func formatTraffic(n uint64) string {
 	if n < 1024 {

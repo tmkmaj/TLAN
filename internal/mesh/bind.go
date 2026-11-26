@@ -10,10 +10,12 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/netip"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/private-radminlan/lanmesh/internal/network"
@@ -66,6 +68,9 @@ type peerRoute struct {
 
 	relay       *network.StreamRelay
 	relayExpiry time.Time
+
+	pathMu       sync.Mutex
+	reportedPath string
 }
 type datagram struct {
 	data []byte
@@ -81,21 +86,27 @@ type stunReply struct {
 // WireGuard packets on the SAME UDP socket. Relay is a TCP/TLS fallback for the
 // WireGuard datagram, never a replacement for WireGuard authentication.
 type meshBind struct {
-	mu        sync.RWMutex
-	local     netip.Addr
-	networkID string
-	private   []byte
-	relayOnly bool
-	udp       *net.UDPConn
-	extra     []*net.UDPConn
-	port      uint16
-	done      chan struct{}
-	in        chan datagram
-	routes    map[netip.Addr]*peerRoute
-	stun      map[[12]byte]chan stunReply
+	mu                    sync.RWMutex
+	local                 netip.Addr
+	networkID             string
+	private               []byte
+	relayOnly             bool
+	replicateSmallPackets bool
+	replicationThreshold  int
+	replica               chan replicaDatagram
+	udp                   *net.UDPConn
+	extra                 []*net.UDPConn
+	port                  uint16
+	done                  chan struct{}
+	in                    chan datagram
+	routes                map[netip.Addr]*peerRoute
+	stun                  map[[12]byte]chan stunReply
 	// onDrop is set by the engine so bind-level drops are counted with the
 	// tunnel's own counters.
-	onDrop func()
+	onDrop            func()
+	relayDrops        atomic.Uint64
+	relayBackpressure atomic.Uint64
+	relayWarnUnix     atomic.Int64
 }
 
 func newBind(local netip.Addr, networkID, privateKey string) (*meshBind, error) {
@@ -124,6 +135,9 @@ func (b *meshBind) Open(port uint16) ([]conn.ReceiveFunc, uint16, error) {
 			}
 			return nil, 0, err
 		}
+		if err := configureGameSocket(u); err != nil {
+			slog.Warn("UDP low-latency socket options unavailable", "socket", index, "error", err)
+		}
 		sockets = append(sockets, u)
 	}
 	b.udp = sockets[0]
@@ -131,6 +145,10 @@ func (b *meshBind) Open(port uint16) ([]conn.ReceiveFunc, uint16, error) {
 	b.port = uint16(b.udp.LocalAddr().(*net.UDPAddr).Port)
 	b.done = make(chan struct{})
 	b.in = make(chan datagram, 1024)
+	b.replica = make(chan replicaDatagram, 64)
+	if b.replicationThreshold <= 0 {
+		b.replicationThreshold = defaultReplicationThreshold
+	}
 	done, in := b.done, b.in
 	receivers := make([]conn.ReceiveFunc, 0, len(sockets))
 	for index, u := range sockets {
@@ -148,6 +166,7 @@ func (b *meshBind) Open(port uint16) ([]conn.ReceiveFunc, uint16, error) {
 		})
 	}
 	go b.checkLoop(done)
+	go b.replicationLoop(done)
 	return receivers, b.port, nil
 }
 func (b *meshBind) Close() error {
@@ -200,8 +219,9 @@ const (
 	directProbeTimeout     = 5 * time.Second
 	directStaleAfter       = 12 * time.Second
 
-	meshBindPortCount  = 3
-	meshPredictedPorts = 3
+	meshBindPortCount           = 3
+	defaultReplicationThreshold = 192
+	meshPredictedPorts          = 3
 )
 
 // directUsable reports whether the pinned direct path is recent enough to
@@ -313,8 +333,11 @@ func (b *meshBind) Send(bufs [][]byte, ep conn.Endpoint) error {
 	direct, directSocket, relay := r.direct, r.directSocket, r.relay
 	now := time.Now()
 	useDirect := !b.relayOnly && r.directPreferred(now, relay != nil)
+	replicate := b.replicateSmallPackets && useDirect && relay != nil
+	path, reason := selectedPath(r, b.relayOnly, relay != nil, useDirect)
 	candidates := append([]netip.AddrPort(nil), r.candidates...)
 	b.mu.RUnlock()
+	r.reportPath(ep.DstIP(), path, reason)
 
 	for _, packet := range bufs {
 		// A genuine relay write failure must not silently drop the packet: fall
@@ -322,17 +345,23 @@ func (b *meshBind) Send(bufs [][]byte, ep conn.Endpoint) error {
 		// success the caller never earned.
 		if useDirect && directSocket >= 0 && directSocket < len(sockets) {
 			if _, err := sockets[directSocket].WriteToUDPAddrPort(packet, direct); err == nil {
+				if replicate && len(packet) <= b.replicationThreshold {
+					b.queueReplica(relay, packet)
+				}
 				continue
 			}
 		}
 		if relay != nil {
 			if err := relay.Send(packet); err == nil {
 				continue
-			} else if b.relayOnly {
-				// Relay-only mode has no alternative path; make the drop visible
-				// instead of reporting a success that never happened.
-				b.recordDrop()
-				continue
+			} else {
+				b.relayDrops.Add(1)
+				b.recordRelayFailure(err, b.relayOnly)
+				if b.relayOnly {
+					// Relay-only mode has no alternative path; make the drop visible
+					// instead of reporting a success that never happened.
+					continue
+				}
 			}
 		}
 		if b.relayOnly {
@@ -797,4 +826,91 @@ func (b *meshBind) probeSTUNPorts(ctx context.Context, server string) ([]netip.A
 		return nil, firstErr
 	}
 	return mapped, nil
+}
+func selectedPath(route *peerRoute, relayOnly, relayAvailable, directPreferred bool) (string, string) {
+	if relayOnly {
+		return "relay TCP/TLS", "relay_only"
+	}
+	if directPreferred {
+		return "direct UDP", "direct_preferred"
+	}
+	if !relayAvailable {
+		return "discovering", "relay_unavailable"
+	}
+	if route == nil || !route.directUsable(time.Now()) {
+		return "relay TCP/TLS", "direct_unavailable"
+	}
+	if route.failures >= directFailureThreshold {
+		return "relay TCP/TLS", "direct_probe_failures"
+	}
+	if route.slow {
+		return "relay TCP/TLS", "direct_slow_rtt"
+	}
+	return "relay TCP/TLS", "relay_preferred"
+}
+
+func (r *peerRoute) reportPath(peer netip.Addr, path, reason string) {
+	if r == nil {
+		return
+	}
+	r.pathMu.Lock()
+	defer r.pathMu.Unlock()
+	if r.reportedPath == path {
+		return
+	}
+	r.reportedPath = path
+	slog.Info("mesh path selected", "peer", peer.String(), "path", path, "rtt_ms", r.rtt.Milliseconds(), "reason", reason)
+}
+
+type replicaDatagram struct {
+	relay *network.StreamRelay
+	data  []byte
+}
+
+func (b *meshBind) queueReplica(relay *network.StreamRelay, packet []byte) {
+	if b == nil || relay == nil || b.replica == nil {
+		return
+	}
+	copyOfPacket := append([]byte(nil), packet...)
+	select {
+	case b.replica <- replicaDatagram{relay: relay, data: copyOfPacket}:
+	default:
+		b.recordDrop()
+	}
+}
+
+func (b *meshBind) replicationLoop(done <-chan struct{}) {
+	for {
+		select {
+		case <-done:
+			return
+		case datagram := <-b.replica:
+			if datagram.relay != nil {
+				_ = datagram.relay.Send(datagram.data)
+			}
+		}
+	}
+}
+func (b *meshBind) relayStats() (drops, backpressure uint64) {
+	if b == nil {
+		return 0, 0
+	}
+	return b.relayDrops.Load(), b.relayBackpressure.Load()
+}
+
+func (b *meshBind) recordRelayFailure(err error, relayOnly bool) {
+	if err == nil {
+		return
+	}
+	if network.IsRelayBackpressure(err) {
+		total := b.relayBackpressure.Add(1)
+		now := time.Now().Unix()
+		last := b.relayWarnUnix.Load()
+		if now-last >= 5 && b.relayWarnUnix.CompareAndSwap(last, now) {
+			slog.Warn("relay backpressure", "reason", "queue_full", "relay_only", relayOnly, "total", total)
+		}
+	}
+	if relayOnly {
+		b.recordDrop()
+	}
 }

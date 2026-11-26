@@ -11,17 +11,17 @@ func TestDirectPreferredUsesRelayOnlyForColdOrSlowDirectPath(t *testing.T) {
 	address := netip.MustParseAddrPort("198.51.100.10:40000")
 	tests := []struct {
 		name           string
-		route          peerRoute
+		route          *peerRoute
 		relayAvailable bool
 		want           bool
 	}{
-		{name: "fresh low rtt", route: peerRoute{direct: address, lastDirect: now, rtt: 20 * time.Millisecond}, relayAvailable: true, want: true},
-		{name: "fresh high rtt", route: peerRoute{direct: address, lastDirect: now, rtt: 500 * time.Millisecond, slow: true}, relayAvailable: true, want: false},
-		{name: "fresh without relay", route: peerRoute{direct: address, lastDirect: now, rtt: 500 * time.Millisecond, slow: true}, relayAvailable: false, want: true},
-		{name: "warming up", route: peerRoute{direct: address, lastDirect: now}, relayAvailable: true, want: true},
-		{name: "stale", route: peerRoute{direct: address, lastDirect: now.Add(-13 * time.Second), rtt: 20 * time.Millisecond}, relayAvailable: true, want: false},
-		{name: "missing direct", route: peerRoute{lastDirect: now}, relayAvailable: true, want: false},
-		{name: "too many failures", route: peerRoute{direct: address, lastDirect: now, rtt: 10 * time.Millisecond, failures: directFailureThreshold}, relayAvailable: true, want: false},
+		{name: "fresh low rtt", route: &peerRoute{direct: address, lastDirect: now, rtt: 20 * time.Millisecond}, relayAvailable: true, want: true},
+		{name: "fresh high rtt", route: &peerRoute{direct: address, lastDirect: now, rtt: 500 * time.Millisecond, slow: true}, relayAvailable: true, want: false},
+		{name: "fresh without relay", route: &peerRoute{direct: address, lastDirect: now, rtt: 500 * time.Millisecond, slow: true}, relayAvailable: false, want: true},
+		{name: "warming up", route: &peerRoute{direct: address, lastDirect: now}, relayAvailable: true, want: true},
+		{name: "stale", route: &peerRoute{direct: address, lastDirect: now.Add(-13 * time.Second), rtt: 20 * time.Millisecond}, relayAvailable: true, want: false},
+		{name: "missing direct", route: &peerRoute{lastDirect: now}, relayAvailable: true, want: false},
+		{name: "too many failures", route: &peerRoute{direct: address, lastDirect: now, rtt: 10 * time.Millisecond, failures: directFailureThreshold}, relayAvailable: true, want: false},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

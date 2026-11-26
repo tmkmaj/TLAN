@@ -8,7 +8,7 @@ import (
 	"github.com/private-radminlan/lanmesh/internal/netpolicy"
 )
 
-const defaultMeshInterfaceName = "LANMesh"
+const defaultMeshInterfaceName = "TLAN"
 
 // checkFRPSEgress rejects an FRPS endpoint whose destination or selected
 // interface belongs to the TLAN virtual network. It is deliberately separate

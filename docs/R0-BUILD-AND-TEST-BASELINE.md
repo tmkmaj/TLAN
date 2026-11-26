@@ -41,7 +41,7 @@ $env:GOARCH='amd64'
 $env:CGO_ENABLED='0'
 go build -mod=vendor -trimpath `
   -ldflags '-H=windowsgui -s -w -X main.bundledServerURL=https://example.invalid -X main.bundledSTUNAddress=example.invalid:3478' `
-  -o .tmp-build\TmkNetworkLAN.exe .\cmd\client
+  -o .tmp-build\TLAN.exe .\cmd\client
 ```
 
 Linux 服务端构建入口：
@@ -56,7 +56,7 @@ Linux 服务端构建入口：
 $env:GOOS='linux'
 $env:GOARCH='amd64'
 $env:CGO_ENABLED='0'
-go build -mod=vendor -trimpath -ldflags '-s -w' -o .tmp-build\tmknetworklan-server .\cmd\server
+go build -mod=vendor -trimpath -ldflags '-s -w' -o .tmp-build\TLAN-server .\cmd\server
 ```
 
 构建脚本不接受 `latest` 核心、用户替换的任意 FRP 二进制或可选 CGO。固定摘要不匹配时脚本必须失败。

@@ -7,7 +7,7 @@ trap 'rm -rf -- "$TEST_DIR"' EXIT
 BACKUP=$TEST_DIR/backup
 mkdir "$BACKUP"
 FILES=("$TEST_DIR/existing" "$TEST_DIR/new")
-UNITS=(tmknetworklan.service tmknetworklan-https.service caddy.service)
+UNITS=(tlan.service tlan-https.service caddy.service)
 WAS_ACTIVE=(active inactive active)
 WAS_ENABLED=(enabled disabled enabled)
 printf 'original\n' > "$BACKUP/file-0"
@@ -19,10 +19,10 @@ source <(sed -n '/^rollback() {$/,/^}$/p' "$TEMPLATE")
 rollback
 [[ $(cat "${FILES[0]}") == original ]]
 [[ ! -e ${FILES[1]} ]]
-grep -Fxq 'enable tmknetworklan.service' "$TEST_DIR/systemctl.log"
-grep -Fxq 'start tmknetworklan.service' "$TEST_DIR/systemctl.log"
-grep -Fxq 'disable tmknetworklan-https.service' "$TEST_DIR/systemctl.log"
-! grep -Fxq 'start tmknetworklan-https.service' "$TEST_DIR/systemctl.log"
+grep -Fxq 'enable tlan.service' "$TEST_DIR/systemctl.log"
+grep -Fxq 'start tlan.service' "$TEST_DIR/systemctl.log"
+grep -Fxq 'disable tlan-https.service' "$TEST_DIR/systemctl.log"
+! grep -Fxq 'start tlan-https.service' "$TEST_DIR/systemctl.log"
 grep -Fxq 'enable caddy.service' "$TEST_DIR/systemctl.log"
 grep -Fxq 'start caddy.service' "$TEST_DIR/systemctl.log"
 printf 'PASS: rollback restores files, removes new files, and restores service states.\n'

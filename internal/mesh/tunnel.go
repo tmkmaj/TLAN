@@ -19,6 +19,7 @@ type tunnel struct {
 	probes                  map[netip.Addr]peerProbe
 	local                   netip.Addr
 	prefix                  netip.Prefix
+	mtu                     int
 	mu                      sync.RWMutex
 	peers                   map[netip.Addr]bool
 	out                     chan []byte
@@ -31,14 +32,18 @@ type tunnel struct {
 	Sent, Received, Dropped atomic.Uint64
 }
 
-func newTunnel(local netip.Addr, prefix netip.Prefix) *tunnel {
-	t := &tunnel{local: local, prefix: prefix, peers: make(map[netip.Addr]bool), out: make(chan []byte, 512), in: make(chan []byte, 512), done: make(chan struct{}), events: make(chan tun.Event, 2)}
+func newTunnel(local netip.Addr, prefix netip.Prefix, configuredMTU ...int) *tunnel {
+	meshMTU := MTU
+	if len(configuredMTU) > 0 {
+		meshMTU = normalizeMeshMTU(configuredMTU[0])
+	}
+	t := &tunnel{local: local, prefix: prefix, mtu: meshMTU, peers: make(map[netip.Addr]bool), out: make(chan []byte, 512), in: make(chan []byte, 512), done: make(chan struct{}), events: make(chan tun.Event, 2)}
 	t.events <- tun.EventUp
 	return t
 }
 func (t *tunnel) File() *os.File                     { return nil }
-func (t *tunnel) Name() (string, error)              { return "TmkNetworkLAN-encrypted", nil }
-func (t *tunnel) MTU() (int, error)                  { return MTU + envelopeSize, nil }
+func (t *tunnel) Name() (string, error)              { return "TLAN-encrypted", nil }
+func (t *tunnel) MTU() (int, error)                  { return t.mtu + envelopeSize, nil }
 func (t *tunnel) BatchSize() int                     { return 1 }
 func (t *tunnel) Events() <-chan tun.Event           { return t.events }
 func (t *tunnel) Close() error                       { t.once.Do(func() { close(t.done); close(t.events) }); return nil }
@@ -58,7 +63,7 @@ func (t *tunnel) Read(bufs [][]byte, sizes []int, offset int) (int, error) {
 func (t *tunnel) Write(bufs [][]byte, offset int) (int, error) {
 	for _, buf := range bufs {
 		t.mu.RLock()
-		packet, err := decapsulate(buf[offset:], t.local, t.prefix, t.peers)
+		packet, err := decapsulateWithLimit(buf[offset:], t.local, t.prefix, t.peers, t.mtu)
 		t.mu.RUnlock()
 		if err != nil {
 			t.Dropped.Add(1)
@@ -80,7 +85,7 @@ func (t *tunnel) Write(bufs [][]byte, offset int) (int, error) {
 }
 func (t *tunnel) submit(packet []byte) {
 	source, dest, err := ipv4(packet)
-	if err != nil || len(packet) > MTU || source != t.local {
+	if err != nil || len(packet) > t.mtu || source != t.local {
 		t.Dropped.Add(1)
 		return
 	}

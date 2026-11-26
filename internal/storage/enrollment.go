@@ -104,6 +104,7 @@ func (s *Store) enrollPrivate(req core.RegisterDeviceRequest, code string, admin
 	}
 	member, exists := n.Devices[id]
 	now := time.Now().UTC()
+	customName := strings.TrimSpace(req.DisplayName)
 	if !exists {
 		if len(n.Devices) >= 128 {
 			return NetworkSummary{}, Device{}, "", ErrNetworkFull
@@ -113,9 +114,13 @@ func (s *Store) enrollPrivate(req core.RegisterDeviceRequest, code string, admin
 			return NetworkSummary{}, Device{}, "", err
 		}
 		off := false
-		member = Device{ID: id, Name: strings.TrimSpace(req.DisplayName), PublicKey: req.WireGuardPublicKey, VirtualIP: ip, JoinedAt: now, LastSeen: now, Forwarding: &off}
+		member = Device{ID: id, Name: customName, PublicKey: req.WireGuardPublicKey, VirtualIP: ip, JoinedAt: now, LastSeen: now, Forwarding: &off}
 		if member.Name == "" {
-			member.Name = "我的电脑"
+			member.Name = "TLAN Device"
+		}
+	} else if customName != "" {
+		if validName, err := validateMemberName(customName); err == nil {
+			member.Name = validName
 		}
 	}
 	if s.data.EnrollmentKey == "" {

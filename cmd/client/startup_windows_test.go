@@ -39,11 +39,11 @@ func (s *fakeStartupStore) Close() error {
 }
 
 func TestStartupCommandQuotesExecutablePath(t *testing.T) {
-	got, err := startupCommand(`C:\Program Files\Tmk Network\TmkNetworkLAN.exe`)
+	got, err := startupCommand(`C:\Program Files\TLAN\TLAN.exe`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := `"C:\Program Files\Tmk Network\TmkNetworkLAN.exe" --startup`
+	want := `"C:\Program Files\TLAN\TLAN.exe" --startup`
 	if got != want {
 		t.Fatalf("startup command = %q, want %q", got, want)
 	}
@@ -59,10 +59,10 @@ func TestStartupCommandRejectsUnsafePaths(t *testing.T) {
 
 func TestStartupRegistrationOnlyTouchesOwnValue(t *testing.T) {
 	store := &fakeStartupStore{values: map[string]string{"OtherApp": `"C:\Other\Other.exe"`}}
-	if err := configureStartupRegistration(store, `C:\Apps\TmkNetworkLAN.exe`, true); err != nil {
+	if err := configureStartupRegistration(store, `C:\Apps\TLAN.exe`, true); err != nil {
 		t.Fatal(err)
 	}
-	if got, want := store.values[startupValueName], `"C:\Apps\TmkNetworkLAN.exe" --startup`; got != want {
+	if got, want := store.values[startupValueName], `"C:\Apps\TLAN.exe" --startup`; got != want {
 		t.Fatalf("own startup value = %q, want %q", got, want)
 	}
 	if store.values["OtherApp"] != `"C:\Other\Other.exe"` {
@@ -82,7 +82,7 @@ func TestStartupRegistrationOnlyTouchesOwnValue(t *testing.T) {
 func TestStartupRegistrationPropagatesSetFailure(t *testing.T) {
 	want := errors.New("registry denied")
 	store := &fakeStartupStore{setErr: want}
-	if err := configureStartupRegistration(store, `C:\Apps\TmkNetworkLAN.exe`, true); !errors.Is(err, want) {
+	if err := configureStartupRegistration(store, `C:\Apps\TLAN.exe`, true); !errors.Is(err, want) {
 		t.Fatalf("startup set error = %v, want %v", err, want)
 	}
 }

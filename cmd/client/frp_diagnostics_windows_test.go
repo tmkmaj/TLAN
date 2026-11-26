@@ -25,6 +25,7 @@ import (
 	"github.com/private-radminlan/lanmesh/internal/clientapi"
 	"github.com/private-radminlan/lanmesh/internal/diagreport"
 	frpctl "github.com/private-radminlan/lanmesh/internal/frp"
+	"github.com/private-radminlan/lanmesh/internal/mesh"
 	"github.com/private-radminlan/lanmesh/internal/netpolicy"
 )
 
@@ -359,5 +360,40 @@ func TestUploadFRPDiagnosticReportIncludesChecksAndCompleteReport(t *testing.T) 
 	}
 	if requests != 1 {
 		t.Fatalf("requests = %d, want 1", requests)
+	}
+}
+func TestDiagnosticExportIncludesMeshQualityTimeline(t *testing.T) {
+	at := time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
+	export := diagnosticExport{
+		SchemaVersion: diagnosticSchemaVersion,
+		AppVersion:    appVersion,
+		GeneratedAt:   at,
+		MeshQuality: &meshQualityDiagnostic{
+			SchemaVersion: 1,
+			Summary:       mesh.QualitySummary{Samples: 2, AverageRTTMillis: 35, MaxRTTMillis: 50, DroppedDelta: 3, DirectSamples: 1, RelaySamples: 1},
+			Samples: []mesh.QualitySample{
+				{At: at.Add(-time.Second), Path: "direct UDP", RTTMillis: 20, Sent: 100, Received: 90, Dropped: 1, ReachablePeers: 1, TotalPeers: 2},
+				{At: at, Path: "relay TCP/TLS", RTTMillis: 50, Sent: 200, Received: 170, Dropped: 4, ReachablePeers: 1, TotalPeers: 2},
+			},
+		},
+	}
+	dir := t.TempDir()
+	jsonPath, textPath, err := writeDiagnosticExport(dir, export, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	jsonData, err := os.ReadFile(jsonPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(jsonData), `"mesh_quality"`) || !strings.Contains(string(jsonData), `"relay_drops"`) {
+		t.Fatalf("quality timeline missing from JSON: %s", jsonData)
+	}
+	textData, err := os.ReadFile(textPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(textData), "网络质量") || !strings.Contains(string(textData), "relay TCP/TLS") {
+		t.Fatalf("quality timeline missing from text: %s", textData)
 	}
 }

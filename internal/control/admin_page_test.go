@@ -32,7 +32,7 @@ func TestAdminPageContainsRequiredUIAndNoSecrets(t *testing.T) {
 			t.Fatalf("login page missing %q", want)
 		}
 	}
-	if strings.Contains(loginPage, "Tmkmaj233") {
+	if strings.Contains(loginPage, "test-admin-token") {
 		t.Fatal("login page leaked admin token")
 	}
 	if strings.Contains(loginPage, "https://") || strings.Contains(loginPage, "http://") {
@@ -55,7 +55,7 @@ func TestAdminPageContainsRequiredUIAndNoSecrets(t *testing.T) {
 			t.Fatalf("authenticated page missing %q", want)
 		}
 	}
-	if strings.Contains(page, "Tmkmaj233") {
+	if strings.Contains(page, "test-admin-token") {
 		t.Fatal("authenticated page leaked admin token")
 	}
 	if strings.Contains(page, "https://") || strings.Contains(page, "http://") {

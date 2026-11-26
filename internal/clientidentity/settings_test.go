@@ -28,3 +28,30 @@ func TestSettingsResidentPreferencesRoundTrip(t *testing.T) {
 		t.Fatalf("resident preferences were not preserved: %+v", decoded)
 	}
 }
+func TestSettingsGameTuningRoundTrip(t *testing.T) {
+	encoded, err := json.Marshal(Settings{MTU: 1400, MultipathReplication: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded Settings
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.MTU != 1400 || !decoded.MultipathReplication {
+		t.Fatalf("game tuning was not preserved: %+v", decoded)
+	}
+}
+
+func TestSettingsAppearanceRoundTrip(t *testing.T) {
+	encoded, err := json.Marshal(Settings{Appearance: "dark"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded Settings
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Appearance != "dark" {
+		t.Fatalf("appearance was not preserved: %+v", decoded)
+	}
+}

@@ -12,6 +12,7 @@ import (
 	"net"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/private-radminlan/lanmesh/core"
@@ -30,7 +31,128 @@ var (
 	ErrRelayPacketTooLarge  = errors.New("relay packet exceeds limit")
 	ErrRelayCapacity        = errors.New("relay session capacity reached")
 	ErrRelayPeerUnavailable = errors.New("relay peer is not attached")
+	ErrRelayBackpressure    = errors.New("relay backpressure")
 )
+
+// RelayPriority is a caller-supplied queueing hint. The relay forwards opaque
+// (normally WireGuard-encrypted) payloads, so it cannot distinguish a
+// connectivity probe from business traffic on the wire and never classifies
+// packets itself. Callers that know a packet is expendable must mark it Low
+// explicitly. The zero value is Normal, which keeps Send/SendContext and all
+// existing callers on the durable path.
+type RelayPriority uint8
+
+const (
+	RelayPriorityNormal RelayPriority = iota
+	RelayPriorityLow
+)
+
+func (p RelayPriority) String() string {
+	if p == RelayPriorityLow {
+		return "low"
+	}
+	return "normal"
+}
+
+// RelayDropReason describes why a relay queue refused or discarded a packet.
+type RelayDropReason uint8
+
+const (
+	RelayDropNone RelayDropReason = iota
+	RelayDropQueueFull
+	RelayDropLowPriority
+	RelayDropOldest
+)
+
+func (r RelayDropReason) String() string {
+	switch r {
+	case RelayDropQueueFull:
+		return "queue full"
+	case RelayDropLowPriority:
+		return "low priority"
+	case RelayDropOldest:
+		return "oldest packet dropped"
+	default:
+		return "none"
+	}
+}
+
+// RelayBackpressureError reports that a relay queue is congested. Use
+// IsRelayBackpressure or errors.Is(err, ErrRelayBackpressure) to detect it.
+type RelayBackpressureError struct {
+	Priority RelayPriority
+	Reason   RelayDropReason
+}
+
+func (e *RelayBackpressureError) Error() string {
+	if e == nil {
+		return ErrRelayBackpressure.Error()
+	}
+	return "relay backpressure: " + e.Reason.String() + " (" + e.Priority.String() + " priority)"
+}
+
+func (e *RelayBackpressureError) Unwrap() error { return ErrRelayBackpressure }
+
+// IsRelayBackpressure reports whether err was caused by relay queue
+// congestion, allowing the mesh to back off instead of treating it as a
+// generic transport failure.
+func IsRelayBackpressure(err error) bool {
+	return errors.Is(err, ErrRelayBackpressure)
+}
+
+// RelayStats is a point-in-time, read-only view of relay queue pressure.
+// QueueDepth and QueueCapacity apply to a single connection's queue; the
+// broker-level view leaves them zero because it aggregates all sessions.
+type RelayStats struct {
+	Enqueued           int64 `json:"enqueued"`
+	DroppedQueueFull   int64 `json:"dropped_queue_full"`
+	DroppedLowPriority int64 `json:"dropped_low_priority"`
+	DroppedOldest      int64 `json:"dropped_oldest"`
+	BackpressureEvents int64 `json:"backpressure_events"`
+	WriteErrors        int64 `json:"write_errors"`
+	QueueDepth         int   `json:"queue_depth"`
+	QueueCapacity      int   `json:"queue_capacity"`
+}
+
+// relayCounters is safe for concurrent use. It is embedded by value and must
+// not be copied after first use.
+type relayCounters struct {
+	enqueued           atomic.Int64
+	droppedQueueFull   atomic.Int64
+	droppedLowPriority atomic.Int64
+	droppedOldest      atomic.Int64
+	backpressureEvents atomic.Int64
+	writeErrors        atomic.Int64
+}
+
+func (c *relayCounters) recordEnqueued() { c.enqueued.Add(1) }
+
+func (c *relayCounters) recordQueueFullAttempt() { c.backpressureEvents.Add(1) }
+
+func (c *relayCounters) recordDroppedLowPriority() {
+	c.droppedQueueFull.Add(1)
+	c.droppedLowPriority.Add(1)
+}
+
+func (c *relayCounters) recordDroppedOldest() {
+	c.droppedQueueFull.Add(1)
+	c.droppedOldest.Add(1)
+}
+
+func (c *relayCounters) recordDroppedFull() { c.droppedQueueFull.Add(1) }
+
+func (c *relayCounters) recordWriteError() { c.writeErrors.Add(1) }
+
+func (c *relayCounters) snapshot() RelayStats {
+	return RelayStats{
+		Enqueued:           c.enqueued.Load(),
+		DroppedQueueFull:   c.droppedQueueFull.Load(),
+		DroppedLowPriority: c.droppedLowPriority.Load(),
+		DroppedOldest:      c.droppedOldest.Load(),
+		BackpressureEvents: c.backpressureEvents.Load(),
+		WriteErrors:        c.writeErrors.Load(),
+	}
+}
 
 // RelayLimits bounds resources consumed by the relay. A zero value uses the
 // safe defaults; invalid negative values fall back to those safe defaults.
@@ -92,6 +214,7 @@ type RelayBroker struct {
 	idleTimeout time.Duration
 	now         func() time.Time
 	closed      bool
+	stats       relayCounters
 }
 
 func NewRelayBroker(packetLimit int) *RelayBroker {
@@ -115,6 +238,22 @@ func NewRelayBrokerWithLimits(limits RelayLimits) *RelayBroker {
 		return &RelayBroker{sessions: make(map[string]*relaySession), packetLimit: defaultRelayPacketLimit, queueDepth: defaultRelayQueueDepth, maxSessions: 4096, idleTimeout: 2 * time.Minute, now: time.Now}
 	}
 	return &RelayBroker{sessions: make(map[string]*relaySession), packetLimit: limits.PacketLimit, queueDepth: limits.QueueDepth, maxSessions: limits.MaxSessions, idleTimeout: limits.IdleTimeout, now: time.Now}
+}
+
+// Stats returns a concurrent-safe snapshot of all queue activity handled by
+// this broker. It never includes ticket secrets.
+func (b *RelayBroker) QueueDepth() int {
+	if b == nil {
+		return 0
+	}
+	return b.queueDepth
+}
+
+func (b *RelayBroker) Stats() RelayStats {
+	if b == nil {
+		return RelayStats{}
+	}
+	return b.stats.snapshot()
 }
 
 func (b *RelayBroker) CreateSession(source, target core.DeviceID, ttl time.Duration) (RelayTicket, error) {
@@ -281,21 +420,58 @@ type RelayConnection struct {
 	inbox   chan RelayMessage
 	done    chan struct{}
 	once    sync.Once
+	stats   relayCounters
 }
 
+// Stats returns a concurrent-safe snapshot attributed to this endpoint: sends
+// it performed and packets queued into its receive queue. QueueDepth and
+// QueueCapacity describe its own receive queue. The broker aggregates each
+// event once across all sessions.
+func (c *RelayConnection) Stats() RelayStats {
+	if c == nil {
+		return RelayStats{}
+	}
+	stats := c.stats.snapshot()
+	if c.inbox != nil {
+		stats.QueueDepth = len(c.inbox)
+		stats.QueueCapacity = cap(c.inbox)
+	}
+	return stats
+}
+
+// Send remains the Normal-priority entry point for every existing caller.
 func (c *RelayConnection) Send(data []byte) error {
-	return c.SendContext(context.Background(), data)
+	return c.SendContextWithPriority(context.Background(), data, RelayPriorityNormal)
 }
 
 func (c *RelayConnection) SendContext(ctx context.Context, data []byte) error {
+	return c.SendContextWithPriority(ctx, data, RelayPriorityNormal)
+}
+
+// SendWithPriority queues a packet with an explicit local priority hint.
+func (c *RelayConnection) SendWithPriority(data []byte, priority RelayPriority) error {
+	return c.SendContextWithPriority(context.Background(), data, priority)
+}
+
+// SendContextWithPriority queues a packet without blocking. When the peer
+// queue is full, Low packets are dropped and reported as backpressure. Normal
+// packets evict the oldest queued packet and then enqueue; every eviction is
+// counted in Stats and raises a backpressure event, so it is never silent.
+func (c *RelayConnection) SendContextWithPriority(ctx context.Context, data []byte, priority RelayPriority) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	if len(data) > c.broker.packetLimit {
 		return ErrRelayPacketTooLarge
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	c.session.mu.Lock()
 	defer c.session.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if c.session.closed || !c.session.ticket.Valid(c.broker.now()) {
 		c.closeLocked()
 		return ErrRelayClosed
@@ -313,15 +489,48 @@ func (c *RelayConnection) SendContext(ctx context.Context, data []byte) error {
 	if recipient == nil {
 		return ErrRelayPeerUnavailable
 	}
-	message := RelayMessage{From: c.device, To: recipient.device, Data: append([]byte(nil), data...)}
+	message := RelayMessage{From: c.device, To: recipient.device, Data: append([]byte{}, data...)}
 	select {
 	case recipient.inbox <- message:
 		c.session.lastActivity = c.broker.now()
+		recipient.stats.recordEnqueued()
+		c.stats.recordEnqueued()
+		c.broker.stats.recordEnqueued()
 		return nil
-	case <-ctx.Done():
-		return ctx.Err()
 	default:
-		return errors.New("relay peer queue is full")
+	}
+	recipient.stats.recordQueueFullAttempt()
+	c.stats.recordQueueFullAttempt()
+	c.broker.stats.recordQueueFullAttempt()
+	if priority == RelayPriorityLow {
+		recipient.stats.recordDroppedLowPriority()
+		c.stats.recordDroppedLowPriority()
+		c.broker.stats.recordDroppedLowPriority()
+		return &RelayBackpressureError{Priority: priority, Reason: RelayDropLowPriority}
+	}
+	droppedOldest := false
+	select {
+	case <-recipient.inbox:
+		droppedOldest = true
+	default:
+	}
+	select {
+	case recipient.inbox <- message:
+		c.session.lastActivity = c.broker.now()
+		if droppedOldest {
+			recipient.stats.recordDroppedOldest()
+			c.stats.recordDroppedOldest()
+			c.broker.stats.recordDroppedOldest()
+		}
+		c.stats.recordEnqueued()
+		recipient.stats.recordEnqueued()
+		c.broker.stats.recordEnqueued()
+		return nil
+	default:
+		recipient.stats.recordDroppedFull()
+		c.stats.recordDroppedFull()
+		c.broker.stats.recordDroppedFull()
+		return &RelayBackpressureError{Priority: priority, Reason: RelayDropQueueFull}
 	}
 }
 
@@ -332,6 +541,9 @@ func (c *RelayConnection) Receive() (RelayMessage, error) {
 func (c *RelayConnection) ReceiveContext(ctx context.Context) (RelayMessage, error) {
 	if ctx == nil {
 		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return RelayMessage{}, err
 	}
 	select {
 	case message := <-c.inbox:
@@ -498,7 +710,9 @@ func (s *RelayServer) serveAttached(conn net.Conn, endpoint *RelayConnection) er
 				return
 			}
 			if err := endpoint.Send(payload); err != nil {
-				if errors.Is(err, ErrRelayPeerUnavailable) {
+				if errors.Is(err, ErrRelayPeerUnavailable) || IsRelayBackpressure(err) {
+					// Congestion is transient and observable in RelayStats. Keep
+					// the stream alive so subsequent packets can still flow.
 					continue
 				}
 				errCh <- err

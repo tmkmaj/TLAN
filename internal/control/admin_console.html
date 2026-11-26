@@ -347,6 +347,8 @@ __INSECURE_BANNER__
             <dt>管理 TLS</dt><dd id="overview-admin-tls">–</dd>
             <dt>数据目录</dt><dd id="overview-data-dir">–</dd>
             <dt>Managed lease</dt><dd id="overview-frp-leases">–</dd>
+            <dt>端口映射范围</dt><dd id="overview-frp-ports">60000–61000</dd>
+            <dt>连接服务器显示</dt><dd id="overview-server-display">IP 地址</dd>
           </dl>
         </article>
         <article class="card">
@@ -358,14 +360,6 @@ __INSECURE_BANNER__
             <dt>已登记设备</dt><dd id="overview-devices">–</dd>
           </dl>
         </article>
-      </div>
-      <div class="notice">
-        <strong>封禁边界</strong>
-        <p>拉黑只对已知的 Device ID 和公钥生效。客户端删除本地身份并重新生成身份后，仍可能使用普通入网令牌重新入网。要阻止重装重入，需要额外的服务器邀请或批准名单。</p>
-      </div>
-      <div class="notice accent">
-        <strong>管理范围</strong>
-        <p>本控制台只管理配置中的私人网络。原始管理令牌不会写入页面、Cookie、URL 或错误响应；管理页通过会话 Cookie 和 CSRF token 操作。</p>
       </div>
     </section>
 
@@ -396,19 +390,13 @@ __INSECURE_BANNER__
         </table>
         <div id="members-empty" class="empty-state" hidden><strong>没有匹配的成员</strong>调整搜索条件或筛选器后再试。</div>
       </div>
-      <p class="table-footnote">在线 = 最近 30 秒内收到心跳且 Forwarding 开启；“活跃 Relay”是独立的控制面观测值，不等同于 WireGuard 数据面在线。</p>
     </section>
 
     <section id="panel-connections" class="panel" aria-labelledby="connections-title">
       <div class="section-head">
         <div>
           <h2 id="connections-title">连接状态</h2>
-          <p>成员心跳和 Relay 会话的控制面观察结果。</p>
         </div>
-      </div>
-      <div class="notice accent">
-        <strong>观测范围</strong>
-        <p>这里只展示控制面心跳和 RelayBroker 会话，不代表内核 WireGuard 数据面的完整流量遥测。连接快照不包含任何私钥、成员凭据或 Relay secret。</p>
       </div>
       <h3>Relay 活跃会话</h3>
       <div class="table-shell">
@@ -471,8 +459,43 @@ __INSECURE_BANNER__
           <button class="theme-option" type="button" data-theme-option="dark" aria-pressed="false">暗色</button>
         </div>
       </div>
+      <div class="settings-row">
+        <div>
+          <div class="settings-label">端口映射范围</div>
+          <div class="settings-note">限制成员可映射的服务器端口（默认 60000–61000）</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:6px;">
+          <input class="dialog-input" id="port-range-start" type="number" min="1" max="65535" value="60000" style="width:92px;padding:7px 9px;">
+          <span class="muted">–</span>
+          <input class="dialog-input" id="port-range-end" type="number" min="1" max="65535" value="61000" style="width:92px;padding:7px 9px;">
+          <button class="primary-button" id="port-range-save" type="button">保存</button>
+        </div>
+      </div>
+      <div class="settings-row">
+        <div>
+          <div class="settings-label">连接服务器显示</div>
+          <div class="settings-note">控制客户端首页显示自定义别名或真实 IP</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:flex-end;">
+          <select class="dialog-input" id="server-display-mode" style="width:124px;padding:7px 9px;">
+            <option value="ip">显示 IP 地址</option>
+            <option value="alias">自定义别名</option>
+          </select>
+          <input class="dialog-input" id="server-display-alias" type="text" maxlength="64" placeholder="输入服务器别名" style="width:140px;padding:7px 9px;">
+          <button class="primary-button" id="server-display-save" type="button">保存</button>
+        </div>
+      </div>
+      <div class="settings-row">
+        <div>
+          <div class="settings-label">网络名称</div>
+          <div class="settings-note">修改私人网络展示名称（最多 64 字）</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:6px;">
+          <input class="dialog-input" id="network-name-input" type="text" maxlength="64" placeholder="输入网络名称" style="width:200px;padding:7px 9px;">
+          <button class="primary-button" id="network-name-save" type="button">保存</button>
+        </div>
+      </div>
     </div>
-    <p class="settings-note settings-footnote">主题偏好不会写入管理令牌或服务端配置。</p>
   </div>
 </dialog>
 <div id="toast-region" class="toast-region" aria-live="polite" aria-atomic="false"></div>
@@ -621,7 +644,18 @@ __INSECURE_BANNER__
     setText('overview-admin-tls', data.admin_tls ? '已启用' : '未启用');
     setText('overview-data-dir', data.data_dir_summary || '–');
     setText('overview-frp-leases', data.frp_lease_count == null ? '–' : data.frp_lease_count + ' 条');
+    var pStart = data.frp_port_start || 60000;
+    var pEnd = data.frp_port_end || 61000;
+    setText('overview-frp-ports', pStart + '–' + pEnd);
+    if (byId('port-range-start') && document.activeElement !== byId('port-range-start')) { byId('port-range-start').value = pStart; }
+    if (byId('port-range-end') && document.activeElement !== byId('port-range-end')) { byId('port-range-end').value = pEnd; }
+    var sd = data.server_display || { mode: 'ip', alias: '' };
+    var sdSummary = sd.mode === 'alias' && sd.alias ? ('自定义别名 · ' + sd.alias) : '显示 IP 地址';
+    setText('overview-server-display', sdSummary);
+    if (byId('server-display-mode') && document.activeElement !== byId('server-display-mode')) { byId('server-display-mode').value = sd.mode === 'alias' ? 'alias' : 'ip'; }
+    if (byId('server-display-alias') && document.activeElement !== byId('server-display-alias')) { byId('server-display-alias').value = sd.alias || ''; }
     setText('overview-network', network.name || '–');
+    if (byId('network-name-input') && document.activeElement !== byId('network-name-input')) { byId('network-name-input').value = network.name || ''; }
     setText('overview-cidr', network.cidr || '–');
     setText('overview-network-id', network.id || '–');
     setText('overview-devices', network.devices == null ? (data.member_count == null ? '–' : data.member_count) : network.devices);
@@ -887,6 +921,50 @@ __INSECURE_BANNER__
   for (var t = 0; t < themeOptions.length; t += 1) {
     themeOptions[t].addEventListener('click', function () { applyTheme(this.getAttribute('data-theme-option')); });
   }
+  byId('port-range-save').addEventListener('click', async function () {
+    var start = parseInt(byId('port-range-start').value, 10);
+    var end = parseInt(byId('port-range-end').value, 10);
+    if (!start || !end || start < 1 || end > 65535 || start > end) {
+      toast('端口范围无效，请填写 1–65535 且起始端口不大于结束端口。', 'error');
+      return;
+    }
+    try {
+      await api('/admin/api/frp-port-range', { method: 'POST', body: { start: start, end: end } });
+      toast('端口映射范围已更新为 ' + start + '–' + end + '。', 'success');
+      await refreshAll();
+    } catch (err) {
+      toast(err.message || '保存端口范围失败。', 'error');
+    }
+  });
+  byId('server-display-save').addEventListener('click', async function () {
+    var mode = byId('server-display-mode').value;
+    var alias = byId('server-display-alias').value.trim();
+    if (mode === 'alias' && !alias) {
+      toast('选择自定义别名模式时，请输入服务器别名。', 'error');
+      return;
+    }
+    try {
+      await api('/admin/api/server-display', { method: 'POST', body: { mode: mode, alias: alias } });
+      toast('服务器显示配置已更新。', 'success');
+      await refreshAll();
+    } catch (err) {
+      toast(err.message || '保存服务器显示配置失败。', 'error');
+    }
+  });
+  byId('network-name-save').addEventListener('click', async function () {
+    var name = byId('network-name-input').value.trim();
+    if (!name) {
+      toast('网络名称不能为空。', 'error');
+      return;
+    }
+    try {
+      await api('/admin/api/network-name', { method: 'POST', body: { name: name } });
+      toast('网络名称已更新。', 'success');
+      await refreshAll();
+    } catch (err) {
+      toast(err.message || '保存网络名称失败。', 'error');
+    }
+  });
   updateThemeControls();
   refreshAll();
   window.setInterval(function () { if (!document.hidden) { refreshAll(); } }, 15000);

@@ -9,18 +9,22 @@ import (
 )
 
 type Settings struct {
-	ServerURL     string `json:"server_url"`
-	Token         string `json:"token"`
-	AdminToken    string `json:"admin_token,omitempty"`
-	STUNServer    string `json:"stun_server,omitempty"`
-	RelayOnly     bool   `json:"relay_only"`
-	NetworkID     string `json:"network_id,omitempty"`
-	DeviceName    string `json:"device_name,omitempty"`
-	NetworkName   string `json:"network_name,omitempty"`
-	NetworkCIDR   string `json:"network_cidr,omitempty"`
-	VirtualIP     string `json:"virtual_ip,omitempty"`
-	CloseToTray   bool   `json:"close_to_tray,omitempty"`
-	LaunchAtLogin bool   `json:"launch_at_login,omitempty"`
+	ServerURL            string `json:"server_url"`
+	Token                string `json:"token"`
+	AdminToken           string `json:"admin_token,omitempty"`
+	STUNServer           string `json:"stun_server,omitempty"`
+	RelayOnly            bool   `json:"relay_only"`
+	MTU                  int    `json:"mtu,omitempty"`
+	MultipathReplication bool   `json:"multipath_replication,omitempty"`
+	Appearance           string `json:"appearance,omitempty"`
+	Language             string `json:"language,omitempty"`
+	NetworkID            string `json:"network_id,omitempty"`
+	DeviceName           string `json:"device_name,omitempty"`
+	NetworkName          string `json:"network_name,omitempty"`
+	NetworkCIDR          string `json:"network_cidr,omitempty"`
+	VirtualIP            string `json:"virtual_ip,omitempty"`
+	CloseToTray          bool   `json:"close_to_tray,omitempty"`
+	LaunchAtLogin        bool   `json:"launch_at_login,omitempty"`
 }
 
 func settingsPath() (string, error) {

@@ -18,7 +18,7 @@ func TestLoadOrCreateGeneratesOnceThenLoads(t *testing.T) {
 	if !created {
 		t.Fatal("first call did not report a newly generated configuration")
 	}
-	if first.Security.AdminToken != "Tmkmaj233" || first.Network.JoinCode != "TmkNetwork" || first.Server.AdminListen != "127.0.0.1:8081" {
+	if len(first.Security.AdminToken) < 16 || len(first.Network.JoinCode) < 8 || first.Server.AdminListen != "127.0.0.1:8081" {
 		t.Fatalf("generated tokens/admin listener = %q/%q/%q", first.Security.AdminToken, first.Network.JoinCode, first.Server.AdminListen)
 	}
 	info, err := os.Stat(path)
@@ -149,7 +149,7 @@ func TestValidationErrorsAreActionable(t *testing.T) {
 	}
 }
 
-func TestGeneratedTokensUseRequestedStableDefaults(t *testing.T) {
+func TestGeneratedTokensAreRandomPerDefaultConfig(t *testing.T) {
 	first, err := newDefault()
 	if err != nil {
 		t.Fatal(err)
@@ -158,11 +158,11 @@ func TestGeneratedTokensUseRequestedStableDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if first.Security.AdminToken != "Tmkmaj233" || second.Security.AdminToken != "Tmkmaj233" {
-		t.Fatalf("admin tokens = %q/%q", first.Security.AdminToken, second.Security.AdminToken)
+	if first.Security.AdminToken == "" || second.Security.AdminToken == "" || first.Security.AdminToken == second.Security.AdminToken {
+		t.Fatalf("expected distinct generated admin tokens: %q / %q", first.Security.AdminToken, second.Security.AdminToken)
 	}
-	if first.Network.JoinCode != "TmkNetwork" || second.Network.JoinCode != "TmkNetwork" {
-		t.Fatalf("join codes = %q/%q", first.Network.JoinCode, second.Network.JoinCode)
+	if first.Network.JoinCode == "" || second.Network.JoinCode == "" || first.Network.JoinCode == second.Network.JoinCode {
+		t.Fatalf("expected distinct generated join codes: %q / %q", first.Network.JoinCode, second.Network.JoinCode)
 	}
 }
 
@@ -296,7 +296,7 @@ func TestDocumentedAdminConfigExampleLoads(t *testing.T) {
 	const example = `network:
   name: "我的私人网络"
   cidr: "10.240.0.0/24"
-  join_code: "TmkNetwork"
+  join_code: "test-join-code"
 server:
   listen: "127.0.0.1:8080"
   stun_listen: ":3478"
@@ -307,7 +307,7 @@ server:
 storage:
   data_dir: "./data"
 security:
-  admin_token: "Tmkmaj233"
+  admin_token: "test-admin-token"
 frp:
   mode: "disabled"
   core_version: "0.71.1"
@@ -320,7 +320,7 @@ frp:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Network.JoinCode != "TmkNetwork" || cfg.Security.AdminToken != "Tmkmaj233" || cfg.Server.AdminListen != "127.0.0.1:8081" {
+	if cfg.Network.JoinCode != "test-join-code" || cfg.Security.AdminToken != "test-admin-token" || cfg.Server.AdminListen != "127.0.0.1:8081" {
 		t.Fatalf("loaded admin example = %q/%q/%q", cfg.Network.JoinCode, cfg.Security.AdminToken, cfg.Server.AdminListen)
 	}
 }
@@ -328,7 +328,7 @@ func TestLegacyConfigWithoutAdminFieldsDisablesAdminConsole(t *testing.T) {
 	const legacy = `network:
   name: "旧部署"
   cidr: "10.240.0.0/24"
-  join_code: "TmkNetwork"
+  join_code: "test-join-code"
 server:
   listen: "127.0.0.1:8080"
   stun_listen: ":3478"
@@ -340,7 +340,7 @@ server:
 storage:
   data_dir: "./data"
 security:
-  admin_token: "Tmkmaj233"
+  admin_token: "test-admin-token"
 frp:
   mode: "disabled"
   core_version: "0.71.1"
@@ -355,5 +355,23 @@ frp:
 	}
 	if cfg.Server.AdminListen != "" || cfg.Server.AdminAllowInsecureHTTP {
 		t.Fatalf("legacy admin defaults = %q/%v", cfg.Server.AdminListen, cfg.Server.AdminAllowInsecureHTTP)
+	}
+}
+func TestRelayQueueDepthValidation(t *testing.T) {
+	cfg, err := newDefault()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, value := range []int{-1, 8193} {
+		cfg.Server.RelayQueueDepth = value
+		if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "relay_queue_depth") {
+			t.Fatalf("RelayQueueDepth=%d validation = %v", value, err)
+		}
+	}
+	for _, value := range []int{0, 1, 128, 8192} {
+		cfg.Server.RelayQueueDepth = value
+		if err := cfg.Validate(); err != nil {
+			t.Fatalf("RelayQueueDepth=%d validation = %v", value, err)
+		}
 	}
 }

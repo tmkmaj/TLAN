@@ -37,8 +37,11 @@ type AdminOverview struct {
 	BlockedCount   int     `json:"blocked_count"`
 	RelayStatus    string  `json:"relay_status"`
 	RelaySessions  int     `json:"relay_sessions"`
-	FRPStatus      string  `json:"frp_status"`
-	FRPLeaseCount  int     `json:"frp_lease_count"`
+	FRPStatus      string              `json:"frp_status"`
+	FRPLeaseCount  int                 `json:"frp_lease_count"`
+	FRPPortStart   int                 `json:"frp_port_start"`
+	FRPPortEnd     int                 `json:"frp_port_end"`
+	ServerDisplay  ServerDisplayConfig `json:"server_display"`
 }
 
 type AdminMember struct {
@@ -115,6 +118,24 @@ func (c *AdminClient) BanMember(deviceID string) error {
 func (c *AdminClient) UnbanMember(deviceID string) (AdminMember, error) {
 	var response AdminMember
 	err := c.request(http.MethodPost, "/api/v1/admin/members/"+url.PathEscape(deviceID)+"/unban", nil, &response)
+	return response, err
+}
+
+func (c *AdminClient) SetFRPPortRange(start, end int) (PortRange, error) {
+	var response PortRange
+	err := c.request(http.MethodPost, "/api/v1/admin/frp-port-range", PortRange{Start: start, End: end}, &response)
+	return response, err
+}
+
+func (c *AdminClient) SetServerDisplay(mode, alias string) (ServerDisplayConfig, error) {
+	var response ServerDisplayConfig
+	err := c.request(http.MethodPost, "/api/v1/admin/server-display", ServerDisplayConfig{Mode: mode, Alias: alias}, &response)
+	return response, err
+}
+
+func (c *AdminClient) RenameNetwork(name string) (Network, error) {
+	var response Network
+	err := c.request(http.MethodPost, "/api/v1/admin/network-name", map[string]string{"name": name}, &response)
 	return response, err
 }
 

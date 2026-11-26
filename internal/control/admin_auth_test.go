@@ -17,9 +17,9 @@ func adminLoginRequest(body string) *http.Request {
 }
 
 func TestAdminAuthLoginSessionAndCSRF(t *testing.T) {
-	auth := newAdminAuth("Tmkmaj233", false)
+	auth := newAdminAuth("test-admin-token", false)
 	login := httptest.NewRecorder()
-	auth.login(login, adminLoginRequest(`{"token":"Tmkmaj233"}`))
+	auth.login(login, adminLoginRequest(`{"token":"test-admin-token"}`))
 	if login.Code != http.StatusOK {
 		t.Fatalf("login status = %d body=%s", login.Code, login.Body.String())
 	}
@@ -61,7 +61,7 @@ func TestAdminAuthLoginSessionAndCSRF(t *testing.T) {
 }
 
 func TestAdminAuthWrongTokenAndRateLimit(t *testing.T) {
-	auth := newAdminAuth("Tmkmaj233", false)
+	auth := newAdminAuth("test-admin-token", false)
 	for i := 0; i < adminLoginLimit; i++ {
 		rec := httptest.NewRecorder()
 		auth.login(rec, adminLoginRequest(`{"token":"wrong"}`))
@@ -77,11 +77,11 @@ func TestAdminAuthWrongTokenAndRateLimit(t *testing.T) {
 }
 
 func TestAdminAuthLogoutAndExpiry(t *testing.T) {
-	auth := newAdminAuth("Tmkmaj233", true)
+	auth := newAdminAuth("test-admin-token", true)
 	now := time.Unix(1000, 0)
 	auth.now = func() time.Time { return now }
 	rec := httptest.NewRecorder()
-	auth.login(rec, adminLoginRequest(`{"token":"Tmkmaj233"}`))
+	auth.login(rec, adminLoginRequest(`{"token":"test-admin-token"}`))
 	cookie := rec.Result().Cookies()[0]
 	if !cookie.Secure {
 		t.Fatal("secure mode did not set Secure cookie")
@@ -96,7 +96,7 @@ func TestAdminAuthLogoutAndExpiry(t *testing.T) {
 		t.Fatal("expired session was authorized")
 	}
 	rec = httptest.NewRecorder()
-	auth.login(rec, adminLoginRequest(`{"token":"Tmkmaj233"}`))
+	auth.login(rec, adminLoginRequest(`{"token":"test-admin-token"}`))
 	cookie = rec.Result().Cookies()[0]
 	req = httptest.NewRequest(http.MethodPost, "/admin/logout", nil)
 	req.AddCookie(cookie)
@@ -109,9 +109,9 @@ func TestAdminAuthLogoutAndExpiry(t *testing.T) {
 	}
 }
 func TestAdminAuthSessionInfo(t *testing.T) {
-	auth := newAdminAuth("Tmkmaj233", false)
+	auth := newAdminAuth("test-admin-token", false)
 	rec := httptest.NewRecorder()
-	auth.login(rec, adminLoginRequest(`{"token":"Tmkmaj233"}`))
+	auth.login(rec, adminLoginRequest(`{"token":"test-admin-token"}`))
 	cookie := rec.Result().Cookies()[0]
 	req := httptest.NewRequest(http.MethodGet, "/admin/api/session", nil)
 	req.AddCookie(cookie)

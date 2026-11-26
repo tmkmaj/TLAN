@@ -13,7 +13,7 @@ import (
 
 func openTunnel(name string, address netip.Prefix, mtu int, _ TunnelOptions) (*IPTunnel, error) {
 	if name == "" {
-		name = "tmklan0"
+		name = "tlan0"
 	}
 	device, err := tun.CreateTUN(name, mtu)
 	if err != nil {

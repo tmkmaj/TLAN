@@ -1,6 +1,6 @@
 # Third-party components
 
-TmkNetworkLAN uses independently developed, unmodified third-party components.
+TLAN uses independently developed, unmodified third-party components.
 The project is not affiliated with Radmin, WireGuard LLC, or Wintun.
 
 - wireguard-go, MIT: golang.zx2c4.com/wireguard, pinned in go.mod.

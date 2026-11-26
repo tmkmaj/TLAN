@@ -14,7 +14,7 @@ import (
 
 const (
 	startupRunKeyPath = `Software\Microsoft\Windows\CurrentVersion\Run`
-	startupValueName  = "TmkNetworkLAN"
+	startupValueName  = "TLAN"
 	startupArgument   = "--startup"
 )
 

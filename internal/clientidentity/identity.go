@@ -39,7 +39,7 @@ func DefaultPath() (string, error) {
 }
 
 func configDirectory(userConfig string) (string, error) {
-	current := filepath.Join(userConfig, "TmkNetworkLAN")
+	current := filepath.Join(userConfig, "TLAN")
 	legacy := filepath.Join(userConfig, "LANMesh")
 	for _, name := range []string{"identity.json", "settings.json"} {
 		if _, err := os.Stat(filepath.Join(current, name)); err == nil {

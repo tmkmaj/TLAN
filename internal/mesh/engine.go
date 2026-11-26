@@ -20,14 +20,16 @@ import (
 )
 
 type Options struct {
-	API           *clientapi.Client
-	Identity      clientidentity.Identity
-	Network       clientapi.Network
-	Member        clientapi.Device
-	InterfaceName string
-	STUNServer    string
-	RelayOnly     bool
-	TrustedRoots  *x509.CertPool
+	API                   *clientapi.Client
+	Identity              clientidentity.Identity
+	Network               clientapi.Network
+	Member                clientapi.Device
+	InterfaceName         string
+	STUNServer            string
+	RelayOnly             bool
+	MTU                   int
+	ReplicateSmallPackets bool
+	TrustedRoots          *x509.CertPool
 	// Native is injectable for end-to-end tests without installing a driver.
 	Native tun.Device
 	// Ledger, Cleaner, Runner and InstanceID are injectable for recovery tests.
@@ -44,6 +46,8 @@ type PeerStatus struct {
 	ID, Name, IP, Path string
 	Handshake          time.Time
 	RTT                time.Duration
+	RelayQueueDepth    int
+	RelayQueueCapacity int
 }
 type Status struct {
 	Running                 bool
@@ -85,6 +89,7 @@ type Engine struct {
 	recovery             platform.RecoveryStatus
 	transport            []platform.ResourceRecord
 	cleanupError         string
+	quality              *QualityHistory
 }
 
 func Start(parent context.Context, options Options) (*Engine, error) {
@@ -155,17 +160,20 @@ func Start(parent context.Context, options Options) (*Engine, error) {
 		generation: 1, generationDone: make(chan struct{}),
 		instanceID: instanceID, ledger: ledger, cleaner: cleaner, recovery: recovery,
 	}
-	e.plain = newTunnel(local, prefix)
+	meshMTU := normalizeMeshMTU(options.MTU)
+	e.plain = newTunnel(local, prefix, meshMTU)
+	e.quality = NewQualityHistory(DefaultQualityCapacity)
 	e.bind, err = newBind(local, options.Network.ID, options.Identity.PrivateKey)
 	if err != nil {
 		cancel()
 		return nil, err
 	}
 	e.bind.relayOnly = options.RelayOnly
+	e.bind.replicateSmallPackets = options.ReplicateSmallPackets && !options.RelayOnly
 	e.bind.onDrop = func() { e.plain.Dropped.Add(1) }
 	e.native = options.Native
 	if e.native == nil {
-		e.native, err = platform.OpenTunnelWithOptions(options.InterfaceName, netip.PrefixFrom(local, prefix.Bits()), MTU, platform.TunnelOptions{
+		e.native, err = platform.OpenTunnelWithOptions(options.InterfaceName, netip.PrefixFrom(local, prefix.Bits()), meshMTU, platform.TunnelOptions{
 			InstanceID: instanceID,
 			Ledger:     ledger,
 			Cleaner:    cleaner,
@@ -212,10 +220,24 @@ func Start(parent context.Context, options Options) (*Engine, error) {
 		}
 		return nil, err
 	}
-	e.wgLoops.Add(4)
+	e.wgLoops.Add(5)
 	go e.readNative()
 	go e.writeNative()
 	go e.controlLoop()
+	go func() {
+		defer e.wgLoops.Done()
+		ticker := time.NewTicker(time.Second)
+		defer ticker.Stop()
+		e.recordQualitySample()
+		for {
+			select {
+			case <-e.ctx.Done():
+				return
+			case <-ticker.C:
+				e.recordQualitySample()
+			}
+		}
+	}()
 	go func() {
 		defer e.wgLoops.Done()
 		ticker := time.NewTicker(2 * time.Second)

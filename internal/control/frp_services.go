@@ -8,6 +8,7 @@ import (
 
 	"github.com/private-radminlan/lanmesh/core"
 	"github.com/private-radminlan/lanmesh/internal/frpauth"
+	"github.com/private-radminlan/lanmesh/internal/storage"
 )
 
 type frpServiceRequest struct {
@@ -40,6 +41,60 @@ func (s *Server) frpCapabilities(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, s.FRP.Capabilities())
+}
+
+func (s *Server) effectiveFRPPortRange() storage.PortRange {
+	if s.Store != nil && s.Store.HasFRPPortRange() {
+		return s.Store.FRPPortRange()
+	}
+	if s.FRP != nil {
+		if ports := s.FRP.AllowedPorts(); len(ports) > 0 {
+			return storage.PortRange{Start: ports[0].Start, End: ports[0].End}
+		}
+	}
+	if s.Store != nil {
+		return s.Store.FRPPortRange()
+	}
+	return storage.DefaultFRPPortRange
+}
+
+type FRPBootstrapConfig struct {
+	Enabled       bool   `json:"enabled"`
+	Mode          string `json:"mode,omitempty"`
+	Host          string `json:"host,omitempty"`
+	Port          int    `json:"port,omitempty"`
+	Transport     string `json:"transport,omitempty"`
+	TLSServerName string `json:"tls_server_name,omitempty"`
+	ServerID      string `json:"server_id,omitempty"`
+	Token         string `json:"token,omitempty"`
+	CAPEM         string `json:"ca_pem,omitempty"`
+}
+
+func (s *Server) frpBootstrap(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	if s.FRPBootstrap == nil {
+		writeJSON(w, http.StatusOK, FRPBootstrapConfig{Enabled: false})
+		return
+	}
+	cfg, err := s.FRPBootstrap()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load FRP bootstrap config")
+		return
+	}
+	writeJSON(w, http.StatusOK, cfg)
+}
+
+func (s *Server) frpPortRange(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, s.effectiveFRPPortRange())
 }
 func (s *Server) frpServices(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")

@@ -16,14 +16,14 @@ func adminStorageFixture(t *testing.T) (*Store, NetworkSummary, Device) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	network, err := store.EnsurePrivateNetwork("Admin", "TmkNetwork", "10.250.0.0/24")
+	network, err := store.EnsurePrivateNetwork("Admin", "test-join-code", "10.250.0.0/24")
 	if err != nil {
 		t.Fatal(err)
 	}
 	_, member, _, err := store.EnrollPrivate(core.RegisterDeviceRequest{
 		DeviceID:           "device-admin-test",
 		WireGuardPublicKey: base64.StdEncoding.EncodeToString(make([]byte, 32)),
-	}, "TmkNetwork")
+	}, "test-join-code")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,7 +68,7 @@ func TestBlockedDeviceIsFilteredAndCannotReenroll(t *testing.T) {
 		t.Fatalf("heartbeat error = %v, want ErrBlocked", err)
 	}
 	request := core.RegisterDeviceRequest{DeviceID: core.DeviceID(member.ID), WireGuardPublicKey: member.PublicKey}
-	if _, _, _, err := store.EnrollPrivate(request, "TmkNetwork"); !errors.Is(err, ErrBlocked) {
+	if _, _, _, err := store.EnrollPrivate(request, "test-join-code"); !errors.Is(err, ErrBlocked) {
 		t.Fatalf("reenroll error = %v, want ErrBlocked", err)
 	}
 	visible, err := store.ListDevices(network.ID)
@@ -82,14 +82,14 @@ func TestBlockedDeviceIsFilteredAndCannotReenroll(t *testing.T) {
 	if _, err := store.SetDeviceBlocked(network.ID, member.ID, false); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, _, err := store.EnrollPrivate(request, "TmkNetwork"); err != nil {
+	if _, _, _, err := store.EnrollPrivate(request, "test-join-code"); err != nil {
 		t.Fatalf("unblocked reenroll failed: %v", err)
 	}
 }
 
 func TestRevokeMemberCredentials(t *testing.T) {
 	store, network, member := adminStorageFixture(t)
-	_, _, token, err := store.EnrollPrivate(core.RegisterDeviceRequest{DeviceID: core.DeviceID(member.ID), WireGuardPublicKey: member.PublicKey}, "TmkNetwork")
+	_, _, token, err := store.EnrollPrivate(core.RegisterDeviceRequest{DeviceID: core.DeviceID(member.ID), WireGuardPublicKey: member.PublicKey}, "test-join-code")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -155,5 +155,24 @@ func TestEnrollPrivateAsAdminRejectsBlockedDevice(t *testing.T) {
 	_, _, _, err := store.EnrollPrivateAsAdmin(core.RegisterDeviceRequest{DeviceID: core.DeviceID(member.ID), WireGuardPublicKey: member.PublicKey})
 	if !errors.Is(err, ErrBlocked) {
 		t.Fatalf("blocked admin enrollment error = %v, want ErrBlocked", err)
+	}
+}
+
+func TestEnrollPrivateUpdatesCustomDisplayName(t *testing.T) {
+	store, network, member := adminStorageFixture(t)
+	_, updated, _, err := store.EnrollPrivate(core.RegisterDeviceRequest{
+		DeviceID:           core.DeviceID(member.ID),
+		DisplayName:        "CustomPlayerOne",
+		WireGuardPublicKey: member.PublicKey,
+	}, "test-join-code")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.ID != member.ID || updated.VirtualIP != member.VirtualIP || updated.Name != "CustomPlayerOne" {
+		t.Fatalf("reenroll with custom DisplayName = %+v", updated)
+	}
+	devices, err := store.ListDevices(network.ID)
+	if err != nil || len(devices) != 1 || devices[0].Name != "CustomPlayerOne" {
+		t.Fatalf("listed devices after reenroll rename = %+v, err=%v", devices, err)
 	}
 }

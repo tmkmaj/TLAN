@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"golang.org/x/sys/windows"
-	"golang.zx2c4.com/wireguard/tun"
 )
 
 func commandWindowsWithRunner(runner Runner, program string, args ...string) error {
@@ -34,17 +33,17 @@ func commandOutputWithRunner(runner Runner, program string, args ...string) ([]b
 
 func openTunnel(name string, address netip.Prefix, mtu int, options TunnelOptions) (*IPTunnel, error) {
 	if name == "" {
-		name = "LANMesh"
+		name = defaultAdapterName
 	}
 	// Do not reconfigure a pre-existing interface that another application owns.
 	if _, err := net.InterfaceByName(name); err == nil {
-		return nil, fmt.Errorf("interface %q already exists; close the other TmkNetworkLAN instance first", name)
+		return nil, fmt.Errorf("interface %q already exists; close the other TLAN instance first", name)
 	}
 	requestedGUID, err := windows.GenerateGUID()
 	if err != nil {
 		return nil, fmt.Errorf("generate Wintun adapter GUID: %w", err)
 	}
-	device, err := tun.CreateTUNWithRequestedGUID(name, &requestedGUID, mtu)
+	device, err := createWintunTunnel(name, &requestedGUID, mtu)
 	if err != nil {
 		return nil, fmt.Errorf("create Wintun: %w (administrator permission and wintun.dll beside EXE are required)", err)
 	}
@@ -119,7 +118,7 @@ func openTunnel(name string, address netip.Prefix, mtu int, options TunnelOption
 	}
 
 	mask := net.IP(net.CIDRMask(address.Bits(), 32)).String()
-	firewallName := "LANMesh-" + name
+	firewallName := "TLAN-" + name
 	// Create the limited-broadcast and multicast routes before assigning the
 	// address. This preserves the original Windows setup order and avoids
 	// colliding with routes Windows may add for a newly assigned address.

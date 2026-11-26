@@ -28,7 +28,7 @@ func TestFRPSEgressRejectsTLANLiteral(t *testing.T) {
 func TestFRPSEgressRejectsObservedTLANInterface(t *testing.T) {
 	cfg := testConfig(t)
 	observer := egressTestObserver{routes: []netpolicy.Route{{
-		Destination: netip.MustParseAddr("198.51.100.10"), InterfaceName: "LANMesh",
+		Destination: netip.MustParseAddr("198.51.100.10"), InterfaceName: "TLAN",
 		InterfacePrefixes: []netip.Prefix{netip.MustParsePrefix("100.64.0.1/10")},
 	}}}
 	err := checkFRPSEgress(context.Background(), observer, cfg, []netip.Prefix{netip.MustParsePrefix("100.64.0.0/10")})

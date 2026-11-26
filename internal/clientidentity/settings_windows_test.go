@@ -25,7 +25,7 @@ func TestSaveSettingsPersistsResidentPreferences(t *testing.T) {
 
 func TestSaveSettingsProtectsAdminToken(t *testing.T) {
 	t.Setenv("AppData", t.TempDir())
-	want := Settings{ServerURL: "https://example.test", Token: "member_test", AdminToken: "Tmkmaj233"}
+	want := Settings{ServerURL: "https://example.test", Token: "member_test", AdminToken: "test-admin-token"}
 	if err := SaveSettings(want); err != nil {
 		t.Fatal(err)
 	}
@@ -44,7 +44,7 @@ func TestSaveSettingsProtectsAdminToken(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if bytes.Contains(raw, []byte("Tmkmaj233")) {
+	if bytes.Contains(raw, []byte("test-admin-token")) {
 		t.Fatal("admin token was persisted as plaintext")
 	}
 }

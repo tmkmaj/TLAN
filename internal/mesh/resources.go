@@ -18,7 +18,7 @@ func (e *Engine) registerTransportResources() error {
 		name         string
 	}{
 		{platform.ResourceWireGuardTransport, "wireguard-go"},
-		{platform.ResourcePlainTransport, "TmkNetworkLAN-encrypted"},
+		{platform.ResourcePlainTransport, "TLAN-encrypted"},
 	}
 	for _, spec := range specs {
 		record, err := platform.NewResourceRecord(e.instanceID, spec.resourceType, spec.name, e.options.Network.CIDR, "")

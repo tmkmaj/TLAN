@@ -61,7 +61,12 @@ func (e *Engine) Status() Status {
 		if reachable {
 			rtt = probeRTT
 		}
-		result.Peers = append(result.Peers, PeerStatus{ID: p.ID, Name: p.Name, IP: p.VirtualIP, Path: path, RTT: rtt, Reachable: reachable, Handshake: handshakes[hex.EncodeToString(key)]})
+		var relayQueueDepth, relayQueueCapacity int
+		if r := e.bind.routes[ip]; r != nil && r.relay != nil {
+			relayStats := r.relay.Stats()
+			relayQueueDepth, relayQueueCapacity = relayStats.QueueDepth, relayStats.QueueCapacity
+		}
+		result.Peers = append(result.Peers, PeerStatus{ID: p.ID, Name: p.Name, IP: p.VirtualIP, Path: path, RTT: rtt, Reachable: reachable, Handshake: handshakes[hex.EncodeToString(key)], RelayQueueDepth: relayQueueDepth, RelayQueueCapacity: relayQueueCapacity})
 	}
 	e.bind.mu.RUnlock()
 	sort.Slice(result.Peers, func(i, j int) bool { return strings.Compare(result.Peers[i].IP, result.Peers[j].IP) < 0 })
@@ -80,6 +85,16 @@ func (e *Engine) Diagnostics() []clientapi.DiagnosticCheck {
 			detail += ": " + recovery.Issues[0].Error
 		}
 		checks = append(checks, clientapi.DiagnosticCheck{Name: "resource_recovery", Status: "warn", Detail: diagnosticDetail(detail), Checked: time.Now().UTC()})
+	}
+	if samples := e.Quality(); len(samples) > 0 {
+		summary := e.QualitySummary()
+		level := "pass"
+		if summary.RelaySamples > summary.DirectSamples || summary.MaxRTTMillis > 250 || summary.DroppedDelta > 0 {
+			level = "warn"
+		}
+		detail := fmt.Sprintf("samples=%d avg_rtt_ms=%d max_rtt_ms=%d dropped_delta=%d direct=%d relay=%d",
+			summary.Samples, summary.AverageRTTMillis, summary.MaxRTTMillis, summary.DroppedDelta, summary.DirectSamples, summary.RelaySamples)
+		checks = append(checks, clientapi.DiagnosticCheck{Name: "network_quality", Status: level, Detail: detail, Checked: time.Now().UTC()})
 	}
 	return checks
 }

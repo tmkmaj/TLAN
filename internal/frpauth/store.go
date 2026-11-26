@@ -1129,10 +1129,36 @@ func (s *Store) Capabilities() Capabilities {
 	defer s.mu.Unlock()
 	return Capabilities{
 		Mode: ModeManaged, CoreVersion: s.coreVersion, ServerID: s.serverID,
-		LeaseTTL:  int64(s.leaseTTL / time.Second),
-		PluginOps: []string{"Login", "NewProxy", "Ping", "NewUserConn"},
-		Features:  []string{"managed-leases", "lease-renewal", "lease-revocation", "mesh-target-grants", "target-service-authorization", "target-member-approval"},
+		LeaseTTL:     int64(s.leaseTTL / time.Second),
+		AllowedPorts: append([]PortRange(nil), s.ports...),
+		PluginOps:    []string{"Login", "NewProxy", "Ping", "NewUserConn"},
+		Features:     []string{"managed-leases", "lease-renewal", "lease-revocation", "mesh-target-grants", "target-service-authorization", "target-member-approval"},
 	}
+}
+
+// AllowedPorts returns a copy of the active managed remote port allowlist.
+func (s *Store) AllowedPorts() []PortRange {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]PortRange(nil), s.ports...)
+}
+
+// SetAllowedPorts updates the managed remote port allowlist and revokes active
+// leases that violate the updated policy.
+func (s *Store) SetAllowedPorts(ranges []PortRange) error {
+	normalized, err := normalizePortRanges(ranges)
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	prev := s.ports
+	s.ports = normalized
+	if err := s.reconcileLoadedPolicyLocked(); err != nil {
+		s.ports = prev
+		return err
+	}
+	return nil
 }
 
 // Status reports whether FRPS has observed the lease and its proxy. It does

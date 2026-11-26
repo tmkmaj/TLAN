@@ -7,19 +7,19 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/lxn/walk"
 	. "github.com/lxn/walk/declarative"
+	"github.com/private-radminlan/lanmesh/internal/clientapi"
 	"github.com/private-radminlan/lanmesh/internal/clientui"
 	frpctl "github.com/private-radminlan/lanmesh/internal/frp"
+	"github.com/private-radminlan/lanmesh/internal/frpauth"
 )
 
 type frpEntryRef struct {
-	kind  string
 	index int
 }
 
@@ -54,11 +54,109 @@ func (m *frpRuleTableModel) setRows(rows [][]string) {
 	m.PublishRowsReset()
 }
 
+func (a *desktop) frpServerHost() string {
+	if a != nil && a.api != nil && strings.TrimSpace(a.api.BaseURL) != "" {
+		if h := hostFromServerURL(a.api.BaseURL); h != "" {
+			return h
+		}
+	}
+	return hostFromServerURL(bundledServerURL)
+}
+
+func bindFRPServerToHost(cfg frpctl.Config, host string) frpctl.Config {
+	out := frpctl.CloneConfig(cfg)
+	host = strings.TrimSpace(host)
+	if host != "" {
+		prev := strings.TrimSpace(out.Profile.Server.Host)
+		out.Profile.Server.Host = host
+		if strings.TrimSpace(out.Profile.Server.TLSServerName) == "" || strings.EqualFold(strings.TrimSpace(out.Profile.Server.TLSServerName), prev) {
+			out.Profile.Server.TLSServerName = host
+		}
+	}
+	if out.Profile.Server.Port == 0 {
+		out.Profile.Server.Port = 7000
+	}
+	if out.Profile.Server.Transport == "" {
+		out.Profile.Server.Transport = "tcp"
+	}
+	if out.Profile.Server.CredentialRef == "" {
+		out.Profile.Server.CredentialRef = frpctl.DefaultCredential
+	}
+	return out
+}
+
+func resolveFRPServerMode(caps frpauth.Capabilities, err error) (string, string) {
+	if err == nil && strings.EqualFold(strings.TrimSpace(caps.Mode), frpauth.ModeManaged) && strings.TrimSpace(caps.ServerID) != "" {
+		return "managed", strings.TrimSpace(caps.ServerID)
+	}
+	return "private_token", ""
+}
+
+func (a *desktop) activeFRPPortRange() clientapi.PortRange {
+	if a != nil && a.frpPortRange.Start >= 1 && a.frpPortRange.End <= 65535 && a.frpPortRange.Start <= a.frpPortRange.End {
+		return a.frpPortRange
+	}
+	return clientapi.DefaultFRPPortRange
+}
+
+func (a *desktop) applyFRPPortRange(r clientapi.PortRange) {
+	if r.Start < 1 || r.End > 65535 || r.Start > r.End {
+		r = clientapi.DefaultFRPPortRange
+	}
+	changed := a.frpPortRange != r
+	a.frpPortRange = r
+	setLabelIfChanged(a.frpPortRangeHint, trf("允许范围 %d-%d", "Allowed %d-%d", r.Start, r.End))
+	if a.frpQuickRemotePort != nil {
+		cue := strconv.Itoa(r.Start)
+		if changed || a.frpQuickRemotePort.CueBanner() != cue {
+			_ = a.frpQuickRemotePort.SetCueBanner(cue)
+		}
+		if cur, err := strconv.Atoi(strings.TrimSpace(a.frpQuickRemotePort.Text())); err != nil || cur < r.Start || cur > r.End {
+			a.prefillQuickRemotePort(true)
+		}
+	}
+}
+
+func (a *desktop) refreshFRPPortRange() {
+	if a == nil || a.smokeMode || a.frpPortRangeLoading || a.api == nil || strings.TrimSpace(a.api.BaseURL) == "" {
+		return
+	}
+	a.frpPortRangeLoading = true
+	apiCopy := *a.api
+	go func() {
+		parent := a.ctx
+		if parent == nil {
+			parent = context.Background()
+		}
+		ctx, cancel := context.WithTimeout(parent, 3*time.Second)
+		apiCopy.Context = ctx
+		got, err := apiCopy.FRPPortRange()
+		cancel()
+		a.ui(func() {
+			a.frpPortRangeLoading = false
+			if err == nil {
+				a.applyFRPPortRange(got)
+			}
+		})
+	}()
+}
+
+func (a *desktop) syncFRPServerHost() {
+	if a == nil {
+		return
+	}
+	a.frpConfig = bindFRPServerToHost(a.frpConfig, a.frpServerHost())
+	a.renderFRPState()
+	a.updateFRPRows()
+	a.updateFRPButtons()
+}
+
 func (a *desktop) initializeFRPUI() {
-	a.frpConfig = frpctl.NewDefaultConfig()
+	a.frpConfig = bindFRPServerToHost(frpctl.NewDefaultConfig(), a.frpServerHost())
+	a.frpPortRange = clientapi.DefaultFRPPortRange
 	a.frpRuleModel = &frpRuleTableModel{}
 	a.frpSnapshot = frpctl.Snapshot{State: "stopped", CoreVersion: frpctl.CoreVersion}
-	a.frpProfiles = []frpctl.ProfileInfo{{ID: frpctl.DefaultProfileID, Name: "默认穿透服务器"}}
+	a.frpProfiles = []frpctl.ProfileInfo{{ID: frpctl.DefaultProfileID, Name: "默认端口映射"}}
 	a.frpManagers = make(map[string]*frpctl.Manager)
 	a.frpLeaseProviders = make(map[string]*frpLeaseProvider)
 	a.frpManagerErrors = make(map[string]error)
@@ -132,34 +230,16 @@ func (a *desktop) refreshFRPIdentity() {
 		}
 		delete(a.frpManagerErrors, id)
 		if provider := a.frpLeaseProviders[id]; provider != nil {
+			provider.UpdateClient(a.api)
 			provider.UpdateIdentity(a.membership.Network.ID, a.identity.DeviceID.String())
 		}
 	}
 }
 
-func (a *desktop) profileNames() []string {
-	names := make([]string, 0, len(a.frpProfiles))
-	for _, info := range a.frpProfiles {
-		names = append(names, info.Name)
-	}
-	return names
-}
-
 func (a *desktop) selectFRPProfile(id string) {
 	a.frpProfileSwitching = true
 	defer func() { a.frpProfileSwitching = false }()
-	index := 0
 	a.frpProfileID = id
-	for i, info := range a.frpProfiles {
-		if info.ID == id {
-			index = i
-			break
-		}
-	}
-	if a.frpProfileBox != nil {
-		_ = a.frpProfileBox.SetModel(a.profileNames())
-		_ = a.frpProfileBox.SetCurrentIndex(index)
-	}
 	a.frpManager = a.frpManagers[id]
 	a.frpInitErr = a.frpManagerErrors[id]
 	if a.frpManager != nil {
@@ -171,7 +251,9 @@ func (a *desktop) selectFRPProfile(id string) {
 	} else {
 		a.frpConfig = a.defaultProfileConfig(id)
 	}
+	a.frpConfig = bindFRPServerToHost(a.frpConfig, a.frpServerHost())
 	a.frpSnapshot = frpctl.Snapshot{State: "stopped", CoreVersion: frpctl.CoreVersion}
+	a.prefillQuickRemotePort(false)
 	a.renderFRPState()
 	a.updateFRPRows()
 	a.updateFRPButtons()
@@ -187,122 +269,199 @@ func (a *desktop) defaultProfileConfig(id string) frpctl.Config {
 			break
 		}
 	}
-	return cfg
-}
-
-func (a *desktop) switchFRPProfile() {
-	if a.frpProfileSwitching || a.frpProfileBox == nil {
-		return
-	}
-	index := a.frpProfileBox.CurrentIndex()
-	if index < 0 || index >= len(a.frpProfiles) {
-		return
-	}
-	if a.frpProfiles[index].ID != a.frpProfileID {
-		a.selectFRPProfile(a.frpProfiles[index].ID)
-	}
+	return bindFRPServerToHost(cfg, a.frpServerHost())
 }
 
 func (a *desktop) buildFRPPage() Widget {
-	refresh := actionButton(nil, "刷新", false, 68, a.refreshFRP)
-	authorization := actionButton(&a.frpApprovalButton, "目标授权", false, 92, a.showFRPServiceCenter)
-	importConfig := actionButton(&a.frpImportButton, "导入配置", false, 86, a.importFRPProfile)
-	exportConfig := actionButton(&a.frpExportButton, "导出配置", false, 86, a.exportFRPProfile)
-	settings := actionButton(&a.frpSettingsButton, "服务器设置", false, 108, a.showFRPSettings)
-	header := pageHeader("内网穿透", "⇄", refresh, authorization, importConfig, exportConfig, settings)
-	header.Row = 0
+	logsBtn := compactButton(&a.frpLogsButton, tr("运行日志", "Logs"), btnSecondary, 90, a.showFRPLogs)
+	toggleBtn := compactButton(&a.frpToggleButton, tr("启动映射", "Start"), btnPrimary, 96, a.toggleFRP)
 
-	serverCard := roundView{Composite: Composite{Background: SolidColorBrush{Color: uiWhite}, Layout: HBox{Margins: Margins{Left: 22, Top: 18, Right: 22, Bottom: 18}, Spacing: 16}, Children: []Widget{
-		Composite{MinSize: Size{Width: 8}, MaxSize: Size{Width: 8}, Background: SolidColorBrush{Color: uiBlue}},
-		Composite{StretchFactor: 1, Background: SolidColorBrush{Color: uiWhite}, Layout: VBox{MarginsZero: true, Spacing: 4}, Children: []Widget{
-			Composite{Layout: HBox{MarginsZero: true, Spacing: 8}, Children: []Widget{
-				Label{Text: "服务器配置", MinSize: Size{Width: 84}, TextColor: uiMuted, Font: Font{PointSize: 9}, NoPrefix: true},
-				ComboBox{AssignTo: &a.frpProfileBox, Model: []string{"默认穿透服务器"}, CurrentIndex: 0, MinSize: Size{Width: 220}, OnCurrentIndexChanged: a.switchFRPProfile},
-				actionButton(&a.frpNewProfileButton, "新建配置", false, 86, a.showNewFRPProfile),
-				HSpacer{},
+	var headerTitle, localIPLbl, localPortLbl, remotePortLbl, protoLbl, nameLbl, listTitle *walk.Label
+
+	headerRow := Composite{Background: SolidColorBrush{Color: uiWhite}, Layout: HBox{MarginsZero: true, Spacing: 8}, Children: []Widget{
+		Label{AssignTo: &headerTitle, Text: tr("添加端口映射", "Add Port Mapping"), TextColor: uiInk, Font: uiFont(12, true), NoPrefix: true},
+		Label{AssignTo: &a.frpStatus, Text: tr("● 就绪", "● Ready"), TextColor: uiMuted, Font: uiFont(9, true), NoPrefix: true},
+		Label{AssignTo: &a.frpServer, Text: "", TextColor: uiMuted, Font: uiFont(8, false), EllipsisMode: EllipsisEnd, StretchFactor: 1, NoPrefix: true},
+		logsBtn,
+		toggleBtn,
+	}}
+
+	serverEndpointBanner := roundView{Composite: Composite{Background: SolidColorBrush{Color: uiBlueSoft}, Layout: HBox{Margins: Margins{Left: 14, Top: 9, Right: 10, Bottom: 9}, Spacing: 10}, Children: []Widget{
+		Label{AssignTo: &a.frpServerBannerTitle, Text: tr("当前连接服务器", "Connected Server"), TextColor: uiMuted, Font: uiFont(9, true), NoPrefix: true},
+		Label{AssignTo: &a.frpServerAddrLabel, Text: "—", TextColor: uiBlue, Font: uiMonoFont(11, true), EllipsisMode: EllipsisEnd, StretchFactor: 1, NoPrefix: true},
+		eyeButton(&a.frpServerEye, tr("显示或隐藏服务器地址", "Show or hide server address"), func() bool { return !a.frpServerHidden }, a.toggleFRPServerEye),
+	}}, fill: uiBlueSoft, radius: 10, border: borderColor(uiBlueBorder), hud: false}
+
+	quickField := func(label string, labelAssign **walk.Label, assign **walk.LineEdit, initial, cue string, minWidth, stretch int) Composite {
+		return Composite{StretchFactor: stretch, Background: SolidColorBrush{Color: uiTableAlt}, Layout: VBox{MarginsZero: true, Spacing: 5}, Children: []Widget{
+			Label{AssignTo: labelAssign, Text: label, TextColor: uiMuted, Font: uiFont(8, true), NoPrefix: true},
+			LineEdit{AssignTo: assign, Text: initial, CueBanner: cue, MinSize: Size{Width: minWidth, Height: 32}, MaxSize: Size{Height: 32}, Font: uiFont(9, false), TextColor: uiInk, Background: SolidColorBrush{Color: uiWhite}, OnKeyDown: func(k walk.Key) {
+				if k == walk.KeyReturn {
+					a.quickAddFRPMapping()
+				}
 			}},
-			Label{AssignTo: &a.frpStatus, Text: "● 未配置", TextColor: uiMuted, Font: Font{PointSize: 12, Bold: true}, NoPrefix: true},
-			Label{AssignTo: &a.frpServer, Text: "先配置 FRP 服务器和令牌", TextColor: uiInk, Font: Font{PointSize: 10, Bold: true}, EllipsisMode: EllipsisEnd, NoPrefix: true},
-			Label{AssignTo: &a.frpAuthNote, Text: "支持本机回环、物理 LAN、HTTP/HTTPS、TCPMUX 和 XTCP 受限代理；共享令牌仍不等同于设备级隔离。", TextColor: uiMuted, Font: Font{PointSize: 9}, NoPrefix: true},
-		}},
-		Composite{MinSize: Size{Width: 150}, MaxSize: Size{Width: 150}, Layout: VBox{MarginsZero: true, Spacing: 8}, Children: []Widget{
-			actionButton(&a.frpToggleButton, "启动穿透", true, 150, a.toggleFRP),
-			actionButton(nil, "查看日志", false, 150, a.showFRPLogs),
-		}},
-	}}, fill: uiWhite, radius: 12, border: borderColor(uiBorder)}
-	serverCard.Row = 1
+		}}
+	}
 
-	add := actionButton(&a.frpAddButton, "添加规则", true, 96, a.showAddFRPRule)
-	batch := actionButton(&a.frpBatchButton, "批量端口", false, 86, a.showFRPBatchRules)
-	addVisitor := actionButton(&a.frpAddVisitorButton, "添加访问", false, 86, a.showAddFRPVisitor)
-	edit := actionButton(&a.frpEditButton, "编辑", false, 68, a.showEditFRPRule)
-	remove := actionButton(&a.frpDeleteButton, "删除", false, 68, a.deleteFRPRule)
-	ruleHeader := Composite{Layout: HBox{MarginsZero: true, Spacing: 8}, Children: []Widget{
-		heading("穿透规则"),
+	pickBtn := makeActionView(&a.frpPickProcessButton, tr("选择进程", "Processes"), btnSecondary, 88, 32, 7, 9, false, a.showLocalProcessPicker)
+	quickAddBtn := makeActionView(&a.frpQuickAddButton, tr("+ 添加映射", "+ Add Rule"), btnPrimary, 108, 32, 8, 9, true, a.quickAddFRPMapping)
+
+	quickComposer := roundView{Composite: Composite{Background: SolidColorBrush{Color: uiTableAlt}, Layout: HBox{Margins: Margins{Left: 14, Top: 11, Right: 14, Bottom: 12}, Spacing: 10}, Children: []Widget{
+		quickField(tr("本地 IP", "Local IP"), &localIPLbl, &a.frpQuickLocalIP, "127.0.0.1", "127.0.0.1", 108, 0),
+		quickField(tr("本地端口", "Local Port"), &localPortLbl, &a.frpQuickLocalPort, "", "25565", 74, 0),
+		Composite{Background: SolidColorBrush{Color: uiTableAlt}, Layout: VBox{MarginsZero: true, Spacing: 5}, Children: []Widget{
+			Label{Text: " ", Font: uiFont(8, true), NoPrefix: true},
+			Label{Text: "→", TextColor: uiBlue, Font: uiFont(12, true), MinSize: Size{Width: 18, Height: 32}, MaxSize: Size{Width: 18, Height: 32}, TextAlignment: AlignCenter, NoPrefix: true},
+		}},
+		quickField(tr("服务器端口", "Remote Port"), &remotePortLbl, &a.frpQuickRemotePort, "60000", "60000", 80, 0),
+		Composite{Background: SolidColorBrush{Color: uiTableAlt}, Layout: VBox{MarginsZero: true, Spacing: 5}, Children: []Widget{
+			Label{AssignTo: &protoLbl, Text: tr("协议", "Proto"), TextColor: uiMuted, Font: uiFont(8, true), NoPrefix: true},
+			comboBoxView{ComboBox: ComboBox{AssignTo: &a.frpQuickProto, Model: []string{"TCP", "UDP", "TCP+UDP"}, CurrentIndex: 0, MinSize: Size{Width: 92, Height: 32}, MaxSize: Size{Height: 32}, Font: uiFont(10, false)}},
+		}},
+		quickField(tr("名称（可选）", "Name (optional)"), &nameLbl, &a.frpQuickName, "", tr("自动生成或自定义", "Auto or custom"), 110, 1),
+		Composite{Background: SolidColorBrush{Color: uiTableAlt}, Layout: VBox{MarginsZero: true, Spacing: 5}, Children: []Widget{
+			Label{Text: " ", Font: uiFont(8, true), NoPrefix: true},
+			Composite{Background: SolidColorBrush{Color: uiTableAlt}, Layout: HBox{MarginsZero: true, Spacing: 8}, Children: []Widget{
+				pickBtn,
+				quickAddBtn,
+			}},
+		}},
+	}}, fill: uiTableAlt, radius: 10, border: borderColor(uiBorder), hud: false}
+
+	quickCard := roundView{Composite: Composite{Background: SolidColorBrush{Color: uiWhite}, Layout: VBox{Margins: Margins{Left: 18, Top: 14, Right: 18, Bottom: 14}, Spacing: 10}, Children: []Widget{
+		headerRow,
+		serverEndpointBanner,
+		quickComposer,
+	}}, fill: uiWhite, radius: 12, border: borderColor(uiBorder), hud: false}
+
+	copyBtn := compactButton(&a.frpCopyAddrButton, tr("复制地址", "Copy Addr"), btnSecondary, 86, a.copySelectedFRPAddress)
+	toggleRuleBtn := compactButton(&a.frpToggleRuleButton, tr("停用/启用", "Enable/Disable"), btnSecondary, 112, a.toggleSelectedFRPRule)
+	edit := compactButton(&a.frpEditButton, tr("编辑", "Edit"), btnSecondary, 64, a.showEditFRPRule)
+	remove := compactButton(&a.frpDeleteButton, tr("删除", "Delete"), btnDanger, 64, a.deleteFRPRule)
+
+	ruleHeader := Composite{Background: SolidColorBrush{Color: uiWhite}, Layout: HBox{MarginsZero: true, Spacing: 8}, Children: []Widget{
+		Label{AssignTo: &listTitle, Text: tr("映射列表", "Mappings"), TextColor: uiInk, Font: uiFont(12, true), NoPrefix: true},
+		Label{AssignTo: &a.frpRuleCount, Text: tr("0 条", "0"), TextColor: uiBlue, Font: uiFont(9, true), NoPrefix: true},
+		Label{AssignTo: &a.frpPortRangeHint, Text: tr("允许范围 60000-61000", "Allowed 60000-61000"), TextColor: uiMuted, Font: uiMonoFont(8, false), NoPrefix: true},
 		HSpacer{},
-		add,
-		batch,
-		addVisitor,
+		copyBtn,
+		toggleRuleBtn,
 		edit,
 		remove,
 	}}
-	ruleTable := TableView{AssignTo: &a.frpRules, Model: a.frpRuleModel, Background: SolidColorBrush{Color: uiWhite}, StretchFactor: 1, MinSize: Size{Height: 210}, CustomRowHeight: 30, CustomHeaderHeight: 28, LastColumnStretched: true, SelectionHiddenWithoutFocus: true, AlternatingRowBG: true, OnCurrentIndexChanged: a.updateFRPButtons, Columns: []TableViewColumn{
-		{Title: "名称", Width: 110},
-		{Title: "类型", Width: 60},
-		{Title: "本地服务", Width: 118},
-		{Title: "实际访问地址", Width: 165},
-		{Title: "状态", Width: 68},
-		{Title: "后端", Width: 58},
-		{Title: "最近错误", Width: 120},
-	}, StyleCell: func(s *walk.CellStyle) {
-		s.TextColor = uiInk
-		if s.Row()%2 == 1 {
-			s.BackgroundColor = uiTableAlt
-		} else {
-			s.BackgroundColor = uiWhite
+	ruleTable := TableView{
+		AssignTo:                    &a.frpRules,
+		Model:                       a.frpRuleModel,
+		Background:                  SolidColorBrush{Color: uiWhite},
+		Font:                        uiFont(9, false),
+		StretchFactor:               1,
+		MinSize:                     Size{Height: 260},
+		CustomRowHeight:             34,
+		CustomHeaderHeight:          30,
+		LastColumnStretched:         true,
+		SelectionHiddenWithoutFocus: true,
+		AlternatingRowBG:            true,
+		OnCurrentIndexChanged:       a.updateFRPButtons,
+		OnItemActivated:             a.copySelectedFRPAddress,
+		ContextMenuItems: []MenuItem{
+			Action{Text: tr("复制服务器映射地址", "Copy Remote Address"), OnTriggered: a.copySelectedFRPAddress},
+			Action{Text: tr("启用 / 停用", "Enable / Disable"), OnTriggered: a.toggleSelectedFRPRule},
+			Action{Text: tr("编辑映射", "Edit Rule"), OnTriggered: a.showEditFRPRule},
+			Separator{},
+			Action{Text: tr("删除", "Delete"), OnTriggered: a.deleteFRPRule},
+		},
+		Columns: []TableViewColumn{
+			{Title: tr("名称 / 进程", "Name / Process"), Width: 146},
+			{Title: tr("协议", "Proto"), Width: 58},
+			{Title: tr("本地地址", "Local Addr"), Width: 140},
+			{Title: tr("服务器映射地址", "Remote Addr"), Width: 204},
+			{Title: tr("状态", "Status"), Width: 80},
+			{Title: tr("说明", "Details"), Width: 130},
+		},
+		StyleCell: func(s *walk.CellStyle) {
+			if s.Row() < 0 {
+				titles := []string{
+					tr("名称 / 进程", "Name / Process"),
+					tr("协议", "Proto"),
+					tr("本地地址", "Local Addr"),
+					tr("服务器映射地址", "Remote Addr"),
+					tr("状态", "Status"),
+					tr("说明", "Details"),
+				}
+				if s.Col() >= 0 && s.Col() < len(titles) {
+					styleTableHeader(s, titles[s.Col()], false)
+				}
+				return
+			}
+			s.TextColor = uiInk
+			if s.Row()%2 == 1 {
+				s.BackgroundColor = uiTableAlt
+			} else {
+				s.BackgroundColor = uiWhite
+			}
+			if s.Row() < 0 || s.Row() >= len(a.frpRuleModel.rows) {
+				return
+			}
+			row := a.frpRuleModel.rows[s.Row()]
+			if len(row) > 4 && (row[4] == "已禁用" || row[4] == "Disabled") {
+				s.TextColor = uiMuted
+			} else if len(row) > 4 && (row[4] == "已映射" || row[4] == "Mapped" || row[4] == "已发布" || row[4] == "Published" || row[4] == "已注册" || row[4] == "Registered" || row[4] == "监听中" || row[4] == "Listening") && s.Col() == 4 {
+				s.TextColor = uiSuccess
+			} else if s.Col() == 3 {
+				s.TextColor = uiBlue
+			}
+			if len(row) > 5 && row[5] != "—" && row[5] != "" && row[5] != "可用" && row[5] != "Available" && row[5] != "未验证" && row[5] != "Unverified" && !strings.Contains(row[5], "正常") && !strings.Contains(row[5], "可达") && !strings.Contains(row[5], "Healthy") && !strings.Contains(row[5], "Reachable") {
+				s.TextColor = uiDanger
+			}
+		},
+	}
+	a.onLang(func() {
+		setLabelText(headerTitle, tr("添加端口映射", "Add Port Mapping"))
+		setLabelText(localIPLbl, tr("本地 IP", "Local IP"))
+		setLabelText(localPortLbl, tr("本地端口", "Local Port"))
+		setLabelText(remotePortLbl, tr("服务器端口", "Remote Port"))
+		setLabelText(protoLbl, tr("协议", "Proto"))
+		setLabelText(nameLbl, tr("名称（可选）", "Name (optional)"))
+		setLabelText(listTitle, tr("映射列表", "Mappings"))
+		if a.frpQuickName != nil {
+			_ = a.frpQuickName.SetCueBanner(tr("自动生成或自定义", "Auto or custom"))
 		}
-		if s.Row() < 0 || s.Row() >= len(a.frpRuleModel.rows) {
-			return
+		if a.frpServerBannerTitle != nil {
+			setLabelIfChanged(a.frpServerBannerTitle, tr("当前连接服务器", "Connected Server"))
 		}
-		row := a.frpRuleModel.rows[s.Row()]
-		if len(row) > 4 && row[4] == "已禁用" {
-			s.TextColor = uiMuted
-		} else if s.Col() == 3 || s.Col() == 4 {
-			s.TextColor = uiBlue
-		}
-		if len(row) > 6 && row[6] != "—" && row[6] != "" {
-			s.TextColor = walk.RGB(185, 28, 28)
-		}
-	}}
-	rulesCard := roundView{Composite: Composite{Background: SolidColorBrush{Color: uiWhite}, Layout: VBox{Margins: Margins{Left: 18, Top: 16, Right: 18, Bottom: 14}, Spacing: 10}, Children: []Widget{
+		setButtonText(a.frpLogsButton, tr("运行日志", "Logs"))
+		a.updateConnectedServerDisplays()
+		setButtonText(a.frpPickProcessButton, tr("选择进程", "Processes"))
+		setButtonText(a.frpQuickAddButton, tr("+ 添加映射", "+ Add Rule"))
+		setButtonText(a.frpCopyAddrButton, tr("复制地址", "Copy Addr"))
+		setButtonText(a.frpEditButton, tr("编辑", "Edit"))
+		setButtonText(a.frpDeleteButton, tr("删除", "Delete"))
+		a.renderFRPState()
+		a.updateFRPRows()
+		a.updateFRPButtons()
+	})
+	rulesCard := roundView{Composite: Composite{Background: SolidColorBrush{Color: uiWhite}, StretchFactor: 1, Layout: VBox{Margins: Margins{Left: 18, Top: 14, Right: 18, Bottom: 14}, Spacing: 10}, Children: []Widget{
 		ruleHeader,
 		ruleTable,
-	}}, fill: uiWhite, radius: 12, border: borderColor(uiBorder)}
+	}}, fill: uiWhite, radius: 12, border: borderColor(uiBorder), hud: false}
 	rulesCard.Composite.StretchFactor = 1
-	rulesCard.Row = 2
 
-	logsCard := roundView{Composite: Composite{Background: SolidColorBrush{Color: uiWhite}, Layout: VBox{Margins: Margins{Left: 18, Top: 12, Right: 18, Bottom: 12}, Spacing: 6}, Children: []Widget{
-		Label{Text: "运行日志", TextColor: uiInk, Font: Font{PointSize: 10, Bold: true}, NoPrefix: true},
-		TextEdit{AssignTo: &a.frpLogs, ReadOnly: true, VScroll: true, MinSize: Size{Height: 96}, TextColor: uiMuted, Font: Font{Family: "Consolas", PointSize: 9}},
-	}}, fill: uiWhite, radius: 12, border: borderColor(uiBorder)}
-	logsCard.Row = 3
+	logsCard := Composite{Visible: false, Layout: VBox{MarginsZero: true}, Children: []Widget{
+		TextEdit{AssignTo: &a.frpLogs, ReadOnly: true},
+	}}
 
-	return Composite{AssignTo: &a.frpPage, Visible: false, StretchFactor: 1, Background: SolidColorBrush{Color: uiBackground}, Layout: Grid{Columns: 1, Margins: Margins{Left: 20, Top: 16, Right: 20, Bottom: 18}, Spacing: 12}, Children: []Widget{
-		header,
-		serverCard,
+	return Composite{AssignTo: &a.frpPage, Visible: false, StretchFactor: 1, Background: SolidColorBrush{Color: uiBackground}, Layout: VBox{Margins: Margins{Left: 20, Top: 16, Right: 20, Bottom: 18}, Spacing: 12, Alignment: AlignHNearVNear}, Children: []Widget{
+		quickCard,
 		rulesCard,
 		logsCard,
 	}}
 }
 
 func (a *desktop) configureFRPTable() {
-	if a.frpRules == nil {
-		return
-	}
-	a.frpRules.SetGridlines(false)
+	styleFramelessTable(a.frpRules)
 }
 
-func (a *desktop) requireMemberToken(action string) bool {
+func (a *desktop) requireMemberToken() bool {
 	if a.api != nil && strings.HasPrefix(a.api.Token, "member_") {
 		return true
 	}
@@ -316,16 +475,22 @@ func (a *desktop) requireMemberToken(action string) bool {
 	}
 	a.showPage(pageJoin)
 	a.code.SetFocus()
-	a.showNotice(clientui.Feedback{Title: "请先验证入网令牌", Message: "端口映射需要先输入有效令牌并加入网络。"})
+	a.showNotice(clientui.Feedback{
+		Title:   tr("请先登录私有组网", "Sign In Required"),
+		Message: tr("端口映射需要先输入有效入网密钥并加入网络。", "Port mapping requires joining the network with a valid join key first."),
+	})
 	return false
 }
 
 func (a *desktop) openFRP() {
-	if !a.requireMemberToken("内网穿透") {
+	if !a.requireMemberToken() {
 		return
 	}
 	a.railSelection = 0
 	a.showPage(pageFRP)
+	a.refreshFRPPortRange()
+	a.updateConnectedServerDisplays()
+	a.ensureFRPConfigured(nil)
 }
 
 func (a *desktop) refreshFRP() {
@@ -341,8 +506,11 @@ func (a *desktop) refreshFRP() {
 			a.frpRefreshing = false
 			a.frpSnapshot = snapshot
 			if cfg, ok := a.frpManager.Config(); ok {
-				a.frpConfig = cfg
+				a.frpConfig = bindFRPServerToHost(cfg, a.frpServerHost())
+			} else {
+				a.frpConfig = bindFRPServerToHost(a.frpConfig, a.frpServerHost())
 			}
+			a.prefillQuickRemotePort(false)
 			a.renderFRPState()
 			a.updateFRPRows()
 			a.updateFRPButtons()
@@ -354,168 +522,166 @@ func (a *desktop) renderFRPState() {
 	if a.frpStatus == nil {
 		return
 	}
-	if a.frpProfileBox != nil {
-		a.frpProfileBox.SetEnabled(!a.frpBusy)
-	}
-	if a.frpNewProfileButton != nil {
-		a.frpNewProfileButton.SetEnabled(!a.frpBusy && a.frpCatalog != nil)
-	}
+	ready := a.frpInitErr == nil && a.frpManager != nil
 	if a.frpInitErr != nil {
-		a.frpStatus.SetText("● 组件不可用")
-		a.frpStatus.SetTextColor(walk.RGB(185, 28, 28))
-		a.frpServer.SetText(clientui.Redact(a.frpInitErr.Error()))
-		a.frpAuthNote.SetText("请完整解压客户端，并确认内置 frpc.exe 未被替换。")
-		a.frpToggleButton.SetText("启动穿透")
-		a.frpToggleButton.SetEnabled(false)
-		a.frpSettingsButton.SetEnabled(false)
-		a.frpAddButton.SetEnabled(false)
-		a.frpAddVisitorButton.SetEnabled(false)
-		a.frpEditButton.SetEnabled(false)
-		a.frpDeleteButton.SetEnabled(false)
+		setLabelIfChanged(a.frpStatus, tr("● 组件异常", "● Error"))
+		setLabelColorIfChanged(a.frpStatus, uiDanger)
+		setLabelIfChanged(a.frpServer, clientui.RedactLang(currentLang(), a.frpInitErr.Error()))
+		setButtonTextIfChanged(a.frpToggleButton, tr("启动映射", "Start"))
+		setButtonEnabledIfChanged(a.frpToggleButton, false)
+		setButtonEnabledIfChanged(a.frpLogsButton, false)
+		setButtonEnabledIfChanged(a.frpQuickAddButton, false)
+		setButtonEnabledIfChanged(a.frpPickProcessButton, false)
+		setButtonEnabledIfChanged(a.frpEditButton, false)
+		setButtonEnabledIfChanged(a.frpDeleteButton, false)
+		a.updateFRPButtons()
+		a.updateConnectedServerDisplays()
 		return
 	}
 	if a.frpManager == nil {
-		a.frpStatus.SetText("● 未配置")
-		a.frpStatus.SetTextColor(uiMuted)
-		a.frpServer.SetText("先配置 FRP 服务器和令牌")
-		a.frpAuthNote.SetText("支持本机回环、物理 LAN、HTTP/HTTPS、TCPMUX 和 XTCP 受限代理；共享令牌仍不等同于设备级隔离。")
-		a.frpToggleButton.SetText("启动穿透")
-		a.frpToggleButton.SetEnabled(false)
-		a.frpSettingsButton.SetEnabled(false)
-		a.frpAddButton.SetEnabled(false)
-		a.frpAddVisitorButton.SetEnabled(false)
-		a.frpEditButton.SetEnabled(false)
-		a.frpDeleteButton.SetEnabled(false)
+		setLabelIfChanged(a.frpStatus, tr("● 未就绪", "● Not Ready"))
+		setLabelColorIfChanged(a.frpStatus, uiMuted)
+		setLabelIfChanged(a.frpServer, tr("等待初始化端口映射组件", "Waiting for port mapping initialization"))
+		setButtonTextIfChanged(a.frpToggleButton, tr("启动映射", "Start"))
+		setButtonEnabledIfChanged(a.frpToggleButton, false)
+		setButtonEnabledIfChanged(a.frpLogsButton, false)
+		setButtonEnabledIfChanged(a.frpQuickAddButton, false)
+		setButtonEnabledIfChanged(a.frpPickProcessButton, false)
+		setButtonEnabledIfChanged(a.frpEditButton, false)
+		setButtonEnabledIfChanged(a.frpDeleteButton, false)
+		a.updateFRPButtons()
+		a.updateConnectedServerDisplays()
 		return
 	}
 	s := a.frpSnapshot
+	var statusText, serverText string
+	var statusColor walk.Color
 	switch {
 	case !s.Configured:
-		a.frpStatus.SetText("● 未配置")
-		a.frpStatus.SetTextColor(uiMuted)
-		a.frpServer.SetText("先配置 FRP 服务器和令牌")
+		statusText, statusColor = tr("● 就绪", "● Ready"), uiMuted
 	case s.Running:
 		if s.Authenticated {
-			a.frpStatus.SetText("● 已连接")
+			statusText, statusColor = tr("● 运行中", "● Running"), uiSuccess
 		} else {
-			a.frpStatus.SetText("● 正在连接")
+			statusText, statusColor = tr("● 连接中", "● Connecting"), uiWarning
 		}
-		a.frpStatus.SetTextColor(uiBlue)
-		a.frpServer.SetText(fmt.Sprintf("%s:%d · TLS 强制验证", s.ServerHost, s.ServerPort))
 	case s.State == "starting":
-		a.frpStatus.SetText("● 正在启动")
-		a.frpStatus.SetTextColor(walk.RGB(180, 83, 9))
-		a.frpServer.SetText("正在校验配置并连接 FRP 服务器，可随时取消。")
+		statusText, statusColor = tr("● 启动中", "● Starting"), uiWarning
+		serverText = tr("正在建立安全映射隧道…", "Establishing mapping tunnel…")
 	case s.State == "waiting_dependency" || s.State == "retry_backoff":
-		a.frpStatus.SetText("● 等待组网恢复")
-		a.frpStatus.SetTextColor(walk.RGB(180, 83, 9))
+		statusText, statusColor = tr("● 等待重连", "● Reconnecting"), uiWarning
 		if s.LastError != "" {
-			a.frpServer.SetText(s.LastError)
+			serverText = s.LastError
 		} else {
-			a.frpServer.SetText("TLAN 组网依赖不可用；可取消等待，恢复组网后不会自行重开已取消的任务")
+			serverText = tr("等待网络恢复", "Waiting for network recovery")
 		}
 	case s.State == "failed":
 		if s.DesiredRunning {
-			a.frpStatus.SetText("● 正在重试")
-			a.frpServer.SetText("后台仍保留运行意图，可点击“取消穿透”停止重试。")
+			statusText = tr("● 重试中", "● Retrying")
+			serverText = tr("正在自动重连，可点击“停止映射”取消", "Reconnecting automatically; click Stop to cancel")
 		} else {
-			a.frpStatus.SetText("● 需要处理")
-			a.frpServer.SetText(s.LastError)
+			statusText = tr("● 连接异常", "● Failed")
+			serverText = s.LastError
 		}
-		a.frpStatus.SetTextColor(walk.RGB(185, 28, 28))
+		statusColor = uiDanger
 	case s.State == "stopping":
-		a.frpStatus.SetText("● 正在停止")
-		a.frpStatus.SetTextColor(walk.RGB(180, 83, 9))
-		a.frpServer.SetText("正在回收 FRP 进程和本地转发资源…")
+		statusText, statusColor = tr("● 停止中", "● Stopping"), uiWarning
+		serverText = tr("正在停止端口映射服务…", "Stopping port mapping service...")
 	default:
-		a.frpStatus.SetText("● 已停止")
-		a.frpStatus.SetTextColor(uiMuted)
-		a.frpServer.SetText(fmt.Sprintf("%s:%d · 点击启动", s.ServerHost, s.ServerPort))
+		statusText, statusColor = tr("● 已停止", "● Stopped"), uiMuted
 	}
-	if s.SharedToken {
-		a.frpAuthNote.SetText("共享令牌模式：所有使用此令牌的客户端共享认证，不等同于设备级隔离。")
-	} else {
-		a.frpAuthNote.SetText("TLS 强制启用，必须使用可信 CA；不会提供跳过证书校验的选项。")
-	}
+	setLabelIfChanged(a.frpStatus, statusText)
+	setLabelColorIfChanged(a.frpStatus, statusColor)
+	setLabelIfChanged(a.frpServer, serverText)
+
 	canStop := s.CanStop || s.Running || s.State == "stopping"
+	toggleText := tr("启动映射", "Start")
 	if s.Running {
-		a.frpToggleButton.SetText("停止穿透")
+		toggleText = tr("停止映射", "Stop")
 	} else if canStop {
-		a.frpToggleButton.SetText("取消穿透")
-	} else {
-		a.frpToggleButton.SetText("启动穿透")
+		toggleText = tr("取消启动", "Cancel")
 	}
+	setButtonTextIfChanged(a.frpToggleButton, toggleText)
+
+	toggleEnabled := ready && !a.frpBusy
 	if canStop {
-		a.frpToggleButton.SetEnabled(s.Configured && !a.frpStopping && (!a.frpBusy || a.frpStarting))
-	} else {
-		a.frpToggleButton.SetEnabled(s.Configured && !a.frpBusy)
+		toggleEnabled = ready && !a.frpStopping && (!a.frpBusy || a.frpStarting)
 	}
-	a.frpSettingsButton.SetEnabled(!a.frpBusy && !a.frpStarting && !a.frpStopping)
-	a.frpAddButton.SetEnabled(!a.frpBusy && !a.frpStarting && !a.frpStopping && a.frpManager != nil)
-	a.frpAddVisitorButton.SetEnabled(!a.frpBusy && !a.frpStarting && !a.frpStopping && a.frpManager != nil)
+	setButtonEnabledIfChanged(a.frpToggleButton, toggleEnabled)
+
+	editable := !a.frpBusy && !a.frpStarting && !a.frpStopping && ready
+	setButtonEnabledIfChanged(a.frpLogsButton, ready)
+	setButtonEnabledIfChanged(a.frpQuickAddButton, editable)
+	setButtonEnabledIfChanged(a.frpPickProcessButton, editable)
 	a.updateFRPButtons()
+	a.updateConnectedServerDisplays()
 }
 
 func (a *desktop) updateFRPRows() {
 	if a.frpRuleModel == nil {
 		return
 	}
-	rows := make([][]string, 0, len(a.frpConfig.Profile.Rules)+len(a.frpConfig.Profile.Visitors))
-	a.frpRows = make([]frpEntryRef, 0, cap(rows))
+	host := a.frpServerHost()
+	if host == "" {
+		host = a.frpConfig.Profile.Server.Host
+	}
+	rows := make([][]string, 0, len(a.frpConfig.Profile.Rules))
+	a.frpRows = make([]frpEntryRef, 0, len(a.frpConfig.Profile.Rules))
 	statuses := a.frpSnapshot.Rules
 	for i, rule := range a.frpConfig.Profile.Rules {
 		remote := "—"
-		if len(rule.Exposure.CustomDomains) > 0 {
-			remote = strings.Join(rule.Exposure.CustomDomains, ", ")
+		if rule.Exposure.RemotePort > 0 && host != "" {
+			remote = fmt.Sprintf("%s:%d", host, rule.Exposure.RemotePort)
+		} else if rule.Exposure.RemotePort > 0 {
+			remote = fmt.Sprintf(":%d", rule.Exposure.RemotePort)
 		}
-		if rule.Exposure.Subdomain != "" {
-			if remote == "—" {
-				remote = "子域名 " + rule.Exposure.Subdomain
-			} else {
-				remote += " + 子域名 " + rule.Exposure.Subdomain
-			}
+		state := tr("已停止", "Stopped")
+		if !rule.Enabled {
+			state = tr("已禁用", "Disabled")
 		}
-		if rule.Type == "stcp" || rule.Type == "sudp" || rule.Type == "xtcp" {
-			remote = "私有代理"
-		}
-		row := []string{rule.Name, strings.ToUpper(rule.Type), fmt.Sprintf("%s:%d", rule.Target.Host, rule.Target.Port), remote, "未启动", "—", "—"}
+		note := "—"
 		if i < len(statuses) {
 			status := statuses[i]
-			row[4] = status.State
-			row[5] = status.Backend
-			if status.GatewayStats != "" {
-				row[5] = status.GatewayStats
+			switch status.State {
+			case "已发布":
+				state = tr("已映射", "Mapped")
+			case "已注册":
+				state = tr("已注册", "Registered")
+			case "监听中":
+				state = tr("监听中", "Listening")
+			case "注册失败":
+				state = tr("注册失败", "Failed")
+			case "等待注册":
+				state = tr("等待注册", "Pending")
+			case "等待组网恢复":
+				state = tr("等待重连", "Waiting Mesh")
+			case "已停止":
+				state = tr("已停止", "Stopped")
+			case "已禁用":
+				state = tr("已禁用", "Disabled")
+			case "":
+			default:
+				state = status.State
 			}
 			if status.RemoteAddr != "" {
-				row[3] = status.RemoteAddr
+				remote = status.RemoteAddr
 			}
 			if status.ErrorDetail != "" {
-				row[6] = status.ErrorDetail
+				note = status.ErrorDetail
+			} else if status.Backend != "" && status.Backend != "—" {
+				note = status.Backend
 			}
 		}
-		rows = append(rows, row)
-		a.frpRows = append(a.frpRows, frpEntryRef{kind: "rule", index: i})
-	}
-	visitorStatuses := a.frpSnapshot.Visitors
-	for i, visitor := range a.frpConfig.Profile.Visitors {
-		remote := visitor.ServerName
-		if visitor.Type == "xtcp" && visitor.Protocol != "" {
-			remote += " (" + strings.ToUpper(visitor.Protocol) + ")"
-		}
-		row := []string{visitor.Name, strings.ToUpper(visitor.Type), fmt.Sprintf("%s:%d", visitor.BindAddr, visitor.BindPort), remote, "未启动", "访问", "—"}
-		if i < len(visitorStatuses) {
-			status := visitorStatuses[i]
-			row[4] = status.State
-			if status.ErrorDetail != "" {
-				row[6] = status.ErrorDetail
-			}
-		}
-		rows = append(rows, row)
-		a.frpRows = append(a.frpRows, frpEntryRef{kind: "visitor", index: i})
+		rows = append(rows, []string{rule.Name, strings.ToUpper(rule.Type), fmt.Sprintf("%s:%d", rule.Target.Host, rule.Target.Port), remote, state, note})
+		a.frpRows = append(a.frpRows, frpEntryRef{index: i})
 	}
 	a.frpRuleModel.setRows(rows)
+	setLabelIfChanged(a.frpRuleCount, trf("%d 条", "%d", len(rows)))
 	if a.frpLogs != nil {
-		a.frpLogs.SetText(strings.Join(a.frpSnapshot.Logs, "\r\n"))
+		joinedLogs := strings.Join(a.frpSnapshot.Logs, "\r\n")
+		if a.frpLogs.Text() != joinedLogs {
+			a.frpLogs.SetText(joinedLogs)
+		}
 	}
 }
 
@@ -523,43 +689,48 @@ func (a *desktop) updateFRPButtons() {
 	if a.frpEditButton == nil || a.frpDeleteButton == nil {
 		return
 	}
-	_, ok := a.selectedFRPEntry()
-	a.frpEditButton.SetEnabled(!a.frpBusy && ok)
-	a.frpDeleteButton.SetEnabled(!a.frpBusy && ok)
-	if a.frpApprovalButton != nil {
-		a.frpApprovalButton.SetEnabled(a.api != nil && a.api.Token != "")
+	index := a.selectedFRPIndex()
+	ok := index >= 0 && index < len(a.frpConfig.Profile.Rules)
+	setButtonEnabledIfChanged(a.frpEditButton, !a.frpBusy && ok)
+	setButtonEnabledIfChanged(a.frpDeleteButton, !a.frpBusy && ok)
+	if a.frpToggleRuleButton != nil {
+		setButtonEnabledIfChanged(a.frpToggleRuleButton, !a.frpBusy && ok)
+		toggleText := tr("停用/启用", "Enable/Disable")
+		if ok {
+			if a.frpConfig.Profile.Rules[index].Enabled {
+				toggleText = tr("停用规则", "Disable")
+			} else {
+				toggleText = tr("启用规则", "Enable")
+			}
+		}
+		setButtonTextIfChanged(a.frpToggleRuleButton, toggleText)
 	}
-	if a.frpImportButton != nil {
-		a.frpImportButton.SetEnabled(!a.frpBusy && a.frpManager != nil)
+	if a.frpCopyAddrButton != nil {
+		hasAddr := false
+		if ok {
+			row := a.frpRules.CurrentIndex()
+			if row >= 0 && row < len(a.frpRuleModel.rows) {
+				addr := a.frpRuleModel.rows[row][3]
+				hasAddr = addr != "" && addr != "—"
+			}
+		}
+		setButtonEnabledIfChanged(a.frpCopyAddrButton, hasAddr)
 	}
-	if a.frpExportButton != nil {
-		a.frpExportButton.SetEnabled(!a.frpBusy && a.frpSnapshot.Configured)
-	}
-	if a.frpBatchButton != nil {
-		a.frpBatchButton.SetEnabled(!a.frpBusy && a.frpManager != nil)
-	}
-	if a.frpRules != nil {
-		a.frpRules.Invalidate()
-	}
-}
-
-func (a *desktop) selectedFRPEntry() (frpEntryRef, bool) {
-	if a.frpRules == nil {
-		return frpEntryRef{}, false
-	}
-	index := a.frpRules.CurrentIndex()
-	if index < 0 || index >= len(a.frpRows) {
-		return frpEntryRef{}, false
-	}
-	return a.frpRows[index], true
 }
 
 func (a *desktop) selectedFRPIndex() int {
-	entry, ok := a.selectedFRPEntry()
-	if !ok || entry.kind != "rule" {
+	if a.frpRules == nil {
 		return -1
 	}
-	return entry.index
+	row := a.frpRules.CurrentIndex()
+	if row < 0 || row >= len(a.frpRows) {
+		return -1
+	}
+	idx := a.frpRows[row].index
+	if idx < 0 || idx >= len(a.frpConfig.Profile.Rules) {
+		return -1
+	}
+	return idx
 }
 
 func (a *desktop) startFRP() {
@@ -600,7 +771,7 @@ func (a *desktop) startFRP() {
 			a.frpBusy = false
 			a.frpStarting = false
 			if err != nil && !a.frpStopping {
-				a.showFRPError("启动内网穿透", err)
+				a.showFRPError(tr("启动端口映射", "Start port mapping"), err)
 			}
 			a.refreshFRP()
 			a.renderFRPState()
@@ -633,7 +804,7 @@ func (a *desktop) stopFRP() {
 			a.frpSnapshot.DesiredRunning = false
 			a.frpSnapshot.CanStop = false
 			if err != nil {
-				a.showFRPError("停止内网穿透", err)
+				a.showFRPError(tr("停止端口映射", "Stop port mapping"), err)
 			}
 			a.refreshFRP()
 			a.renderFRPState()
@@ -641,33 +812,378 @@ func (a *desktop) stopFRP() {
 	}()
 }
 
+func (a *desktop) prefillQuickRemotePort(force bool) {
+	if a.frpQuickRemotePort == nil {
+		return
+	}
+	if !force && strings.TrimSpace(a.frpQuickRemotePort.Text()) != "" {
+		return
+	}
+	r := a.activeFRPPortRange()
+	cue := strconv.Itoa(r.Start)
+	if a.frpQuickRemotePort.CueBanner() != cue {
+		_ = a.frpQuickRemotePort.SetCueBanner(cue)
+	}
+	localPort := 0
+	if a.frpQuickLocalPort != nil {
+		localPort, _ = strconv.Atoi(strings.TrimSpace(a.frpQuickLocalPort.Text()))
+	}
+	nextPort := suggestRemotePortInRange(a.frpConfig.Profile.Rules, localPort, r.Start, r.End)
+	nextText := strconv.Itoa(nextPort)
+	if a.frpQuickRemotePort.Text() != nextText {
+		_ = a.frpQuickRemotePort.SetText(nextText)
+	}
+}
+
+func (a *desktop) showLocalProcessPicker() {
+	entries, err := listLocalListeningPorts()
+	if err != nil {
+		a.showFRPError(tr("读取本地进程列表", "Load local processes"), err)
+		return
+	}
+	a.showLocalProcessPickerWithEntries(entries)
+}
+
+func (a *desktop) showLocalProcessPickerWithEntries(entries []localPortEntry) {
+	if len(entries) == 0 {
+		if live, err := listLocalListeningPorts(); err == nil {
+			entries = live
+		}
+	}
+	var dlg *walk.Dialog
+	var searchEdit *walk.LineEdit
+	var protoBox *walk.ComboBox
+	var table *walk.TableView
+	var countLabel *walk.Label
+	var selectButton, closeButton *walk.PushButton
+	model := &frpRuleTableModel{}
+	var filtered []localPortEntry
+
+	applyFilter := func() {
+		q := ""
+		if searchEdit != nil {
+			q = searchEdit.Text()
+		}
+		proto := ""
+		if protoBox != nil {
+			switch protoBox.CurrentIndex() {
+			case 1:
+				proto = "tcp"
+			case 2:
+				proto = "udp"
+			}
+		}
+		filtered = filterLocalPortEntries(entries, q, proto)
+		rows := make([][]string, 0, len(filtered))
+		for _, item := range filtered {
+			rows = append(rows, []string{
+				item.ProcessName,
+				strconv.FormatUint(uint64(item.PID), 10),
+				strings.ToUpper(item.Protocol),
+				item.BindIP,
+				strconv.Itoa(item.Port),
+			})
+		}
+		model.setRows(rows)
+		if countLabel != nil {
+			_ = countLabel.SetText(trf("%d 个监听端口", "%d listening", len(filtered)))
+		}
+		if selectButton != nil {
+			selectButton.SetEnabled(table != nil && table.CurrentIndex() >= 0 && table.CurrentIndex() < len(filtered))
+		}
+	}
+
+	pickSelected := func() {
+		if table == nil {
+			return
+		}
+		idx := table.CurrentIndex()
+		if idx < 0 || idx >= len(filtered) {
+			return
+		}
+		chosen := filtered[idx]
+		if a.frpQuickLocalIP != nil {
+			_ = a.frpQuickLocalIP.SetText(chosen.TargetIP)
+		}
+		if a.frpQuickLocalPort != nil {
+			_ = a.frpQuickLocalPort.SetText(strconv.Itoa(chosen.Port))
+		}
+		if a.frpQuickProto != nil {
+			if chosen.Protocol == "udp" {
+				_ = a.frpQuickProto.SetCurrentIndex(1)
+			} else {
+				_ = a.frpQuickProto.SetCurrentIndex(0)
+			}
+		}
+		if a.frpQuickName != nil {
+			_ = a.frpQuickName.SetText(suggestRuleName(chosen.ProcessName, chosen.Port, a.frpConfig.Profile.Rules))
+		}
+		if a.frpQuickRemotePort != nil && strings.TrimSpace(a.frpQuickRemotePort.Text()) == "" {
+			r := a.activeFRPPortRange()
+			_ = a.frpQuickRemotePort.SetText(strconv.Itoa(suggestRemotePortInRange(a.frpConfig.Profile.Rules, chosen.Port, r.Start, r.End)))
+		}
+		dlg.Accept()
+		if a.frpQuickRemotePort != nil {
+			_ = a.frpQuickRemotePort.SetFocus()
+		}
+	}
+
+	err := (Dialog{
+		AssignTo: &dlg, Title: tr("选择本地监听进程", "Select Local Process"), Icon: a.appIcon,
+		Size: Size{Width: 680, Height: 480}, MinSize: Size{Width: 580, Height: 380},
+		Font: uiFont(10, false), Background: SolidColorBrush{Color: uiWhite},
+		Layout:       VBox{Margins: Margins{Left: 22, Top: 18, Right: 22, Bottom: 18}, Spacing: 10},
+		CancelButton: &closeButton, DefaultButton: &selectButton,
+		Children: []Widget{
+			Composite{Background: SolidColorBrush{Color: uiWhite}, Layout: HBox{MarginsZero: true, Spacing: 8}, Children: []Widget{
+				Label{Text: tr("选择需要映射的本机进程", "Select Local Listening Process"), TextColor: uiInk, Font: uiFont(12, true), NoPrefix: true},
+				HSpacer{},
+				Label{AssignTo: &countLabel, Text: tr("0 个监听端口", "0 listening"), TextColor: uiBlue, Font: uiFont(9, true), NoPrefix: true},
+			}},
+			Composite{Background: SolidColorBrush{Color: uiWhite}, Layout: HBox{MarginsZero: true, Spacing: 8}, Children: []Widget{
+				LineEdit{AssignTo: &searchEdit, StretchFactor: 1, CueBanner: tr("搜索进程名、端口、PID 或 IP…", "Search process, port, PID, or IP..."), Font: uiFont(9, false), TextColor: uiInk, Background: SolidColorBrush{Color: uiWhite}, OnTextChanged: applyFilter},
+				comboBoxView{ComboBox: ComboBox{AssignTo: &protoBox, Model: []string{tr("全部协议", "All Protos"), tr("仅 TCP", "TCP Only"), tr("仅 UDP", "UDP Only")}, CurrentIndex: 0, MinSize: Size{Width: 100, Height: 30}, MaxSize: Size{Height: 30}, Font: uiFont(9, false), OnCurrentIndexChanged: applyFilter}},
+				compactButton(nil, tr("刷新列表", "Refresh"), btnSecondary, 82, func() {
+					if live, refreshErr := listLocalListeningPorts(); refreshErr == nil {
+						entries = live
+						applyFilter()
+					}
+				}),
+			}},
+			TableView{
+				AssignTo:                    &table,
+				Model:                       model,
+				Background:                  SolidColorBrush{Color: uiWhite},
+				Font:                        uiFont(9, false),
+				StretchFactor:               1,
+				CustomRowHeight:             32,
+				CustomHeaderHeight:          28,
+				LastColumnStretched:         true,
+				SelectionHiddenWithoutFocus: true,
+				AlternatingRowBG:            true,
+				OnCurrentIndexChanged: func() {
+					if selectButton != nil {
+						selectButton.SetEnabled(table != nil && table.CurrentIndex() >= 0 && table.CurrentIndex() < len(filtered))
+					}
+				},
+				OnItemActivated: pickSelected,
+				Columns: []TableViewColumn{
+					{Title: tr("进程名称", "Process"), Width: 170},
+					{Title: "PID", Width: 66},
+					{Title: tr("协议", "Proto"), Width: 56},
+					{Title: tr("监听地址", "Listen Addr"), Width: 118},
+					{Title: tr("本地端口", "Local Port"), Width: 78},
+				},
+				StyleCell: func(s *walk.CellStyle) {
+					if s.Row() < 0 {
+						titles := []string{tr("进程名称", "Process"), "PID", tr("协议", "Proto"), tr("监听地址", "Listen Addr"), tr("本地端口", "Local Port")}
+						if s.Col() >= 0 && s.Col() < len(titles) {
+							styleTableHeader(s, titles[s.Col()], false)
+						}
+						return
+					}
+					s.TextColor = uiInk
+					if s.Row()%2 == 1 {
+						s.BackgroundColor = uiTableAlt
+					} else {
+						s.BackgroundColor = uiWhite
+					}
+					if s.Col() == 4 {
+						s.TextColor = uiBlue
+					} else if s.Col() == 2 {
+						s.TextColor = uiMuted
+					}
+				},
+			},
+			Composite{Background: SolidColorBrush{Color: uiWhite}, Layout: HBox{MarginsZero: true, Spacing: 10}, Children: []Widget{
+				HSpacer{},
+				actionButton(&closeButton, tr("取消", "Cancel"), false, 80, func() { dlg.Cancel() }),
+				actionButton(&selectButton, tr("填入选中进程", "Use Selected"), true, 114, pickSelected),
+			}},
+		},
+	}).Create(a.window)
+	if err != nil {
+		a.showFRPError(tr("打开进程选择窗口", "Open process picker"), err)
+		return
+	}
+	styleFramelessTable(table)
+	applyFilter()
+	if table != nil && len(filtered) > 0 {
+		_ = table.SetCurrentIndex(0)
+		if selectButton != nil {
+			selectButton.SetEnabled(true)
+			_ = selectButton.Invalidate()
+		}
+	}
+	defer dlg.Dispose()
+	runThemedDialog(dlg)
+}
+
+func (a *desktop) quickAddFRPMapping() {
+	if a.frpManager == nil {
+		a.showFRPError(tr("添加端口映射", "Add port mapping"), a.frpInitErr)
+		return
+	}
+	if a.frpBusy {
+		return
+	}
+	localIP := "127.0.0.1"
+	if a.frpQuickLocalIP != nil {
+		localIP = a.frpQuickLocalIP.Text()
+	}
+	localPortText := ""
+	if a.frpQuickLocalPort != nil {
+		localPortText = strings.TrimSpace(a.frpQuickLocalPort.Text())
+	}
+	localPort, err := strconv.Atoi(localPortText)
+	if err != nil || localPort < 1 || localPort > 65535 {
+		a.showNotice(clientui.Feedback{
+			Title:   tr("请填写本地端口", "Local Port Required"),
+			Message: tr("输入本机正在监听的端口（1-65535），或点击“选择进程”自动填入。", "Enter a local listening port (1-65535), or click Processes to pick one."),
+		})
+		if a.frpQuickLocalPort != nil {
+			_ = a.frpQuickLocalPort.SetFocus()
+		}
+		return
+	}
+	portRange := a.activeFRPPortRange()
+	remotePortText := ""
+	if a.frpQuickRemotePort != nil {
+		remotePortText = strings.TrimSpace(a.frpQuickRemotePort.Text())
+	}
+	remotePort, err := strconv.Atoi(remotePortText)
+	if err != nil || remotePort < 1 || remotePort > 65535 {
+		a.showNotice(clientui.Feedback{
+			Title:   tr("请填写服务器端口", "Remote Port Required"),
+			Message: trf("请输入允许范围内的服务器端口（当前：%d-%d）。", "Enter a remote port in the allowed range (%d-%d).", portRange.Start, portRange.End),
+		})
+		if a.frpQuickRemotePort != nil {
+			_ = a.frpQuickRemotePort.SetFocus()
+		}
+		return
+	}
+	if remotePort < portRange.Start || remotePort > portRange.End {
+		a.showNotice(clientui.Feedback{
+			Title:   tr("服务器端口超出允许范围", "Remote Port Out of Range"),
+			Message: trf("当前服务器允许的映射端口范围为 %d-%d（可由管理员在管理面板中修改）。", "Allowed remote port range is %d-%d (configurable by admin).", portRange.Start, portRange.End),
+		})
+		if a.frpQuickRemotePort != nil {
+			_ = a.frpQuickRemotePort.SetFocus()
+		}
+		return
+	}
+	protoChoice := "tcp"
+	if a.frpQuickProto != nil {
+		switch a.frpQuickProto.CurrentIndex() {
+		case 1:
+			protoChoice = "udp"
+		case 2:
+			protoChoice = "tcp+udp"
+		}
+	}
+	nameText := ""
+	if a.frpQuickName != nil {
+		nameText = a.frpQuickName.Text()
+	}
+	newRules, err := buildQuickFRPRules(a.frpConfig.Profile.Rules, nameText, localIP, localPort, remotePort, protoChoice)
+	if err != nil {
+		a.showNotice(clientui.Feedback{Title: tr("映射参数有误", "Invalid Rule Parameters"), Message: err.Error()})
+		return
+	}
+
+	commitAndStart := func(baseCfg frpctl.Config, token string) {
+		baseCfg = bindFRPServerToHost(baseCfg, a.frpServerHost())
+		baseCfg.Profile.Rules = append(baseCfg.Profile.Rules, newRules...)
+		if err := frpctl.ValidateConfigWithReservations(baseCfg, a.frpReservations()); err != nil {
+			a.showFRPError(tr("校验映射配置", "Validate port mapping"), err)
+			return
+		}
+		a.applyFRPConfigAndStart(baseCfg, token, true)
+		if a.frpQuickLocalPort != nil {
+			_ = a.frpQuickLocalPort.SetText("")
+		}
+		if a.frpQuickName != nil {
+			_ = a.frpQuickName.SetText("")
+		}
+		if a.frpQuickRemotePort != nil {
+			_ = a.frpQuickRemotePort.SetText(strconv.Itoa(suggestRemotePortInRange(baseCfg.Profile.Rules, 0, portRange.Start, portRange.End)))
+		}
+	}
+
+	if !a.hasUsableFRPConfig() {
+		a.ensureFRPConfigured(func() {
+			commitAndStart(a.frpConfig, "")
+		})
+		return
+	}
+	cfg := frpctl.CloneConfig(a.frpConfig)
+	commitAndStart(cfg, "")
+}
+
+func (a *desktop) copySelectedFRPAddress() {
+	if a.frpRules == nil {
+		return
+	}
+	row := a.frpRules.CurrentIndex()
+	if row < 0 || row >= len(a.frpRuleModel.rows) {
+		return
+	}
+	addr := strings.TrimSpace(a.frpRuleModel.rows[row][3])
+	if addr == "" || addr == "—" {
+		return
+	}
+	if err := walk.Clipboard().SetText(addr); err != nil {
+		a.showError(tr("复制服务器映射地址", "Copy remote address"), err)
+		return
+	}
+	a.setStatus(tr("已复制映射地址 ", "Copied mapped address ") + addr)
+}
+
+func (a *desktop) toggleSelectedFRPRule() {
+	index := a.selectedFRPIndex()
+	if index < 0 || a.frpBusy || a.frpManager == nil {
+		return
+	}
+	cfg := bindFRPServerToHost(a.frpConfig, a.frpServerHost())
+	cfg.Profile.Rules[index].Enabled = !cfg.Profile.Rules[index].Enabled
+	a.applyFRPConfig(cfg, "")
+}
+
 func (a *desktop) toggleFRP() {
-	if !a.requireMemberToken("内网穿透") {
+	if !a.requireMemberToken() {
 		return
 	}
 	if a.frpManager == nil {
-		a.showFRPError("启动内网穿透", a.frpInitErr)
+		a.showFRPError(tr("启动端口映射", "Start port mapping"), a.frpInitErr)
 		return
 	}
-	if !a.frpSnapshot.Configured {
-		a.showFRPSettings()
+	if !a.hasUsableFRPConfig() {
+		a.ensureFRPConfigured(func() {
+			a.startFRP()
+		})
 		return
 	}
 	if a.frpSnapshot.Running || a.frpSnapshot.CanStop || a.frpSnapshot.State == "stopping" {
 		a.stopFRP()
 		return
 	}
+	if stored, ok := a.frpManager.Config(); ok && !strings.EqualFold(stored.Profile.Server.Host, a.frpServerHost()) {
+		bound := bindFRPServerToHost(stored, a.frpServerHost())
+		a.applyFRPConfigAndStart(bound, "", true)
+		return
+	}
 	a.startFRP()
 }
 
 func (a *desktop) applyFRPConfig(cfg frpctl.Config, token string) {
-	a.applyFRPConfigWithSecrets(cfg, token, nil)
+	a.applyFRPConfigAndStart(cfg, token, false)
 }
 
-func (a *desktop) applyFRPConfigWithSecrets(cfg frpctl.Config, token string, secrets map[string]string) {
+func (a *desktop) applyFRPConfigAndStart(cfg frpctl.Config, token string, autoStart bool) {
 	if a.frpBusy || a.frpManager == nil {
 		return
 	}
+	cfg = bindFRPServerToHost(cfg, a.frpServerHost())
 	a.frpBusy = true
 	a.renderFRPState()
 	go func() {
@@ -676,14 +1192,19 @@ func (a *desktop) applyFRPConfigWithSecrets(cfg frpctl.Config, token string, sec
 			parent = context.Background()
 		}
 		ctx, cancel := context.WithTimeout(parent, 40*time.Second)
-		saved, err := a.frpManager.ApplyWithSecrets(ctx, cfg, token, secrets)
+		saved, err := a.frpManager.ApplyWithSecrets(ctx, cfg, token, nil)
+		if err == nil && autoStart {
+			if snap := a.frpManager.Snapshot(ctx); !snap.Running {
+				err = a.frpManager.Start(ctx)
+			}
+		}
 		cancel()
 		a.ui(func() {
 			a.frpBusy = false
 			if err != nil {
-				a.showFRPError("保存内网穿透配置", err)
+				a.showFRPError(tr("应用端口映射", "Apply port mapping"), err)
 			} else {
-				a.frpConfig = saved
+				a.frpConfig = bindFRPServerToHost(saved, a.frpServerHost())
 			}
 			a.refreshFRP()
 			a.renderFRPState()
@@ -695,973 +1216,259 @@ func (a *desktop) showFRPError(action string, err error) {
 	if err == nil {
 		return
 	}
-	f := clientui.Explain(action, err)
+	f := clientui.ExplainLang(currentLang(), action, err)
 	a.showNotice(f)
 }
 
-func (a *desktop) showNewFRPProfile() {
-	if a.frpCatalog == nil {
-		a.showFRPError("新建穿透配置", a.frpInitErr)
-		return
+func (a *desktop) hasUsableFRPConfig() bool {
+	if a == nil || a.frpManager == nil || !a.frpManager.HasToken() {
+		return false
 	}
-	var dlg *walk.Dialog
-	var name *walk.LineEdit
-	var saveButton, closeButton *walk.PushButton
-	err := (Dialog{
-		AssignTo: &dlg, Title: "新建穿透服务器配置", Icon: a.appIcon,
-		Size: Size{Width: 460, Height: 260}, MinSize: Size{Width: 420, Height: 230},
-		Font: Font{Family: "Microsoft YaHei UI", PointSize: 10}, Background: SolidColorBrush{Color: uiWhite},
-		Layout:       VBox{Margins: Margins{Left: 28, Top: 24, Right: 28, Bottom: 22}, Spacing: 12},
-		CancelButton: &closeButton, DefaultButton: &saveButton,
-		Children: []Widget{
-			heading("新建独立服务器配置"),
-			TextLabel{Text: "每个配置拥有独立的 token、CA、规则和运行目录，可以分别启动。", TextColor: uiMuted, MinSize: Size{Width: 390}},
-			Composite{Layout: HBox{MarginsZero: true, Spacing: 10}, Children: []Widget{
-				Label{Text: "配置名称", MinSize: Size{Width: 78}},
-				LineEdit{AssignTo: &name, CueBanner: "例如：办公室穿透", MinSize: Size{Width: 300}},
-			}},
-			VSpacer{StretchFactor: 1},
-			Composite{Layout: HBox{MarginsZero: true, Spacing: 10}, Children: []Widget{
-				HSpacer{},
-				actionButton(nil, "取消", false, 88, func() { dlg.Cancel() }),
-				actionButton(&saveButton, "创建", true, 88, func() {
-					profileName := strings.TrimSpace(name.Text())
-					if profileName == "" {
-						walk.MsgBox(dlg, "名称不能为空", "请输入配置名称。", walk.MsgBoxOK|walk.MsgBoxIconWarning)
-						return
-					}
-					random, randomErr := frpctl.NewSecret(4)
-					if randomErr != nil {
-						walk.MsgBox(dlg, "创建失败", randomErr.Error(), walk.MsgBoxOK|walk.MsgBoxIconError)
-						return
-					}
-					id := "profile-" + strings.ToLower(random[:8])
-					info, createErr := a.frpCatalog.Create(id, profileName)
-					if createErr != nil {
-						walk.MsgBox(dlg, "创建失败", createErr.Error(), walk.MsgBoxOK|walk.MsgBoxIconError)
-						return
-					}
-					store, storeErr := a.frpCatalog.Store(id)
-					if storeErr != nil {
-						walk.MsgBox(dlg, "创建失败", storeErr.Error(), walk.MsgBoxOK|walk.MsgBoxIconError)
-						return
-					}
-					executable, executableErr := os.Executable()
-					if executableErr != nil {
-						walk.MsgBox(dlg, "创建失败", executableErr.Error(), walk.MsgBoxOK|walk.MsgBoxIconError)
-						return
-					}
-					provider := newFRPLeaseProvider(a.api, a.membership.Network.ID, a.identity.DeviceID.String())
-					manager, managerErr := frpctl.NewManager(frpctl.Options{Store: store, ExecutableDir: filepath.Dir(executable), DeviceID: a.identity.DeviceID.String(), NetworkID: a.membership.Network.ID, MeshCIDR: a.membership.Network.CIDR, LeaseProvider: provider, MeshTargetProvider: newMeshTargetProvider(a), EndpointRegistry: a.frpEndpointRegistry, ReservationProvider: a.frpReservations})
-					if provider != nil {
-						a.frpLeaseProviders[id] = provider
-					}
-					if managerErr != nil {
-						a.frpManagerErrors[id] = managerErr
-					} else {
-						a.frpManagers[id] = manager
-					}
-					if profiles, listErr := a.frpCatalog.List(); listErr == nil {
-						a.frpProfiles = profiles
-					} else {
-						a.frpProfiles = append(a.frpProfiles, info)
-					}
-					a.selectFRPProfile(id)
-					dlg.Accept()
-				}),
-			}},
-		},
-	}).Create(a.window)
-	if err != nil {
-		a.showFRPError("打开新建配置窗口", err)
-		return
+	srv := a.frpConfig.Profile.Server
+	if strings.TrimSpace(srv.TrustedCAPath) == "" && !srv.UseSystemCA {
+		return false
 	}
-	defer dlg.Dispose()
-	dlg.Run()
-}
-func (a *desktop) showFRPSettings() {
-	if a.frpManager == nil {
-		a.showFRPError("配置 FRP 服务器", a.frpInitErr)
-		return
+	if host := a.frpServerHost(); host != "" && !strings.EqualFold(strings.TrimSpace(srv.Host), host) {
+		return false
 	}
-	cfg := frpctl.CloneConfig(a.frpConfig)
-	server := cfg.Profile.Server
-	var dlg *walk.Dialog
-	var host, tlsName, caPath, token, serverID, subdomainHost *walk.LineEdit
-	var port, httpPort, httpsPort, tcpmuxPort *walk.NumberEdit
-	var managed, tcpMux, disableFirstByte *walk.CheckBox
-	var transportBox *walk.ComboBox
-	var tcpOptions *walk.Composite
-	var closeButton *walk.PushButton
-	transportIndex := func() int {
-		switch server.Transport {
-		case "websocket":
-			return 1
-		case "wss":
-			return 2
-		case "quic":
-			return 3
-		case "kcp":
-			return 4
-		default:
-			return 0
-		}
-	}
-	lastTransport := transportIndex()
-	setTransportFields := func() {
-		if tcpOptions == nil || transportBox == nil {
-			return
-		}
-		current := transportBox.CurrentIndex()
-		if httpPort != nil && httpsPort != nil && tcpmuxPort != nil {
-			if current == 2 && lastTransport != 2 {
-				if int(httpPort.Value()) == frpctl.DefaultHTTPPort {
-					_ = httpPort.SetValue(frpctl.DefaultWSSHTTPPort)
-				}
-				if int(httpsPort.Value()) == frpctl.DefaultHTTPSPort {
-					_ = httpsPort.SetValue(frpctl.DefaultWSSHTTPSPort)
-				}
-				if int(tcpmuxPort.Value()) == frpctl.DefaultTCPMuxPort {
-					_ = tcpmuxPort.SetValue(frpctl.DefaultWSSTCPMuxPort)
-				}
-			} else if current != 2 && lastTransport == 2 {
-				if int(httpPort.Value()) == frpctl.DefaultWSSHTTPPort {
-					_ = httpPort.SetValue(frpctl.DefaultHTTPPort)
-				}
-				if int(httpsPort.Value()) == frpctl.DefaultWSSHTTPSPort {
-					_ = httpsPort.SetValue(frpctl.DefaultHTTPSPort)
-				}
-				if int(tcpmuxPort.Value()) == frpctl.DefaultWSSTCPMuxPort {
-					_ = tcpmuxPort.SetValue(frpctl.DefaultTCPMuxPort)
-				}
-			}
-		}
-		lastTransport = current
-		tcpOptions.SetVisible(current < 3)
-	}
-	err := (Dialog{
-		AssignTo: &dlg, Title: "FRP 服务器设置", Icon: a.appIcon,
-		Size: Size{Width: 700, Height: 900}, MinSize: Size{Width: 650, Height: 820},
-		Font: Font{Family: "Microsoft YaHei UI", PointSize: 10}, Background: SolidColorBrush{Color: uiWhite},
-		Layout:       VBox{Margins: Margins{Left: 28, Top: 24, Right: 28, Bottom: 22}, Spacing: 12},
-		CancelButton: &closeButton, DefaultButton: &closeButton,
-		Children: []Widget{
-			heading("连接独立 FRP 服务器"),
-			TextLabel{Text: "固定 frpc v0.71.1 支持 TCP、WebSocket、WSS、QUIC、KCP；TLS 证书校验始终开启。HTTP/HTTPS 域名规则还需要填写 FRPS 对外提供的 vhost 端口。WSS 必须指向已完成 TLS→WebSocket 路由的外部反向代理，不能直连裸 FRPS bindPort。", TextColor: uiMuted, MinSize: Size{Width: 560}},
-			Composite{Layout: HBox{MarginsZero: true, Spacing: 10}, Children: []Widget{
-				Label{Text: "服务器地址", MinSize: Size{Width: 88}},
-				LineEdit{AssignTo: &host, Text: server.Host, CueBanner: "frp.example.com 或 IPv4", MinSize: Size{Width: 320}},
-			}},
-			Composite{Layout: HBox{MarginsZero: true, Spacing: 10}, Children: []Widget{
-				Label{Text: "控制端口", MinSize: Size{Width: 88}},
-				NumberEdit{AssignTo: &port, Value: float64(server.Port), MinValue: 1, MaxValue: 65535, Decimals: 0, MinSize: Size{Width: 130}},
-				Label{Text: "TLS serverName", MinSize: Size{Width: 106}},
-				LineEdit{AssignTo: &tlsName, Text: server.TLSServerName, CueBanner: "证书中的域名或 IP", MinSize: Size{Width: 180}},
-			}},
-			Composite{Layout: HBox{MarginsZero: true, Spacing: 10}, Children: []Widget{
-				Label{Text: "传输协议", MinSize: Size{Width: 88}},
-				ComboBox{AssignTo: &transportBox, Model: []string{"TCP", "WebSocket", "WSS", "QUIC", "KCP"}, CurrentIndex: transportIndex(), MinSize: Size{Width: 160}, OnCurrentIndexChanged: setTransportFields},
-				TextLabel{Text: "必须与 FRPS 的 transport.protocol 一致", TextColor: uiMuted, MinSize: Size{Width: 300}},
-			}},
-			Composite{Layout: HBox{MarginsZero: true, Spacing: 10}, Children: []Widget{
-				Label{Text: "公网 HTTP", MinSize: Size{Width: 88}},
-				NumberEdit{AssignTo: &httpPort, Value: float64(server.PublicHTTPPort), MinValue: 1, MaxValue: 65535, Decimals: 0, MinSize: Size{Width: 130}},
-				Label{Text: "公网 HTTPS", MinSize: Size{Width: 88}},
-				NumberEdit{AssignTo: &httpsPort, Value: float64(server.PublicHTTPSPort), MinValue: 1, MaxValue: 65535, Decimals: 0, MinSize: Size{Width: 130}},
-			}},
-			Composite{Layout: HBox{MarginsZero: true, Spacing: 10}, Children: []Widget{
-				Label{Text: "子域名后缀", MinSize: Size{Width: 88}},
-				LineEdit{AssignTo: &subdomainHost, Text: func() string {
-					if server.SubdomainHost != "" {
-						return server.SubdomainHost
-					}
-					return frpctl.DefaultSubdomainHost
-				}(), CueBanner: "例如 frp.example.com", MinSize: Size{Width: 300}},
-				Label{Text: "TCPMUX 端口", MinSize: Size{Width: 96}},
-				NumberEdit{AssignTo: &tcpmuxPort, Value: float64(server.PublicTCPMuxPort), MinValue: 1, MaxValue: 65535, Decimals: 0, MinSize: Size{Width: 120}},
-			}},
-			Composite{Layout: HBox{MarginsZero: true, Spacing: 10}, Children: []Widget{
-				CheckBox{AssignTo: &managed, Text: "使用 TLAN 托管发布授权", Checked: server.Kind == "managed"},
-				Label{Text: "托管服务器 ID", MinSize: Size{Width: 96}},
-				LineEdit{AssignTo: &serverID, Text: func() string {
-					if server.ServerID != "" {
-						return server.ServerID
-					}
-					return "frps-managed-1"
-				}(), CueBanner: "必须与 FRPS 配置的 server_id 一致", MinSize: Size{Width: 220}},
-			}},
-			Composite{AssignTo: &tcpOptions, Layout: HBox{MarginsZero: true, Spacing: 10}, Children: []Widget{
-				CheckBox{AssignTo: &tcpMux, Text: "启用 TCP 多路复用 (tcpMux)", Checked: server.TCPMux == nil || *server.TCPMux},
-				CheckBox{AssignTo: &disableFirstByte, Text: "标准 TLS 首字节", Checked: server.DisableCustomTLSFirstByte == nil || *server.DisableCustomTLSFirstByte},
-			}},
-			TextLabel{Text: "兼容档位必须与 FRPS 的 transport.tcpMux / transport.tls.disableCustomTLSFirstByte 一致；默认两项均为开启。QUIC/KCP 使用 UDP 端口，仍需 FRPS 对应端口与防火墙放行。", TextColor: uiMuted, MinSize: Size{Width: 560}},
-			Composite{Layout: HBox{MarginsZero: true, Spacing: 10}, Children: []Widget{
-				Label{Text: "可信 CA", MinSize: Size{Width: 88}},
-				LineEdit{AssignTo: &caPath, Text: server.TrustedCAPath, ReadOnly: true, MinSize: Size{Width: 360}},
-				actionButton(nil, "选择文件", false, 92, func() {
-					fd := walk.FileDialog{Title: "选择 FRP 可信 CA", FilePath: caPath.Text(), Filter: "证书文件 (*.pem;*.crt)|*.pem;*.crt|所有文件 (*.*)|*.*", FilterIndex: 1}
-					accepted, err := fd.ShowOpen(dlg)
-					if err != nil {
-						walk.MsgBox(dlg, "选择 CA 文件", err.Error(), walk.MsgBoxOK|walk.MsgBoxIconError)
-					} else if accepted {
-						caPath.SetText(fd.FilePath)
-					}
-				}),
-			}},
-			Composite{Layout: HBox{MarginsZero: true, Spacing: 10}, Children: []Widget{
-				Label{Text: "FRP 令牌", MinSize: Size{Width: 88}},
-				LineEdit{AssignTo: &token, PasswordMode: true, CueBanner: "留空表示保留已保存令牌", MinSize: Size{Width: 430}},
-			}},
-			TextLabel{Text: "共享令牌仅表示同一 FRP 服务器上的认证，不等同于设备级授权隔离。令牌由当前 Windows 用户使用 DPAPI 加密保存。", TextColor: uiMuted, MinSize: Size{Width: 520}},
-			VSpacer{StretchFactor: 1},
-			Composite{Layout: HBox{MarginsZero: true, Spacing: 10}, Children: []Widget{
-				HSpacer{},
-				actionButton(nil, "取消", false, 88, func() { dlg.Cancel() }),
-				actionButton(&closeButton, "保存设置", true, 108, func() {
-					hostValue := strings.TrimSpace(host.Text())
-					tlsValue := strings.TrimSpace(tlsName.Text())
-					caValue := strings.TrimSpace(caPath.Text())
-					if hostValue == "" || tlsValue == "" || caValue == "" {
-						walk.MsgBox(dlg, "设置不完整", "服务器地址、TLS serverName 和可信 CA 均不能为空。", walk.MsgBoxOK|walk.MsgBoxIconWarning)
-						return
-					}
-					if managed.Checked() {
-						cfg.Profile.Server.Kind = "managed"
-						cfg.Profile.Server.ServerID = strings.TrimSpace(serverID.Text())
-					} else {
-						cfg.Profile.Server.Kind = "private_token"
-						cfg.Profile.Server.ServerID = ""
-					}
-					cfg.Profile.Server.Host = hostValue
-					cfg.Profile.Server.Port = int(port.Value())
-					cfg.Profile.Server.Transport = []string{"tcp", "websocket", "wss", "quic", "kcp"}[transportBox.CurrentIndex()]
-					cfg.Profile.Server.TLSServerName = tlsValue
-					cfg.Profile.Server.TrustedCAPath = caValue
-					cfg.Profile.Server.CredentialRef = frpctl.DefaultCredential
-					cfg.Profile.Server.PublicHTTPPort = int(httpPort.Value())
-					cfg.Profile.Server.PublicHTTPSPort = int(httpsPort.Value())
-					cfg.Profile.Server.PublicTCPMuxPort = int(tcpmuxPort.Value())
-					cfg.Profile.Server.SubdomainHost = strings.ToLower(strings.TrimSpace(subdomainHost.Text()))
-					tcpMuxValue := tcpMux.Checked()
-					disableFirstByteValue := disableFirstByte.Checked()
-					cfg.Profile.Server.TCPMux = &tcpMuxValue
-					cfg.Profile.Server.DisableCustomTLSFirstByte = &disableFirstByteValue
-					if err := frpctl.ValidateConfig(cfg); err != nil {
-						walk.MsgBox(dlg, "设置不正确", err.Error(), walk.MsgBoxOK|walk.MsgBoxIconWarning)
-						return
-					}
-					a.applyFRPConfig(cfg, token.Text())
-					dlg.Accept()
-				}),
-			}},
-		},
-	}).Create(a.window)
-	if err != nil {
-		a.showFRPError("打开服务器设置", err)
-		return
-	}
-	setTransportFields()
-	defer dlg.Dispose()
-	dlg.Run()
+	return a.frpSnapshot.Configured || strings.TrimSpace(srv.Host) != ""
 }
 
-func (a *desktop) showAddFRPRule() {
-	a.showFRPRuleDialog(-1)
+func (a *desktop) ensureFRPConfigured(after func()) {
+	if a.hasUsableFRPConfig() {
+		if after != nil {
+			after()
+		}
+		return
+	}
+	a.bootstrapFRPFromServer(after)
+}
+
+func (a *desktop) bootstrapFRPFromServer(after func()) {
+	if a == nil || a.frpManager == nil || a.api == nil || !strings.HasPrefix(a.api.Token, "member_") || a.smokeMode {
+		if after != nil {
+			a.showNotice(clientui.Feedback{
+				Title:   tr("端口映射凭据未就绪", "Port Mapping Not Provisioned"),
+				Message: tr("未能从服务器获取端口映射配置，请确认服务端已开启端口映射并下发客户端凭据。", "Could not retrieve FRP bootstrap configuration from the server."),
+			})
+		}
+		return
+	}
+	apiCopy := *a.api
+	serverHost := a.frpServerHost()
+	parentCtx := a.ctx
+	if parentCtx == nil {
+		parentCtx = context.Background()
+	}
+	baseCfg := frpctl.CloneConfig(a.frpConfig)
+	if stored, ok := a.frpManager.Config(); ok {
+		baseCfg = frpctl.CloneConfig(stored)
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(parentCtx, 8*time.Second)
+		apiCopy.Context = ctx
+		boot, bootErr := apiCopy.FRPBootstrap()
+		caps, capErr := apiCopy.FRPCapabilities()
+		var saved frpctl.Config
+		var saveErr error
+		if bootErr == nil && boot.Enabled && strings.TrimSpace(boot.Token) != "" {
+			host := strings.TrimSpace(boot.Host)
+			if host == "" {
+				host = serverHost
+			}
+			nextCfg := bindFRPServerToHost(baseCfg, host)
+			if boot.Port > 0 {
+				nextCfg.Profile.Server.Port = boot.Port
+			}
+			if trName := strings.ToLower(strings.TrimSpace(boot.Transport)); trName != "" {
+				nextCfg.Profile.Server.Transport = trName
+			}
+			if sni := strings.TrimSpace(boot.TLSServerName); sni != "" {
+				nextCfg.Profile.Server.TLSServerName = sni
+			}
+			kind, serverID := resolveFRPServerMode(caps, capErr)
+			if strings.EqualFold(strings.TrimSpace(boot.Mode), frpauth.ModeManaged) && strings.TrimSpace(boot.ServerID) != "" {
+				kind, serverID = "managed", strings.TrimSpace(boot.ServerID)
+			}
+			nextCfg.Profile.Server.Kind = kind
+			nextCfg.Profile.Server.ServerID = serverID
+			saved, saveErr = a.frpManager.SaveBootstrap(ctx, nextCfg, boot.Token, []byte(boot.CAPEM))
+		}
+		cancel()
+		a.ui(func() {
+			if bootErr != nil {
+				if after != nil {
+					a.showFRPError(tr("获取端口映射配置", "Fetch port mapping config"), bootErr)
+				}
+				return
+			}
+			if !boot.Enabled || strings.TrimSpace(boot.Token) == "" {
+				if after != nil {
+					a.showNotice(clientui.Feedback{
+						Title:   tr("服务端未开启端口映射自动凭据", "Server FRP Bootstrap Disabled"),
+						Message: tr("请联系管理员在服务端配置 frp.client_token / client_ca_file 后即可免配直接使用。", "Ask the server administrator to enable FRP client bootstrap on the server."),
+					})
+				}
+				return
+			}
+			if saveErr != nil {
+				if after != nil {
+					a.showFRPError(tr("初始化端口映射配置", "Initialize port mapping config"), saveErr)
+				}
+				return
+			}
+			a.frpConfig = saved
+			a.frpSnapshot.Configured = true
+			a.frpSnapshot.ServerHost = saved.Profile.Server.Host
+			a.frpSnapshot.ServerPort = saved.Profile.Server.Port
+			a.renderFRPState()
+			a.updateFRPRows()
+			a.updateFRPButtons()
+			if after != nil {
+				after()
+			}
+		})
+	}()
 }
 
 func (a *desktop) showEditFRPRule() {
-	entry, ok := a.selectedFRPEntry()
-	if !ok {
+	index := a.selectedFRPIndex()
+	if index < 0 {
 		return
 	}
-	if entry.kind == "visitor" {
-		a.showFRPVisitorDialog(entry.index)
-		return
-	}
-	a.showFRPRuleDialog(entry.index)
+	a.showEditFRPRuleDialog(index)
 }
 
-func (a *desktop) showFRPRuleDialog(index int) {
+func (a *desktop) showEditFRPRuleDialog(index int) {
 	if a.frpManager == nil {
-		a.showFRPError("编辑穿透规则", a.frpInitErr)
+		a.showFRPError(tr("编辑端口映射", "Edit port mapping"), a.frpInitErr)
 		return
 	}
-	cfg := frpctl.CloneConfig(a.frpConfig)
-	rule := frpctl.Rule{
-		ID: "", Name: "", Type: "tcp", Enabled: true,
-		Target:   frpctl.Target{Kind: "loopback", Host: "127.0.0.1", Port: 8080},
-		Exposure: frpctl.Exposure{RemotePort: 30000},
+	if index < 0 || index >= len(a.frpConfig.Profile.Rules) {
+		return
 	}
-	if index >= 0 {
-		rule = cfg.Profile.Rules[index]
+	cfg := bindFRPServerToHost(a.frpConfig, a.frpServerHost())
+	rule := cfg.Profile.Rules[index]
+	if rule.Type != "tcp" && rule.Type != "udp" {
+		a.showNotice(clientui.Feedback{
+			Title:   tr("暂不支持编辑此旧规则", "Unsupported Legacy Rule"),
+			Message: tr("当前仅保留 TCP/UDP 端口映射，请删除该条规则后直接重新添加。", "Only TCP/UDP rules can be edited here. Delete this rule and add a new one."),
+		})
+		return
 	}
 	var dlg *walk.Dialog
-	var nameEdit, targetHost, targetNetworkID, targetDeviceID, targetPublicKey, targetServiceID, localPort, remotePort, domains, subdomain, locations, secretKey, httpUser, httpPassword, hostHeaderRewrite, routeByHTTPUser *walk.LineEdit
-	var requestHeaders, responseHeaders, allowUsers *walk.TextEdit
-	var typeBox, targetBox, proxyProtocolBox, multiplexerBox *walk.ComboBox
-	var enabled, useEncryption, useCompression *walk.CheckBox
-	var privateGroup, httpGroup, authGroup, muxGroup, transportGroup *walk.Composite
+	var nameEdit, localIP, localPort, remotePort *walk.LineEdit
+	var protoBox *walk.ComboBox
+	var enabled *walk.CheckBox
 	var saveButton, closeButton *walk.PushButton
-	typeIndex := func() int {
-		switch rule.Type {
-		case "udp":
-			return 1
-		case "http":
-			return 2
-		case "https":
-			return 3
-		case "stcp":
-			return 4
-		case "sudp":
-			return 5
-		case "tcpmux":
-			return 6
-		case "xtcp":
-			return 7
-		default:
-			return 0
-		}
+	protoIdx := 0
+	if rule.Type == "udp" {
+		protoIdx = 1
 	}
-	targetIndex := 0
-	if rule.Target.Kind == "lan" {
-		targetIndex = 1
-	} else if rule.Target.Kind == "mesh_peer" {
-		targetIndex = 2
-	} else if rule.Target.Kind == "mesh_self" {
-		targetIndex = 3
-	}
-	if rule.Target.NetworkID == "" {
-		rule.Target.NetworkID = a.membership.Network.ID
-	}
-	remoteValue := rule.Exposure.RemotePort
-	if remoteValue == 0 {
-		remoteValue = 30000
-	}
-	proxyProtocolIndex := 0
-	if rule.Transport.ProxyProtocolVersion == "v1" {
-		proxyProtocolIndex = 1
-	} else if rule.Transport.ProxyProtocolVersion == "v2" {
-		proxyProtocolIndex = 2
-	}
-	setFields := func() {
-		if typeBox == nil || remotePort == nil || domains == nil || subdomain == nil || targetHost == nil || targetBox == nil || privateGroup == nil || httpGroup == nil || authGroup == nil || muxGroup == nil || transportGroup == nil {
-			return
-		}
-		selected := typeBox.CurrentIndex()
-		remoteRule := selected == 0 || selected == 1
-		domainRule := selected == 2 || selected == 3 || selected == 6
-		privateRule := selected == 4 || selected == 5 || selected == 7
-		httpRule := selected == 2
-		muxRule := selected == 6
-		remotePort.SetEnabled(remoteRule)
-		domains.SetEnabled(domainRule)
-		subdomain.SetEnabled(domainRule)
-		privateGroup.SetVisible(privateRule)
-		httpGroup.SetVisible(httpRule)
-		authGroup.SetVisible(httpRule || muxRule)
-		muxGroup.SetVisible(muxRule)
-		transportGroup.SetVisible(true)
-		targetIndex := targetBox.CurrentIndex()
-		targetHost.SetEnabled(targetIndex != 0)
-		targetNetworkID.SetEnabled(targetIndex >= 2)
-		targetDeviceID.SetEnabled(targetIndex >= 2)
-		targetPublicKey.SetEnabled(targetIndex >= 2)
-		targetServiceID.SetEnabled(targetIndex >= 2)
-		switch targetIndex {
-		case 0:
-			targetHost.SetText("127.0.0.1")
-		case 3:
-			targetHost.SetText(a.membership.Member.VirtualIP)
-			targetNetworkID.SetText(a.membership.Network.ID)
-			targetDeviceID.SetText(a.identity.DeviceID.String())
-		}
-	}
+
 	err := (Dialog{
-		AssignTo: &dlg, Title: "内网穿透规则", Icon: a.appIcon,
-		Size: Size{Width: 760, Height: 860}, MinSize: Size{Width: 700, Height: 760},
-		Font: Font{Family: "Microsoft YaHei UI", PointSize: 10}, Background: SolidColorBrush{Color: uiWhite},
-		Layout:       VBox{Margins: Margins{Left: 28, Top: 22, Right: 28, Bottom: 20}, Spacing: 12},
+		AssignTo: &dlg, Title: tr("编辑端口映射", "Edit Port Mapping"), Icon: a.appIcon,
+		Size: Size{Width: 480, Height: 310}, MinSize: Size{Width: 440, Height: 290},
+		Font: uiFont(10, false), Background: SolidColorBrush{Color: uiWhite},
+		Layout:       VBox{Margins: Margins{Left: 24, Top: 20, Right: 24, Bottom: 18}, Spacing: 12},
 		CancelButton: &closeButton, DefaultButton: &saveButton,
 		Children: []Widget{
-			ScrollView{StretchFactor: 1, HorizontalFixed: true, Layout: VBox{MarginsZero: true, Spacing: 10}, Children: []Widget{
-				heading("发布本机、LAN 或受控 TLAN 服务"),
-				TextLabel{Text: "高级字段只映射到固定 frpc v0.71.1 的受限 schema，不会透传原始 TOML 或插件。Mesh 目标不能与 XTCP/tcpmux 混用；需要时请拆分成独立配置。", TextColor: uiMuted, MinSize: Size{Width: 680}},
-				Composite{Layout: HBox{MarginsZero: true, Spacing: 10}, Children: []Widget{
-					Label{Text: "规则名称", MinSize: Size{Width: 78}},
-					LineEdit{AssignTo: &nameEdit, Text: rule.Name, CueBanner: "例如：家庭游戏服务", MinSize: Size{Width: 560}},
-				}},
-				Composite{Layout: HBox{MarginsZero: true, Spacing: 10}, Children: []Widget{
-					Label{Text: "目标类型", MinSize: Size{Width: 78}},
-					ComboBox{AssignTo: &targetBox, Model: []string{"本机回环", "物理 LAN IPv4", "TLAN 成员", "本机 Mesh 地址"}, CurrentIndex: targetIndex, MinSize: Size{Width: 150}, OnCurrentIndexChanged: setFields},
-					Label{Text: "目标地址", MinSize: Size{Width: 78}},
-					LineEdit{AssignTo: &targetHost, Text: rule.Target.Host, CueBanner: "例如 192.168.1.20", MinSize: Size{Width: 250}},
-				}},
-				Composite{Layout: HBox{MarginsZero: true, Spacing: 10}, Children: []Widget{
-					Label{Text: "目标网络", MinSize: Size{Width: 78}},
-					LineEdit{AssignTo: &targetNetworkID, Text: rule.Target.NetworkID, MinSize: Size{Width: 220}},
-					Label{Text: "目标设备", MinSize: Size{Width: 78}},
-					LineEdit{AssignTo: &targetDeviceID, Text: rule.Target.DeviceID, CueBanner: "设备 ID", MinSize: Size{Width: 220}},
-				}},
-				Composite{Layout: HBox{MarginsZero: true, Spacing: 10}, Children: []Widget{
-					Label{Text: "目标公钥", MinSize: Size{Width: 78}},
-					LineEdit{AssignTo: &targetPublicKey, Text: rule.Target.PublicKey, CueBanner: "可留空；服务器会按目标成员绑定公钥", MinSize: Size{Width: 560}},
-				}},
-				Composite{Layout: HBox{MarginsZero: true, Spacing: 10}, Children: []Widget{
-					Label{Text: "服务授权", MinSize: Size{Width: 78}},
-					LineEdit{AssignTo: &targetServiceID, Text: rule.Target.ServiceID, CueBanner: "目标成员已批准的服务 ID；mesh_peer 必填", MinSize: Size{Width: 420}},
-					actionButton(nil, "申请/查看授权", false, 120, a.showFRPServiceCenter),
-				}},
-				Composite{Layout: HBox{MarginsZero: true, Spacing: 10}, Children: []Widget{
-					Label{Text: "代理协议", MinSize: Size{Width: 78}},
-					ComboBox{AssignTo: &typeBox, Model: []string{"TCP", "UDP", "HTTP", "HTTPS", "STCP", "SUDP", "TCPMUX", "XTCP"}, CurrentIndex: typeIndex(), MinSize: Size{Width: 150}, OnCurrentIndexChanged: setFields},
-					CheckBox{AssignTo: &enabled, Text: "启用此规则", Checked: rule.Enabled},
-				}},
-				Composite{Layout: HBox{MarginsZero: true, Spacing: 10}, Children: []Widget{
-					Label{Text: "本地端口", MinSize: Size{Width: 78}},
-					LineEdit{AssignTo: &localPort, Text: strconv.Itoa(rule.Target.Port), MinSize: Size{Width: 120}},
-					Label{Text: "公网端口", MinSize: Size{Width: 78}},
-					LineEdit{AssignTo: &remotePort, Text: strconv.Itoa(remoteValue), MinSize: Size{Width: 120}},
-				}},
-				Composite{Layout: HBox{MarginsZero: true, Spacing: 10}, Children: []Widget{
-					Label{Text: "自定义域名", MinSize: Size{Width: 78}},
-					LineEdit{AssignTo: &domains, Text: strings.Join(rule.Exposure.CustomDomains, ", "), CueBanner: "多个域名用逗号分隔，例如 app.example.com", MinSize: Size{Width: 370}},
-					Label{Text: "子域名", MinSize: Size{Width: 58}},
-					LineEdit{AssignTo: &subdomain, Text: rule.Exposure.Subdomain, CueBanner: "例如 app（不能含点）", MinSize: Size{Width: 110}},
-				}},
-				Composite{AssignTo: &privateGroup, Visible: false, Layout: VBox{MarginsZero: true, Spacing: 8}, Children: []Widget{
-					Composite{Layout: HBox{MarginsZero: true, Spacing: 10}, Children: []Widget{
-						Label{Text: "私有密钥", MinSize: Size{Width: 78}},
-						LineEdit{AssignTo: &secretKey, PasswordMode: true, CueBanner: "STCP/SUDP/XTCP 使用；留空保留已保存密钥", MinSize: Size{Width: 560}},
-					}},
-					Composite{Layout: HBox{MarginsZero: true, Spacing: 10}, Children: []Widget{
-						Label{Text: "允许用户", MinSize: Size{Width: 78}},
-						TextEdit{AssignTo: &allowUsers, Text: strings.Join(rule.Exposure.AllowUsers, ", "), VScroll: true, MinSize: Size{Width: 560, Height: 52}},
-					}},
-					TextLabel{Text: "allowUsers 仅对 STCP、SUDP、XTCP 生效；使用逗号或换行分隔。留空表示仅允许同一 FRP 用户；* 表示允许所有持密钥访问端，请谨慎使用。", TextColor: uiMuted, MinSize: Size{Width: 680}},
-					TextLabel{Text: "私有协议不会分配公网端口；访问端需要单独配置对应的 STCP/SUDP/XTCP visitor。", TextColor: uiMuted, MinSize: Size{Width: 680}},
-				}},
-				Composite{AssignTo: &httpGroup, Visible: false, Layout: VBox{MarginsZero: true, Spacing: 8}, Children: []Widget{
-					Composite{Layout: HBox{MarginsZero: true, Spacing: 10}, Children: []Widget{
-						Label{Text: "HTTP 路径", MinSize: Size{Width: 78}},
-						LineEdit{AssignTo: &locations, Text: strings.Join(rule.Exposure.Locations, ", "), CueBanner: "多个绝对路径用逗号分隔，例如 /, /api", MinSize: Size{Width: 560}},
-					}},
-					Composite{Layout: HBox{MarginsZero: true, Spacing: 10}, Children: []Widget{
-						Label{Text: "Host 改写", MinSize: Size{Width: 78}},
-						LineEdit{AssignTo: &hostHeaderRewrite, Text: rule.Exposure.HostHeaderRewrite, CueBanner: "可选；写入 hostHeaderRewrite", MinSize: Size{Width: 560}},
-					}},
-					Composite{Layout: HBox{MarginsZero: true, Spacing: 10}, Children: []Widget{
-						Label{Text: "请求头", MinSize: Size{Width: 78}},
-						TextEdit{AssignTo: &requestHeaders, Text: formatHeaderLines(rule.Exposure.RequestHeaders), VScroll: true, MinSize: Size{Width: 560, Height: 58}},
-					}},
-					Composite{Layout: HBox{MarginsZero: true, Spacing: 10}, Children: []Widget{
-						Label{Text: "响应头", MinSize: Size{Width: 78}},
-						TextEdit{AssignTo: &responseHeaders, Text: formatHeaderLines(rule.Exposure.ResponseHeaders), VScroll: true, MinSize: Size{Width: 560, Height: 58}},
-					}},
-					TextLabel{Text: "请求头/响应头每行填写 Name: value；只支持 v0.71.1 的 set 操作，不接受删除或替换整个 Header 表。", TextColor: uiMuted, MinSize: Size{Width: 680}},
-				}},
-				Composite{AssignTo: &authGroup, Visible: false, Layout: VBox{MarginsZero: true, Spacing: 8}, Children: []Widget{
-					Composite{Layout: HBox{MarginsZero: true, Spacing: 10}, Children: []Widget{
-						Label{Text: "HTTP 用户", MinSize: Size{Width: 78}},
-						LineEdit{AssignTo: &httpUser, Text: rule.Exposure.HTTPUser, CueBanner: "可选；设置后必须同时设置密码", MinSize: Size{Width: 190}},
-						Label{Text: "HTTP 密码", MinSize: Size{Width: 78}},
-						LineEdit{AssignTo: &httpPassword, PasswordMode: true, CueBanner: "留空保留已保存密码", MinSize: Size{Width: 220}},
-					}},
-					Composite{Layout: HBox{MarginsZero: true, Spacing: 10}, Children: []Widget{
-						Label{Text: "路由用户", MinSize: Size{Width: 78}},
-						LineEdit{AssignTo: &routeByHTTPUser, Text: rule.Exposure.RouteByHTTPUser, CueBanner: "可选；对应 routeByHTTPUser", MinSize: Size{Width: 560}},
-					}},
-				}},
-				Composite{AssignTo: &muxGroup, Visible: false, Layout: VBox{MarginsZero: true, Spacing: 8}, Children: []Widget{
-					Composite{Layout: HBox{MarginsZero: true, Spacing: 10}, Children: []Widget{
-						Label{Text: "Multiplexer", MinSize: Size{Width: 78}},
-						ComboBox{AssignTo: &multiplexerBox, Model: []string{"HTTP CONNECT"}, CurrentIndex: 0, MinSize: Size{Width: 180}},
-					}},
-					TextLabel{Text: "TCPMUX 仅开放 v0.71.1 支持的 httpconnect multiplexer。", TextColor: uiMuted, MinSize: Size{Width: 680}},
-				}},
-				Composite{AssignTo: &transportGroup, Layout: VBox{MarginsZero: true, Spacing: 8}, Children: []Widget{
-					Composite{Layout: HBox{MarginsZero: true, Spacing: 18}, Children: []Widget{
-						CheckBox{AssignTo: &useEncryption, Text: "传输加密 (useEncryption)", Checked: rule.Transport.UseEncryption},
-						CheckBox{AssignTo: &useCompression, Text: "传输压缩 (useCompression)", Checked: rule.Transport.UseCompression},
-					}},
-					Composite{Layout: HBox{MarginsZero: true, Spacing: 10}, Children: []Widget{
-						Label{Text: "PROXY 协议", MinSize: Size{Width: 78}},
-						ComboBox{AssignTo: &proxyProtocolBox, Model: []string{"自动", "v1", "v2"}, CurrentIndex: proxyProtocolIndex, MinSize: Size{Width: 130}},
-						TextLabel{Text: "仅在本地业务服务确实支持 proxy protocol 时启用；默认自动。该字段是客户端本地 TOML 选项，FRPS 插件不可观察，不属于 managed 精确授权。", TextColor: uiMuted, MinSize: Size{Width: 430}},
-					}},
-				}},
-				TextLabel{Text: "云元数据、TLAN/FRP 管理入口和内部网关不能作为目标；Mesh 目标必须使用托管授权。XTCP/tcpmux 与 Mesh 目标或 Mesh visitor 依赖冲突时会拒绝保存。", TextColor: uiMuted, MinSize: Size{Width: 680}},
+			heading(tr("编辑端口映射", "Edit Port Mapping")),
+			Composite{Background: SolidColorBrush{Color: uiWhite}, Layout: HBox{MarginsZero: true, Spacing: 10}, Children: []Widget{
+				formLabel(tr("映射名称", "Rule Name"), 84),
+				LineEdit{AssignTo: &nameEdit, Text: rule.Name, CueBanner: tr("例如：game_25565", "e.g. game_25565"), Font: uiFont(9, false), TextColor: uiInk, Background: SolidColorBrush{Color: uiWhite}, MinSize: Size{Width: 330}},
 			}},
-			Composite{Layout: HBox{MarginsZero: true, Spacing: 10}, Children: []Widget{
+			Composite{Background: SolidColorBrush{Color: uiWhite}, Layout: HBox{MarginsZero: true, Spacing: 10}, Children: []Widget{
+				formLabel(tr("协议", "Proto"), 84),
+				comboBoxView{ComboBox: ComboBox{AssignTo: &protoBox, Model: []string{"TCP", "UDP"}, CurrentIndex: protoIdx, Font: uiFont(9, false), MinSize: Size{Width: 110, Height: 30}, MaxSize: Size{Height: 30}}},
+				themedCheckBox(&enabled, tr("启用此条映射", "Enable rule"), rule.Enabled),
+			}},
+			Composite{Background: SolidColorBrush{Color: uiWhite}, Layout: HBox{MarginsZero: true, Spacing: 10}, Children: []Widget{
+				formLabel(tr("本地 IP", "Local IP"), 84),
+				LineEdit{AssignTo: &localIP, Text: rule.Target.Host, CueBanner: "127.0.0.1", Font: uiFont(9, false), TextColor: uiInk, Background: SolidColorBrush{Color: uiWhite}, MinSize: Size{Width: 160}},
+				formLabel(tr("本地端口", "Local Port"), 68),
+				LineEdit{AssignTo: &localPort, Text: strconv.Itoa(rule.Target.Port), Font: uiFont(9, false), TextColor: uiInk, Background: SolidColorBrush{Color: uiWhite}, MinSize: Size{Width: 90}},
+			}},
+			Composite{Background: SolidColorBrush{Color: uiWhite}, Layout: HBox{MarginsZero: true, Spacing: 10}, Children: []Widget{
+				formLabel(tr("服务器端口", "Remote Port"), 84),
+				LineEdit{AssignTo: &remotePort, Text: strconv.Itoa(rule.Exposure.RemotePort), Font: uiFont(9, false), TextColor: uiInk, Background: SolidColorBrush{Color: uiWhite}, MinSize: Size{Width: 110}},
+				Label{Text: tr("映射服务器：", "Server: ") + a.frpServerHost(), TextColor: uiMuted, Font: uiMonoFont(8, false), NoPrefix: true, EllipsisMode: EllipsisEnd},
 				HSpacer{},
-				actionButton(nil, "取消", false, 88, func() { dlg.Cancel() }),
-				actionButton(&saveButton, "保存规则", true, 108, func() {
+			}},
+			VSpacer{StretchFactor: 1},
+			Composite{Background: SolidColorBrush{Color: uiWhite}, Layout: HBox{MarginsZero: true, Spacing: 10}, Children: []Widget{
+				HSpacer{},
+				actionButton(&closeButton, tr("取消", "Cancel"), false, 84, func() { dlg.Cancel() }),
+				actionButton(&saveButton, tr("保存映射", "Save"), true, 96, func() {
 					local, err := strconv.Atoi(strings.TrimSpace(localPort.Text()))
+					if err != nil || local < 1 || local > 65535 {
+						walk.MsgBox(dlg, tr("端口不正确", "Invalid Port"), tr("本地端口必须是 1-65535 的数字。", "Local port must be between 1 and 65535."), walk.MsgBoxOK|walk.MsgBoxIconWarning)
+						return
+					}
+					portRange := a.activeFRPPortRange()
+					remote, err := strconv.Atoi(strings.TrimSpace(remotePort.Text()))
+					if err != nil || remote < 1 || remote > 65535 {
+						walk.MsgBox(dlg, tr("端口不正确", "Invalid Port"), tr("服务器端口必须是 1-65535 的数字。", "Remote port must be between 1 and 65535."), walk.MsgBoxOK|walk.MsgBoxIconWarning)
+						return
+					}
+					if remote < portRange.Start || remote > portRange.End {
+						walk.MsgBox(dlg, tr("端口超出允许范围", "Port Out of Range"), trf("当前允许的服务器端口范围为 %d-%d。", "Allowed remote port range is %d-%d.", portRange.Start, portRange.End), walk.MsgBoxOK|walk.MsgBoxIconWarning)
+						return
+					}
+					kind, hostVal, err := normalizeLocalTargetIP(localIP.Text())
 					if err != nil {
-						walk.MsgBox(dlg, "端口不正确", "本地端口必须是 1-65535 的数字。", walk.MsgBoxOK|walk.MsgBoxIconWarning)
+						walk.MsgBox(dlg, tr("本地 IP 不正确", "Invalid Local IP"), err.Error(), walk.MsgBoxOK|walk.MsgBoxIconWarning)
 						return
 					}
 					updated := rule
-					if updated.ID == "" {
-						updated.ID, err = frpctl.NewRuleID()
-						if err != nil {
-							walk.MsgBox(dlg, "保存规则", err.Error(), walk.MsgBoxOK|walk.MsgBoxIconError)
-							return
-						}
-					}
 					updated.Name = strings.TrimSpace(nameEdit.Text())
-					updated.Type = []string{"tcp", "udp", "http", "https", "stcp", "sudp", "tcpmux", "xtcp"}[typeBox.CurrentIndex()]
+					updated.Type = []string{"tcp", "udp"}[protoBox.CurrentIndex()]
 					updated.Enabled = enabled.Checked()
-					targetKind := "loopback"
-					targetHostValue := "127.0.0.1"
-					if targetBox.CurrentIndex() == 1 {
-						targetKind = "lan"
-						targetHostValue = strings.TrimSpace(targetHost.Text())
-					} else if targetBox.CurrentIndex() == 2 {
-						targetKind = "mesh_peer"
-						targetHostValue = strings.TrimSpace(targetHost.Text())
-					} else if targetBox.CurrentIndex() == 3 {
-						targetKind = "mesh_self"
-						targetHostValue = strings.TrimSpace(targetHost.Text())
-					}
-					updated.Target = frpctl.Target{Kind: targetKind, Host: targetHostValue, Port: local}
-					if targetKind == "mesh_peer" || targetKind == "mesh_self" {
-						updated.Target.NetworkID = strings.TrimSpace(targetNetworkID.Text())
-						updated.Target.DeviceID = strings.TrimSpace(targetDeviceID.Text())
-						updated.Target.PublicKey = strings.TrimSpace(targetPublicKey.Text())
-						updated.Target.ServiceID = strings.TrimSpace(targetServiceID.Text())
-						if targetKind == "mesh_peer" && updated.Target.ServiceID == "" {
-							walk.MsgBox(dlg, "缺少服务授权", "请点击“申请/查看授权”，由目标成员确认后再把服务 ID 填入此处。", walk.MsgBoxOK|walk.MsgBoxIconWarning)
-							return
-						}
-					}
-					updated.Transport = frpctl.RuleTransport{
-						UseEncryption:        useEncryption.Checked(),
-						UseCompression:       useCompression.Checked(),
-						ProxyProtocolVersion: []string{"", "v1", "v2"}[proxyProtocolBox.CurrentIndex()],
-					}
-					providedSecrets := map[string]string{}
-					switch updated.Type {
-					case "tcp", "udp":
-						updated.SecretRef = ""
-						updated.Exposure = frpctl.Exposure{}
-						remote, parseErr := strconv.Atoi(strings.TrimSpace(remotePort.Text()))
-						if parseErr != nil {
-							walk.MsgBox(dlg, "端口不正确", "公网端口必须是 1-65535 的数字。", walk.MsgBoxOK|walk.MsgBoxIconWarning)
-							return
-						}
-						updated.Exposure.RemotePort = remote
-					case "http", "https":
-						updated.SecretRef = ""
-						updated.Exposure = frpctl.Exposure{
-							CustomDomains: splitDomains(domains.Text()),
-							Subdomain:     strings.TrimSpace(subdomain.Text()),
-						}
-						if updated.Type == "http" {
-							updated.Exposure.Locations = splitDomains(locations.Text())
-							updated.Exposure.HostHeaderRewrite = strings.TrimSpace(hostHeaderRewrite.Text())
-							updated.Exposure.RouteByHTTPUser = strings.TrimSpace(routeByHTTPUser.Text())
-							updated.Exposure.RequestHeaders, err = parseHeaderLines(requestHeaders.Text())
-							if err != nil {
-								walk.MsgBox(dlg, "请求头格式不正确", err.Error(), walk.MsgBoxOK|walk.MsgBoxIconWarning)
-								return
-							}
-							updated.Exposure.ResponseHeaders, err = parseHeaderLines(responseHeaders.Text())
-							if err != nil {
-								walk.MsgBox(dlg, "响应头格式不正确", err.Error(), walk.MsgBoxOK|walk.MsgBoxIconWarning)
-								return
-							}
-						}
-						if updated.Type == "http" {
-							user := strings.TrimSpace(httpUser.Text())
-							password := httpPassword.Text()
-							if user != "" && password == "" && rule.Exposure.HTTPPasswordRef == "" {
-								walk.MsgBox(dlg, "HTTP 密码不能为空", "设置 HTTP 用户时必须填写密码。", walk.MsgBoxOK|walk.MsgBoxIconWarning)
-								return
-							}
-							if user == "" && password != "" {
-								walk.MsgBox(dlg, "HTTP 用户不能为空", "填写 HTTP 密码时必须同时填写用户名。", walk.MsgBoxOK|walk.MsgBoxIconWarning)
-								return
-							}
-							if user != "" {
-								ref := rule.Exposure.HTTPPasswordRef
-								if ref == "" {
-									ref = "http-password-" + updated.ID
-								}
-								updated.Exposure.HTTPUser = user
-								updated.Exposure.HTTPPasswordRef = ref
-								if password != "" {
-									providedSecrets[ref] = password
-								}
-							}
-						}
-					case "tcpmux":
-						updated.SecretRef = ""
-						updated.Exposure = frpctl.Exposure{
-							CustomDomains:   splitDomains(domains.Text()),
-							Subdomain:       strings.TrimSpace(subdomain.Text()),
-							Multiplexer:     "httpconnect",
-							RouteByHTTPUser: strings.TrimSpace(routeByHTTPUser.Text()),
-						}
-						user := strings.TrimSpace(httpUser.Text())
-						password := httpPassword.Text()
-						if user != "" && password == "" && rule.Exposure.HTTPPasswordRef == "" {
-							walk.MsgBox(dlg, "HTTP 密码不能为空", "设置 HTTP 用户时必须填写密码。", walk.MsgBoxOK|walk.MsgBoxIconWarning)
-							return
-						}
-						if user == "" && password != "" {
-							walk.MsgBox(dlg, "HTTP 用户不能为空", "填写 HTTP 密码时必须同时填写用户名。", walk.MsgBoxOK|walk.MsgBoxIconWarning)
-							return
-						}
-						if user != "" {
-							ref := rule.Exposure.HTTPPasswordRef
-							if ref == "" {
-								ref = "http-password-" + updated.ID
-							}
-							updated.Exposure.HTTPUser = user
-							updated.Exposure.HTTPPasswordRef = ref
-							if password != "" {
-								providedSecrets[ref] = password
-							}
-						}
-					default:
-						updated.Exposure = frpctl.Exposure{AllowUsers: splitDomains(allowUsers.Text())}
-						if updated.SecretRef == "" {
-							updated.SecretRef = "rule-secret-" + updated.ID
-						}
-						value := secretKey.Text()
-						if value != "" {
-							providedSecrets[updated.SecretRef] = value
-						} else if rule.SecretRef == "" {
-							walk.MsgBox(dlg, "私有密钥不能为空", "STCP/SUDP/XTCP 规则需要设置访问密钥。", walk.MsgBoxOK|walk.MsgBoxIconWarning)
-							return
-						}
-					}
-					if index >= 0 {
-						cfg.Profile.Rules[index] = updated
-					} else {
-						cfg.Profile.Rules = append(cfg.Profile.Rules, updated)
-					}
-					if err = frpctl.ValidateConfig(cfg); err != nil {
-						showFRPValidationError(dlg, "规则不正确", err)
+					updated.Target = frpctl.Target{Kind: kind, Host: hostVal, Port: local}
+					updated.Exposure = frpctl.Exposure{RemotePort: remote}
+					updated.SecretRef = ""
+					cfg.Profile.Rules[index] = updated
+					if err = frpctl.ValidateConfigWithReservations(cfg, a.frpReservations()); err != nil {
+						showFRPValidationError(dlg, tr("映射配置不正确", "Invalid Rule Configuration"), err)
 						return
 					}
-					a.applyFRPConfigWithSecrets(cfg, "", providedSecrets)
+					a.applyFRPConfig(cfg, "")
 					dlg.Accept()
 				}),
 			}},
 		},
 	}).Create(a.window)
 	if err != nil {
-		a.showFRPError("打开内网穿透规则", err)
+		a.showFRPError(tr("打开编辑窗口", "Open edit dialog"), err)
 		return
 	}
-	setFields()
 	defer dlg.Dispose()
-	dlg.Run()
-}
-
-func formatHeaderLines(values map[string]string) string {
-	if len(values) == 0 {
-		return ""
-	}
-	keys := make([]string, 0, len(values))
-	for key := range values {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	lines := make([]string, 0, len(keys))
-	for _, key := range keys {
-		lines = append(lines, key+": "+values[key])
-	}
-	return strings.Join(lines, "\r\n")
-}
-
-func parseHeaderLines(value string) (map[string]string, error) {
-	lines := strings.FieldsFunc(value, func(r rune) bool { return r == '\n' || r == '\r' })
-	if len(lines) == 0 {
-		return nil, nil
-	}
-	headers := make(map[string]string, len(lines))
-	for lineNumber, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		index := strings.IndexByte(line, ':')
-		if index <= 0 {
-			return nil, fmt.Errorf("第 %d 行必须使用 Name: value 格式", lineNumber+1)
-		}
-		name := strings.TrimSpace(line[:index])
-		value := strings.TrimSpace(line[index+1:])
-		if name == "" || strings.ContainsAny(name, "\x00\r\n") || strings.ContainsAny(value, "\x00\r\n") {
-			return nil, fmt.Errorf("第 %d 行的 Header 名称或值无效", lineNumber+1)
-		}
-		headers[name] = value
-	}
-	if len(headers) == 0 {
-		return nil, nil
-	}
-	return headers, nil
+	runThemedDialog(dlg)
 }
 
 func showFRPValidationError(dlg *walk.Dialog, title string, err error) {
 	if err == nil {
 		return
 	}
-	message := "配置未保存：" + err.Error()
-	switch {
-	case frpctl.IsDependencyIsolationError(err):
-		title = "需要拆分配置"
-		message = "当前配置混用了 Mesh 依赖与独立访问/高级代理，失败时可能错误停止无关服务。\n\n请新建独立穿透配置，把 Mesh 发布、XTCP/tcpmux 或 visitor 分开保存。\n\n技术信息：" + err.Error()
-	case frpctl.IsReservedTargetError(err):
-		title = "目标或监听端口被保留"
-		message = "云元数据、TLAN/FRP 管理入口、内部网关和已分配的本机监听端口不能作为业务目标或访问端口。\n\n请改用普通业务服务端口。\n\n技术信息：" + err.Error()
-	case strings.Contains(strings.ToLower(err.Error()), "subdomain"):
-		title = "子域名不正确"
-		message = "子域名只能填写一个 DNS 标签（不能含点、通配符或空格），例如 app。\n\n" + err.Error()
-	case strings.Contains(strings.ToLower(err.Error()), "location"):
-		title = "HTTP 路径不正确"
-		message = "locations 必须是绝对路径，例如 / 或 /api；多个路径用逗号分隔，不能包含 ..。\n\n" + err.Error()
-	case strings.Contains(strings.ToLower(err.Error()), "header"):
-		title = "Header 改写不正确"
-		message = "请求头/响应头必须每行使用 Name: value 格式，名称和值不能包含换行或控制字符。\n\n" + err.Error()
-	case strings.Contains(strings.ToLower(err.Error()), "managed frps does not yet authorize"):
-		title = "托管授权暂不支持此高级规则"
-		message = "当前 TLAN 托管 FRPS 授权 schema 只覆盖 TCP/UDP/HTTP/HTTPS/STCP/SUDP。XTCP/tcpmux 请改用 private_token 服务器配置，不能绕过服务端授权直接发布。\n\n" + err.Error()
-	case strings.Contains(strings.ToLower(err.Error()), "tcpmux"):
-		title = "TCPMUX 配置不正确"
-		message = "TCPMUX 只支持 httpconnect，并且必须填写 customDomains 或 subdomain；不能与 Mesh 目标混用。\n\n" + err.Error()
-	case strings.Contains(strings.ToLower(err.Error()), "xtcp"):
-		title = "XTCP 配置不正确"
-		message = "XTCP 需要私有密钥；visitor 的 protocol 只能是 quic 或 kcp，且不能与 Mesh 目标混用。\n\n" + err.Error()
-	case strings.Contains(strings.ToLower(err.Error()), "transport"):
-		title = "传输协议配置不正确"
-		message = "请检查 FRPS 的 transport.protocol 与客户端一致；QUIC/KCP 使用 UDP，WSS/WebSocket 使用 TCP，TLS 证书校验不可关闭。\n\n" + err.Error()
-	case strings.Contains(strings.ToLower(err.Error()), "http"):
-		title = "HTTP 认证配置不正确"
-		message = "HTTP 用户名和密码必须同时设置；密码会通过 Windows DPAPI 保存，不会写入明文配置。\n\n" + err.Error()
+	message := tr("配置未保存：", "Configuration not saved: ") + err.Error()
+	if frpctl.IsReservedTargetError(err) {
+		title = tr("目标或监听端口被保留", "Reserved Port")
+		message = tr("系统保留端口（如控制端、FRP 控制端口）不能用于端口映射。\n\n请改用普通业务服务端口。\n\n技术信息：", "System reserved ports cannot be used for port mapping.\n\nChoose a regular service port.\n\nDetails: ") + err.Error()
 	}
 	walk.MsgBox(dlg, title, message, walk.MsgBoxOK|walk.MsgBoxIconWarning)
 }
 
-func splitDomains(value string) []string {
-	fields := strings.FieldsFunc(value, func(r rune) bool {
-		return r == ',' || r == ';' || r == '\n' || r == '\r' || r == '\t'
-	})
-	result := make([]string, 0, len(fields))
-	for _, field := range fields {
-		if field = strings.TrimSpace(field); field != "" {
-			result = append(result, field)
-		}
-	}
-	return result
-}
-
 func (a *desktop) deleteFRPRule() {
-	entry, ok := a.selectedFRPEntry()
-	if !ok {
+	index := a.selectedFRPIndex()
+	if index < 0 {
 		return
 	}
-	if entry.kind == "visitor" {
-		a.deleteFRPVisitor(entry.index)
+	rule := a.frpConfig.Profile.Rules[index]
+	if walk.MsgBox(a.window, tr("删除端口映射", "Delete Rule"), trf("确定删除“%s”吗？", "Delete rule \"%s\"?", rule.Name), walk.MsgBoxYesNo|walk.MsgBoxIconQuestion) != walk.DlgCmdYes {
 		return
 	}
-	rule := a.frpConfig.Profile.Rules[entry.index]
-	if walk.MsgBox(a.window, "删除穿透规则", fmt.Sprintf("确定删除“%s”吗？", rule.Name), walk.MsgBoxYesNo|walk.MsgBoxIconQuestion) != walk.DlgCmdYes {
-		return
-	}
-	cfg := frpctl.CloneConfig(a.frpConfig)
-	cfg.Profile.Rules = append(cfg.Profile.Rules[:entry.index], cfg.Profile.Rules[entry.index+1:]...)
-	a.applyFRPConfig(cfg, "")
-}
-
-func (a *desktop) showAddFRPVisitor() {
-	a.showFRPVisitorDialog(-1)
-}
-
-func (a *desktop) showFRPVisitorDialog(index int) {
-	if a.frpManager == nil {
-		a.showFRPError("编辑私有访问", a.frpInitErr)
-		return
-	}
-	cfg := frpctl.CloneConfig(a.frpConfig)
-	visitor := frpctl.Visitor{
-		ID: "", Name: "", Type: "stcp", Enabled: true,
-		BindAddr: "127.0.0.1", BindPort: 9000, Protocol: "quic",
-		MaxRetriesAnHour: 8, MinRetryInterval: 90, FallbackTimeoutMs: 1000,
-	}
-	if index >= 0 {
-		visitor = cfg.Profile.Visitors[index]
-	}
-	var dlg *walk.Dialog
-	var nameEdit, serverName, serverUser, bindPort, secretKey, maxRetries, minRetry, fallbackTo, fallbackTimeout *walk.LineEdit
-	var typeBox, protocolBox *walk.ComboBox
-	var enabled, keepTunnelOpen *walk.CheckBox
-	var xtcpGroup *walk.Composite
-	var saveButton, closeButton *walk.PushButton
-	typeIndex := 0
-	if visitor.Type == "sudp" {
-		typeIndex = 1
-	} else if visitor.Type == "xtcp" {
-		typeIndex = 2
-	}
-	protocolIndex := 0
-	if visitor.Protocol == "kcp" {
-		protocolIndex = 1
-	}
-	setFields := func() {
-		if typeBox == nil || xtcpGroup == nil {
-			return
-		}
-		xtcpGroup.SetVisible(typeBox.CurrentIndex() == 2)
-	}
-	err := (Dialog{
-		AssignTo: &dlg, Title: "私有访问规则", Icon: a.appIcon,
-		Size: Size{Width: 640, Height: 700}, MinSize: Size{Width: 580, Height: 620},
-		Font: Font{Family: "Microsoft YaHei UI", PointSize: 10}, Background: SolidColorBrush{Color: uiWhite},
-		Layout:       VBox{Margins: Margins{Left: 28, Top: 24, Right: 28, Bottom: 22}, Spacing: 12},
-		CancelButton: &closeButton, DefaultButton: &saveButton,
-		Children: []Widget{
-			ScrollView{StretchFactor: 1, HorizontalFixed: true, Layout: VBox{MarginsZero: true, Spacing: 12}, Children: []Widget{
-				heading("通过 STCP/SUDP/XTCP 访问其他设备"),
-				TextLabel{Text: "访问器只绑定 127.0.0.1，不向局域网或 TLAN 成员开放。XTCP 使用固定 frpc v0.71.1 的 P2P 打洞参数；访问器属于独立依赖域，不能与 TLAN Mesh 发布规则混在同一配置。", TextColor: uiMuted, MinSize: Size{Width: 570}},
-				Composite{Layout: HBox{MarginsZero: true, Spacing: 10}, Children: []Widget{
-					Label{Text: "访问名称", MinSize: Size{Width: 78}},
-					LineEdit{AssignTo: &nameEdit, Text: visitor.Name, CueBanner: "例如：家里 SSH", MinSize: Size{Width: 460}},
-				}},
-				Composite{Layout: HBox{MarginsZero: true, Spacing: 10}, Children: []Widget{
-					Label{Text: "协议", MinSize: Size{Width: 78}},
-					ComboBox{AssignTo: &typeBox, Model: []string{"STCP", "SUDP", "XTCP"}, CurrentIndex: typeIndex, MinSize: Size{Width: 130}, OnCurrentIndexChanged: setFields},
-					CheckBox{AssignTo: &enabled, Text: "启用此访问", Checked: visitor.Enabled},
-				}},
-				Composite{Layout: HBox{MarginsZero: true, Spacing: 10}, Children: []Widget{
-					Label{Text: "服务器名", MinSize: Size{Width: 78}},
-					LineEdit{AssignTo: &serverName, Text: visitor.ServerName, CueBanner: "发布端 raw 代理名（不要加 user. 前缀）", MinSize: Size{Width: 300}},
-					Label{Text: "服务器用户", MinSize: Size{Width: 82}},
-					LineEdit{AssignTo: &serverUser, Text: visitor.ServerUser, CueBanner: "可留空", MinSize: Size{Width: 120}},
-				}},
-				Composite{Layout: HBox{MarginsZero: true, Spacing: 10}, Children: []Widget{
-					Label{Text: "本机端口", MinSize: Size{Width: 78}},
-					LineEdit{AssignTo: &bindPort, Text: strconv.Itoa(visitor.BindPort), MinSize: Size{Width: 120}},
-					Label{Text: "私有密钥", MinSize: Size{Width: 78}},
-					LineEdit{AssignTo: &secretKey, PasswordMode: true, CueBanner: "留空保留已保存密钥", MinSize: Size{Width: 230}},
-				}},
-				Composite{AssignTo: &xtcpGroup, Visible: false, Layout: VBox{MarginsZero: true, Spacing: 8}, Children: []Widget{
-					Composite{Layout: HBox{MarginsZero: true, Spacing: 10}, Children: []Widget{
-						Label{Text: "XTCP 协议", MinSize: Size{Width: 78}},
-						ComboBox{AssignTo: &protocolBox, Model: []string{"QUIC", "KCP"}, CurrentIndex: protocolIndex, MinSize: Size{Width: 130}},
-						CheckBox{AssignTo: &keepTunnelOpen, Text: "保持隧道 (keepTunnelOpen)", Checked: visitor.KeepTunnelOpen},
-					}},
-					Composite{Layout: HBox{MarginsZero: true, Spacing: 10}, Children: []Widget{
-						Label{Text: "每小时重试", MinSize: Size{Width: 78}},
-						LineEdit{AssignTo: &maxRetries, Text: strconv.Itoa(visitor.MaxRetriesAnHour), MinSize: Size{Width: 90}},
-						Label{Text: "最小间隔秒", MinSize: Size{Width: 82}},
-						LineEdit{AssignTo: &minRetry, Text: strconv.Itoa(visitor.MinRetryInterval), MinSize: Size{Width: 90}},
-						Label{Text: "回退超时 ms", MinSize: Size{Width: 82}},
-						LineEdit{AssignTo: &fallbackTimeout, Text: strconv.Itoa(visitor.FallbackTimeoutMs), MinSize: Size{Width: 90}},
-					}},
-					Composite{Layout: HBox{MarginsZero: true, Spacing: 10}, Children: []Widget{
-						Label{Text: "回退访问器", MinSize: Size{Width: 78}},
-						LineEdit{AssignTo: &fallbackTo, Text: visitor.FallbackTo, CueBanner: "可选；填写另一个 visitor 的 FRP 名称", MinSize: Size{Width: 460}},
-					}},
-					TextLabel{Text: "XTCP 打洞失败时可回退到另一个访问器；这些参数只在 v0.71.1 visitor type=xtcp 下渲染。", TextColor: uiMuted, MinSize: Size{Width: 570}},
-				}},
-				TextLabel{Text: "访问器会把 127.0.0.1:本机端口 的连接转发到远端私有代理；不会自动开放给其他设备。", TextColor: uiMuted, MinSize: Size{Width: 570}},
-			}},
-			Composite{Layout: HBox{MarginsZero: true, Spacing: 10}, Children: []Widget{
-				HSpacer{},
-				actionButton(nil, "取消", false, 88, func() { dlg.Cancel() }),
-				actionButton(&saveButton, "保存访问", true, 108, func() {
-					port, err := strconv.Atoi(strings.TrimSpace(bindPort.Text()))
-					if err != nil {
-						walk.MsgBox(dlg, "端口不正确", "本机端口必须是 1-65535 的数字。", walk.MsgBoxOK|walk.MsgBoxIconWarning)
-						return
-					}
-					updated := visitor
-					if updated.ID == "" {
-						updated.ID, err = frpctl.NewRuleID()
-						if err != nil {
-							walk.MsgBox(dlg, "保存访问", err.Error(), walk.MsgBoxOK|walk.MsgBoxIconError)
-							return
-						}
-					}
-					updated.Name = strings.TrimSpace(nameEdit.Text())
-					updated.Type = []string{"stcp", "sudp", "xtcp"}[typeBox.CurrentIndex()]
-					updated.ServerName = strings.TrimSpace(serverName.Text())
-					updated.ServerUser = strings.TrimSpace(serverUser.Text())
-					updated.BindAddr = "127.0.0.1"
-					updated.BindPort = port
-					updated.Enabled = enabled.Checked()
-					updated.Protocol = ""
-					updated.KeepTunnelOpen = false
-					updated.MaxRetriesAnHour = 0
-					updated.MinRetryInterval = 0
-					updated.FallbackTo = ""
-					updated.FallbackTimeoutMs = 0
-					if updated.Type == "xtcp" {
-						updated.Protocol = []string{"quic", "kcp"}[protocolBox.CurrentIndex()]
-						updated.KeepTunnelOpen = keepTunnelOpen.Checked()
-						updated.MaxRetriesAnHour, err = strconv.Atoi(strings.TrimSpace(maxRetries.Text()))
-						if err != nil {
-							walk.MsgBox(dlg, "重试参数不正确", "每小时重试次数必须是数字。", walk.MsgBoxOK|walk.MsgBoxIconWarning)
-							return
-						}
-						updated.MinRetryInterval, err = strconv.Atoi(strings.TrimSpace(minRetry.Text()))
-						if err != nil {
-							walk.MsgBox(dlg, "重试参数不正确", "最小重试间隔必须是数字。", walk.MsgBoxOK|walk.MsgBoxIconWarning)
-							return
-						}
-						updated.FallbackTimeoutMs, err = strconv.Atoi(strings.TrimSpace(fallbackTimeout.Text()))
-						if err != nil {
-							walk.MsgBox(dlg, "回退参数不正确", "回退超时必须是毫秒数字。", walk.MsgBoxOK|walk.MsgBoxIconWarning)
-							return
-						}
-						updated.FallbackTo = strings.TrimSpace(fallbackTo.Text())
-					}
-					if updated.SecretRef == "" {
-						updated.SecretRef = "visitor-secret-" + updated.ID
-					}
-					providedSecrets := map[string]string{}
-					if value := secretKey.Text(); value != "" {
-						providedSecrets[updated.SecretRef] = value
-					} else if visitor.SecretRef == "" {
-						walk.MsgBox(dlg, "私有密钥不能为空", "STCP/SUDP/XTCP 访问需要设置密钥。", walk.MsgBoxOK|walk.MsgBoxIconWarning)
-						return
-					}
-					if index >= 0 {
-						cfg.Profile.Visitors[index] = updated
-					} else {
-						cfg.Profile.Visitors = append(cfg.Profile.Visitors, updated)
-					}
-					if err = frpctl.ValidateConfig(cfg); err != nil {
-						showFRPValidationError(dlg, "访问规则不正确", err)
-						return
-					}
-					a.applyFRPConfigWithSecrets(cfg, "", providedSecrets)
-					dlg.Accept()
-				}),
-			}},
-		},
-	}).Create(a.window)
-	if err != nil {
-		a.showFRPError("打开私有访问规则", err)
-		return
-	}
-	setFields()
-	defer dlg.Dispose()
-	dlg.Run()
-}
-
-func (a *desktop) deleteFRPVisitor(index int) {
-	if index < 0 || index >= len(a.frpConfig.Profile.Visitors) {
-		return
-	}
-	visitor := a.frpConfig.Profile.Visitors[index]
-	if walk.MsgBox(a.window, "删除私有访问", fmt.Sprintf("确定删除“%s”吗？", visitor.Name), walk.MsgBoxYesNo|walk.MsgBoxIconQuestion) != walk.DlgCmdYes {
-		return
-	}
-	cfg := frpctl.CloneConfig(a.frpConfig)
-	cfg.Profile.Visitors = append(cfg.Profile.Visitors[:index], cfg.Profile.Visitors[index+1:]...)
+	cfg := bindFRPServerToHost(a.frpConfig, a.frpServerHost())
+	cfg.Profile.Rules = append(cfg.Profile.Rules[:index], cfg.Profile.Rules[index+1:]...)
 	a.applyFRPConfig(cfg, "")
 }
 
@@ -1672,24 +1479,23 @@ func (a *desktop) showFRPLogs() {
 	var dlg *walk.Dialog
 	var closeButton *walk.PushButton
 	err := (Dialog{
-		AssignTo: &dlg, Title: "FRP 运行日志", Icon: a.appIcon,
+		AssignTo: &dlg, Title: tr("端口映射运行日志", "Port Mapping Logs"), Icon: a.appIcon,
 		Size: Size{Width: 760, Height: 520}, MinSize: Size{Width: 620, Height: 400},
-		Font: Font{Family: "Microsoft YaHei UI", PointSize: 10}, Background: SolidColorBrush{Color: uiWhite},
+		Font: uiFont(10, false), Background: SolidColorBrush{Color: uiWhite},
 		Layout:       VBox{Margins: Margins{Left: 24, Top: 22, Right: 24, Bottom: 20}, Spacing: 12},
 		CancelButton: &closeButton, DefaultButton: &closeButton,
 		Children: []Widget{
-			heading("最近运行日志"),
-			TextLabel{Text: "日志只在内存中保留最近 500 行，令牌和管理密码会被脱敏。", TextColor: uiMuted, MinSize: Size{Width: 600}},
-			TextEdit{Text: strings.Join(a.frpSnapshot.Logs, "\r\n"), ReadOnly: true, VScroll: true, HScroll: true, StretchFactor: 1, Font: Font{Family: "Consolas", PointSize: 9}},
-			Composite{Layout: HBox{MarginsZero: true}, Children: []Widget{HSpacer{}, actionButton(&closeButton, "关闭", true, 92, func() { dlg.Accept() })}},
+			heading(tr("最近运行日志", "Recent Logs")),
+			TextEdit{Text: strings.Join(a.frpSnapshot.Logs, "\r\n"), ReadOnly: true, VScroll: true, HScroll: true, StretchFactor: 1, Font: uiMonoFont(9, false), TextColor: uiInk, Background: SolidColorBrush{Color: uiWhite}},
+			Composite{Background: SolidColorBrush{Color: uiWhite}, Layout: HBox{MarginsZero: true}, Children: []Widget{HSpacer{}, actionButton(&closeButton, tr("关闭", "Close"), true, 88, func() { dlg.Accept() })}},
 		},
 	}).Create(a.window)
 	if err != nil {
-		a.showFRPError("打开运行日志", err)
+		a.showFRPError(tr("打开运行日志", "Open logs dialog"), err)
 		return
 	}
 	defer dlg.Dispose()
-	dlg.Run()
+	runThemedDialog(dlg)
 }
 
 func (a *desktop) frpReservations() []frpctl.TargetReservation {

@@ -23,10 +23,31 @@ var ErrNetworkFull = errors.New("network address pool is full")
 var ErrConflict = errors.New("resource conflict")
 var ErrBlocked = errors.New("device is blocked")
 
+type PortRange struct {
+	Start int `json:"start"`
+	End   int `json:"end"`
+}
+
+var DefaultFRPPortRange = PortRange{Start: 60000, End: 61000}
+
+const (
+	ServerDisplayModeAlias = "alias"
+	ServerDisplayModeIP    = "ip"
+)
+
+type ServerDisplayConfig struct {
+	Mode  string `json:"mode"`
+	Alias string `json:"alias,omitempty"`
+}
+
+var DefaultServerDisplay = ServerDisplayConfig{Mode: ServerDisplayModeIP}
+
 type State struct {
 	PrivateNetworkID  string                        `json:"private_network_id,omitempty"`
 	EnrollmentKey     string                        `json:"enrollment_key,omitempty"`
 	MemberCredentials map[string]MemberCredential   `json:"member_credentials,omitempty"`
+	FRPPortRange      *PortRange                    `json:"frp_port_range,omitempty"`
+	ServerDisplay     *ServerDisplayConfig          `json:"server_display,omitempty"`
 	Networks          map[string]Network            `json:"networks"`
 	Devices           map[string]RegisteredDevice   `json:"devices,omitempty"`
 	Candidates        map[string]CandidateRecord    `json:"candidates,omitempty"`
@@ -312,6 +333,36 @@ func validateMemberName(name string) (string, error) {
 	return name, nil
 }
 
+func ValidateNetworkName(name string) (string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" || len([]rune(name)) > 64 || strings.ContainsFunc(name, unicode.IsControl) {
+		return "", errors.New("network name must contain 1-64 non-control characters")
+	}
+	return name, nil
+}
+
+func (s *Store) RenameNetwork(networkID, name string) (NetworkSummary, error) {
+	valid, err := ValidateNetworkName(name)
+	if err != nil {
+		return NetworkSummary{}, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if strings.TrimSpace(networkID) == "" {
+		networkID = s.data.PrivateNetworkID
+	}
+	network, ok := s.data.Networks[networkID]
+	if !ok {
+		return NetworkSummary{}, ErrNotFound
+	}
+	network.Name = valid
+	s.data.Networks[networkID] = network
+	if err := s.persistLocked(); err != nil {
+		return NetworkSummary{}, err
+	}
+	return summarize(network), nil
+}
+
 func (s *Store) RenameDevice(networkID, deviceID, name string) (Device, error) {
 	name, err := validateMemberName(name)
 	if err != nil {
@@ -486,7 +537,6 @@ func (s *Store) Heartbeat(deviceID core.DeviceID) (RegisteredDevice, error) {
 	return device, nil
 }
 
-
 // SetClientVersion records the release version a registered device reports.
 // Reporting the same version again is a no-op so the state file is not
 // rewritten on every heartbeat.
@@ -599,6 +649,108 @@ func (s *Store) GetCandidates(networkID core.NetworkID, deviceID core.DeviceID) 
 	record = cloneCandidates(record)
 	s.mu.RUnlock()
 	return record, nil
+}
+
+func ValidatePortRange(start, end int) error {
+	if start < 1 || end > 65535 || start > end {
+		return errors.New("port range must satisfy 1 <= start <= end <= 65535")
+	}
+	return nil
+}
+
+func (s *Store) HasFRPPortRange() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.data.FRPPortRange == nil {
+		return false
+	}
+	return ValidatePortRange(s.data.FRPPortRange.Start, s.data.FRPPortRange.End) == nil
+}
+
+func (s *Store) FRPPortRange() PortRange {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.data.FRPPortRange != nil && ValidatePortRange(s.data.FRPPortRange.Start, s.data.FRPPortRange.End) == nil {
+		return *s.data.FRPPortRange
+	}
+	return DefaultFRPPortRange
+}
+
+func (s *Store) SetFRPPortRange(start, end int) (PortRange, error) {
+	if err := ValidatePortRange(start, end); err != nil {
+		return PortRange{}, err
+	}
+	next := PortRange{Start: start, End: end}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.data.FRPPortRange = &next
+	if err := s.persistLocked(); err != nil {
+		return PortRange{}, err
+	}
+	return next, nil
+}
+
+func ValidateServerDisplay(mode, alias string) (ServerDisplayConfig, error) {
+	normalizedMode := strings.ToLower(strings.TrimSpace(mode))
+	trimmedAlias := strings.TrimSpace(alias)
+	if len([]rune(trimmedAlias)) > 64 {
+		return ServerDisplayConfig{}, errors.New("server alias must be at most 64 characters")
+	}
+	if strings.ContainsAny(trimmedAlias, "\r\n\x00") {
+		return ServerDisplayConfig{}, errors.New("server alias contains invalid characters")
+	}
+	if normalizedMode == "" {
+		if trimmedAlias != "" {
+			normalizedMode = ServerDisplayModeAlias
+		} else {
+			normalizedMode = ServerDisplayModeIP
+		}
+	}
+	switch normalizedMode {
+	case ServerDisplayModeAlias:
+		if trimmedAlias == "" {
+			return ServerDisplayConfig{}, errors.New("server alias is required when display mode is alias")
+		}
+	case ServerDisplayModeIP:
+	default:
+		return ServerDisplayConfig{}, errors.New("server display mode must be alias or ip")
+	}
+	return ServerDisplayConfig{Mode: normalizedMode, Alias: trimmedAlias}, nil
+}
+
+func (s *Store) HasServerDisplay() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.data.ServerDisplay == nil {
+		return false
+	}
+	_, err := ValidateServerDisplay(s.data.ServerDisplay.Mode, s.data.ServerDisplay.Alias)
+	return err == nil
+}
+
+func (s *Store) ServerDisplay() ServerDisplayConfig {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.data.ServerDisplay != nil {
+		if valid, err := ValidateServerDisplay(s.data.ServerDisplay.Mode, s.data.ServerDisplay.Alias); err == nil {
+			return valid
+		}
+	}
+	return DefaultServerDisplay
+}
+
+func (s *Store) SetServerDisplay(mode, alias string) (ServerDisplayConfig, error) {
+	next, err := ValidateServerDisplay(mode, alias)
+	if err != nil {
+		return ServerDisplayConfig{}, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.data.ServerDisplay = &next
+	if err := s.persistLocked(); err != nil {
+		return ServerDisplayConfig{}, err
+	}
+	return next, nil
 }
 
 func summarize(n Network) NetworkSummary {

@@ -14,16 +14,21 @@ type closeBehavior uint8
 
 const (
 	closeBehaviorExit closeBehavior = iota
+	closeBehaviorMinimize
 	closeBehaviorTray
 )
 
-// resolveCloseBehavior keeps the safe default: closing the window exits unless
-// the user explicitly enabled tray residency and a tray icon is available.
+// resolveCloseBehavior keeps the client running in the background when the user
+// closes the window: hide to tray if configured and available, otherwise
+// minimize to the taskbar unless an explicit exit was requested.
 func resolveCloseBehavior(closeToTray, explicitExit, trayAvailable bool) closeBehavior {
-	if explicitExit || !closeToTray || !trayAvailable {
+	if explicitExit {
 		return closeBehaviorExit
 	}
-	return closeBehaviorTray
+	if closeToTray && trayAvailable {
+		return closeBehaviorTray
+	}
+	return closeBehaviorMinimize
 }
 
 func (a *desktop) initializeTrayActions() {
@@ -37,11 +42,7 @@ func (a *desktop) initializeTrayActions() {
 	a.traySettingsAction = walk.NewAction()
 	a.trayExitAction = walk.NewAction()
 
-	_ = a.trayShowAction.SetText("显示窗口")
-	_ = a.trayMeshAction.SetText("启动 Mesh")
-	_ = a.trayFRPAction.SetText("启动当前 FRP 配置")
-	_ = a.traySettingsAction.SetText("客户端设置…")
-	_ = a.trayExitAction.SetText("退出程序")
+	a.retranslateTrayActions()
 
 	a.trayShowAction.Triggered().Attach(func() {
 		a.runOnUI(a.showWindow)
@@ -58,6 +59,24 @@ func (a *desktop) initializeTrayActions() {
 	a.trayExitAction.Triggered().Attach(func() {
 		a.runOnUI(a.requestExit)
 	})
+}
+
+func (a *desktop) retranslateTrayActions() {
+	if a.trayShowAction != nil {
+		_ = a.trayShowAction.SetText(tr("显示窗口", "Show Window"))
+	}
+	if a.trayMeshAction != nil {
+		_ = a.trayMeshAction.SetText(tr("启动虚拟局域网", "Connect Virtual LAN"))
+	}
+	if a.trayFRPAction != nil {
+		_ = a.trayFRPAction.SetText(tr("启动端口映射", "Start Port Mapping"))
+	}
+	if a.traySettingsAction != nil {
+		_ = a.traySettingsAction.SetText(tr("客户端设置…", "Settings…"))
+	}
+	if a.trayExitAction != nil {
+		_ = a.trayExitAction.SetText(tr("退出程序", "Exit"))
+	}
 }
 
 func (a *desktop) setupTray() error {
@@ -144,30 +163,31 @@ func (a *desktop) updateTrayMenu() {
 	if a.trayMeshAction == nil || a.trayFRPAction == nil {
 		return
 	}
+	a.retranslateTrayActions()
 
-	meshText := "启动 Mesh"
+	meshText := tr("启动虚拟局域网", "Connect Virtual LAN")
 	meshEnabled := a.api != nil && a.api.Token != "" && !a.busy
 	switch {
 	case a.engine != nil:
-		meshText = "停止 Mesh"
+		meshText = tr("停止虚拟局域网", "Disconnect Virtual LAN")
 		meshEnabled = !a.busy
 	case a.powerState == 2:
-		meshText = "Mesh 正在切换…"
+		meshText = tr("虚拟局域网切换中…", "Virtual LAN Switching…")
 		meshEnabled = false
 	}
 
 	s := a.frpSnapshot
 	canStop := s.CanStop || s.Running || s.State == "stopping" || s.DesiredRunning
-	frpText := "启动当前 FRP 配置"
+	frpText := tr("启动端口映射", "Start Port Mapping")
 	frpEnabled := s.Configured && !a.frpBusy && a.frpManager != nil
 	if canStop {
 		switch {
 		case s.State == "stopping":
-			frpText = "FRP 正在停止…"
+			frpText = tr("端口映射停止中…", "Stopping Port Mapping…")
 		case s.Running:
-			frpText = "停止当前 FRP 配置"
+			frpText = tr("停止端口映射", "Stop Port Mapping")
 		default:
-			frpText = "取消当前 FRP 启动"
+			frpText = tr("取消端口映射启动", "Cancel Port Mapping")
 		}
 		frpEnabled = s.Configured && !a.frpStopping && (!a.frpBusy || a.frpStarting)
 	}
@@ -180,15 +200,15 @@ func (a *desktop) updateTrayMenu() {
 	_ = a.trayExitAction.SetEnabled(true)
 
 	if a.trayIcon != nil {
-		meshState := "已停止"
+		meshState := tr("已停止", "Stopped")
 		if a.engine != nil {
-			meshState = "已开启"
+			meshState = tr("已开启", "Connected")
 		}
-		frpState := "已停止"
+		frpState := tr("已停止", "Stopped")
 		if s.Running {
-			frpState = "已连接"
+			frpState = tr("已连接", "Running")
 		}
-		_ = a.trayIcon.SetToolTip(fmt.Sprintf("%s · Mesh %s · FRP %s", windowTitle, meshState, frpState))
+		_ = a.trayIcon.SetToolTip(trf("%s · 虚拟局域网 %s · 端口映射 %s", "%s · Virtual LAN %s · Port Mapping %s", windowTitle, meshState, frpState))
 	}
 }
 
@@ -212,6 +232,8 @@ func (a *desktop) showWindow() {
 	win.ShowWindow(a.window.Handle(), win.SW_RESTORE)
 	a.window.Show()
 	_ = a.window.Activate()
+	a.requestCleanRelayout()
+	a.ensureAnimLoop()
 }
 
 func (a *desktop) requestExit() {
@@ -223,12 +245,21 @@ func (a *desktop) requestExit() {
 }
 
 func (a *desktop) handleWindowClosing(canceled *bool, _ walk.CloseReason) {
-	if resolveCloseBehavior(a.settings.CloseToTray, a.explicitExit.Load(), a.trayAvailable()) == closeBehaviorTray {
+	switch resolveCloseBehavior(a.settings.CloseToTray, a.explicitExit.Load(), a.trayAvailable()) {
+	case closeBehaviorTray:
 		if canceled != nil {
 			*canceled = true
 		}
-		if a.window != nil {
+		if a.window != nil && !a.window.IsDisposed() {
 			a.window.Hide()
+		}
+		return
+	case closeBehaviorMinimize:
+		if canceled != nil {
+			*canceled = true
+		}
+		if a.window != nil && !a.window.IsDisposed() {
+			win.ShowWindow(a.window.Handle(), win.SW_MINIMIZE)
 		}
 		return
 	}

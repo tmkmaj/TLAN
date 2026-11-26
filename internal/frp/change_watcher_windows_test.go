@@ -60,7 +60,7 @@ func TestManagerEgressMonitorWakesOnChange(t *testing.T) {
 	notifier := &fakeChangeNotifier{changes: make(chan struct{}, 1)}
 	inst := &managedInstance{done: make(chan struct{}), config: cfg, stopped: true}
 	manager := &Manager{
-		observer: observer, changes: notifier, meshInterface: "LANMesh",
+		observer: observer, changes: notifier, meshInterface: "TLAN",
 		egressInterval: time.Hour, meshCIDRs: []netip.Prefix{netip.MustParsePrefix("10.50.0.0/16")},
 		instance: inst, state: "running", observationGate: netpolicy.NewObservationDebouncer(1),
 	}

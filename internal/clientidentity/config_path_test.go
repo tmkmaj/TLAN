@@ -26,7 +26,7 @@ func TestConfigDirectoryPreservesExistingBrandingDirectory(t *testing.T) {
 
 func TestConfigDirectoryPrefersCurrentBrandingAfterUpgrade(t *testing.T) {
 	root := t.TempDir()
-	current := filepath.Join(root, "TmkNetworkLAN")
+	current := filepath.Join(root, "TLAN")
 	legacy := filepath.Join(root, "LANMesh")
 	for _, dir := range []string{current, legacy} {
 		if err := os.MkdirAll(dir, 0o700); err != nil {

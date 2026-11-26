@@ -5,7 +5,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -18,12 +18,19 @@ import (
 	"github.com/private-radminlan/lanmesh/internal/control"
 	"github.com/private-radminlan/lanmesh/internal/frpauth"
 	"github.com/private-radminlan/lanmesh/internal/network"
+	"github.com/private-radminlan/lanmesh/internal/observability"
+	"github.com/private-radminlan/lanmesh/internal/reuseport"
 	"github.com/private-radminlan/lanmesh/internal/storage"
 )
 
+const gracefulRelayDrainTimeout = 30 * time.Second
+
 func main() {
+	logger := observability.NewLogger(os.Stderr, slog.LevelInfo)
+	slog.SetDefault(logger)
 	if err := run(); err != nil {
-		log.Fatal(err)
+		slog.Error("server exited", "error", err)
+		os.Exit(1)
 	}
 }
 
@@ -37,13 +44,13 @@ func run() error {
 		if pathErr != nil {
 			path = config.FileName
 		}
-		fmt.Printf("TmkNetworkLAN 首次启动：已生成配置 %s\n", path)
-		fmt.Println("请检查配置中的监听地址、网络和令牌，然后再次运行程序。")
-		fmt.Println("生成的管理员令牌仅供服务器维护使用；network.join_code 可以分享给熟人。")
+		fmt.Printf("TLAN initialized default configuration: %s\n", path)
+		fmt.Println("Review the listen addresses, network CIDR, join_code, and admin_token, then start tlan-server again.")
+		fmt.Println("Keep security.admin_token private; share only network.join_code with members.")
 		return nil
 	}
 	if len([]byte(cfg.Security.AdminToken)) < 24 {
-		log.Print("warning: security.admin_token is shorter than 24 bytes; keep the admin listener private and protect it with TLS or a firewall")
+		slog.Warn("admin token is shorter than 24 bytes", "reason", "weak_secret", "advice", "keep the admin listener private and protect it with TLS or a firewall")
 	}
 	if err := cfg.EnsureDataDir(); err != nil {
 		return err
@@ -57,12 +64,22 @@ func run() error {
 		if err != nil {
 			return fmt.Errorf("configure private join network: %w", err)
 		}
-		log.Printf("private code enrollment enabled for network %s", n.Name)
+		slog.Info("private code enrollment enabled", "network", n.Name)
+	}
+	if !store.HasServerDisplay() && (strings.TrimSpace(cfg.Network.DisplayMode) != "" || strings.TrimSpace(cfg.Network.DisplayAlias) != "") {
+		if _, err := store.SetServerDisplay(cfg.Network.DisplayMode, cfg.Network.DisplayAlias); err != nil {
+			return fmt.Errorf("configure server display: %w", err)
+		}
 	}
 	var frpStore *frpauth.Store
 	var frpPlugin *http.Server
 	if cfg.FRP.EffectiveMode() == frpauth.ModeManaged {
-		frpStore, err = frpauth.NewStore(frpAuthOptions(cfg))
+		opts := frpAuthOptions(cfg)
+		if store.HasFRPPortRange() || len(opts.AllowedPorts) == 0 {
+			portRange := store.FRPPortRange()
+			opts.AllowedPorts = []frpauth.PortRange{{Start: portRange.Start, End: portRange.End}}
+		}
+		frpStore, err = frpauth.NewStore(opts)
 		if err != nil {
 			return fmt.Errorf("open managed FRP authorization store: %w", err)
 		}
@@ -79,17 +96,21 @@ func run() error {
 		}
 		go func() {
 			if serveErr := frpPlugin.Serve(pluginListener); serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
-				log.Printf("managed FRP plugin listener stopped: %v", serveErr)
+				slog.Error("managed FRP plugin listener stopped", "error", serveErr)
 			}
 		}()
 		defer frpPlugin.Close()
-		log.Printf("managed FRP plugin listening on %s", cfg.FRP.PluginListen)
+		slog.Info("managed FRP plugin listening", "listen", cfg.FRP.PluginListen)
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, terminationSignal())
 	defer stop()
 	// HTTPS Upgrade relay is always available on the control service. The
 	// optional legacy dedicated TCP listener shares this same broker.
-	relay := network.NewRelayBrokerWithLimits(network.RelayLimits{PacketLimit: 64 * 1024, QueueDepth: 64, MaxSessions: 4096, IdleTimeout: 2 * time.Minute})
+	relayQueueDepth := cfg.Server.RelayQueueDepth
+	if relayQueueDepth == 0 {
+		relayQueueDepth = 64
+	}
+	relay := network.NewRelayBrokerWithLimits(network.RelayLimits{PacketLimit: 64 * 1024, QueueDepth: relayQueueDepth, MaxSessions: 4096, IdleTimeout: 2 * time.Minute})
 	defer relay.Close()
 	go func() {
 		ticker := time.NewTicker(10 * time.Second)
@@ -109,7 +130,7 @@ func run() error {
 			return err
 		}
 		defer listener.Close()
-		log.Printf("optional TCP relay listening on %s", cfg.Server.RelayListen)
+		slog.Info("optional TCP relay listening", "listen", cfg.Server.RelayListen)
 		go serveRelay(ctx, listener, relay)
 	}
 	stunSetting := strings.TrimSpace(cfg.Server.STUNListen)
@@ -123,10 +144,10 @@ func run() error {
 			return err
 		}
 		defer socket.Close()
-		log.Printf("STUN Binding listening on UDP %s", cfg.Server.STUNListen)
+		slog.Info("STUN binding listening", "network", "udp", "listen", cfg.Server.STUNListen)
 		go func() {
 			if err := network.ServeSTUN(ctx, socket); err != nil {
-				log.Printf("STUN stopped: %v", err)
+				slog.Error("STUN stopped", "error", err)
 			}
 		}()
 	}
@@ -139,6 +160,7 @@ func run() error {
 	}
 	service := &control.Server{
 		Store: store, AdminToken: cfg.Security.AdminToken, Relay: relay, FRP: frpStore,
+		FRPBootstrap:      func() (control.FRPBootstrapConfig, error) { return buildFRPBootstrap(cfg) },
 		DisableEnrollment: cfg.Network.JoinCode == "", StartedAt: time.Now().UTC(),
 		ControlListen: cfg.Server.Listen, ControlTLS: cfg.Server.TLSCert != "",
 		AdminListen: cfg.Server.AdminListen, AdminTLS: adminTLS,
@@ -149,15 +171,27 @@ func run() error {
 	// TLSNextProto disables HTTP/2 for the native HTTP/1.1 Upgrade relay.
 	controlServer.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12, NextProtos: []string{"http/1.1"}}
 	controlServer.TLSNextProto = make(map[string]func(*http.Server, *tls.Conn, http.Handler))
+	controlNet, err := reuseport.Listen("tcp", cfg.Server.Listen)
+	if err != nil {
+		return fmt.Errorf("listen for control service: %w", err)
+	}
+	defer controlNet.Close()
+	if cfg.Server.TLSCert != "" {
+		cert, loadErr := tls.LoadX509KeyPair(cfg.Server.TLSCert, cfg.Server.TLSKey)
+		if loadErr != nil {
+			return fmt.Errorf("load control TLS certificate: %w", loadErr)
+		}
+		controlNet = tls.NewListener(controlNet, &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12, NextProtos: []string{"http/1.1"}})
+	}
 	controlDone := make(chan error, 1)
 	go func() {
-		if cfg.Server.TLSCert != "" {
-			controlDone <- controlServer.ListenAndServeTLS(cfg.Server.TLSCert, cfg.Server.TLSKey)
-		} else {
-			controlDone <- controlServer.ListenAndServe()
+		serveErr := controlServer.Serve(controlNet)
+		if errors.Is(serveErr, http.ErrServerClosed) {
+			serveErr = nil
 		}
+		controlDone <- serveErr
 	}()
-	log.Printf("TmkNetworkLAN control + Upgrade relay listening on %s", cfg.Server.Listen)
+	slog.Info("control and relay listening", "listen", cfg.Server.Listen, "reuseport", reuseport.Enabled(), "relay_queue_depth", relayQueueDepth)
 	var adminServer *http.Server
 	var adminDone <-chan error
 	if adminNet != nil {
@@ -181,9 +215,9 @@ func run() error {
 			adminErrCh <- serveErr
 		}()
 		if adminTLS {
-			log.Printf("admin console listening on %s with TLS", cfg.Server.AdminListen)
+			slog.Info("admin console listening", "listen", cfg.Server.AdminListen, "tls", true)
 		} else {
-			log.Printf("admin console listening on %s (plaintext)", cfg.Server.AdminListen)
+			slog.Info("admin console listening", "listen", cfg.Server.AdminListen, "tls", false)
 		}
 	}
 	var runErr error
@@ -198,12 +232,17 @@ func run() error {
 		}
 	case <-ctx.Done():
 	}
-	relay.Close()
 	shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+	if err := controlServer.Shutdown(shutdown); err != nil {
+		slog.Error("control server shutdown failed", "error", err)
+		if runErr == nil {
+			runErr = err
+		}
+	}
 	if adminServer != nil {
 		if err := adminServer.Shutdown(shutdown); err != nil {
-			log.Printf("admin console shutdown: %v", err)
+			slog.Error("admin console shutdown failed", "error", err)
 			if runErr == nil {
 				runErr = err
 			}
@@ -211,18 +250,15 @@ func run() error {
 	}
 	if frpPlugin != nil {
 		if err := frpPlugin.Shutdown(shutdown); err != nil {
-			log.Printf("managed FRP plugin shutdown: %v", err)
+			slog.Error("managed FRP plugin shutdown failed", "error", err)
 			if runErr == nil {
 				runErr = err
 			}
 		}
 	}
-	if err := controlServer.Shutdown(shutdown); err != nil {
-		log.Printf("control server shutdown: %v", err)
-		if runErr == nil {
-			runErr = err
-		}
-	}
+	drainCtx, drainCancel := context.WithTimeout(context.Background(), gracefulRelayDrainTimeout)
+	defer drainCancel()
+	waitRelayDrain(drainCtx, relay)
 	return runErr
 }
 
@@ -241,9 +277,9 @@ func adminListener(cfg config.Config) (net.Listener, bool, error) {
 			if !cfg.Server.AdminAllowInsecureHTTP {
 				return nil, false, fmt.Errorf("server.admin_allow_insecure_http must be true to bind %s without TLS", address)
 			}
-			log.Printf("warning: admin console is listening on %s without TLS; restrict it to a private network and firewall", address)
+			slog.Warn("admin console is listening without TLS", "listen", address, "reason", "plaintext_admin_listener", "advice", "restrict it to a private network and firewall")
 		}
-		listener, err := net.Listen("tcp", address)
+		listener, err := reuseport.Listen("tcp", address)
 		if err != nil {
 			return nil, false, fmt.Errorf("listen for admin console: %w", err)
 		}
@@ -253,7 +289,7 @@ func adminListener(cfg config.Config) (net.Listener, bool, error) {
 	if err != nil {
 		return nil, false, fmt.Errorf("load admin TLS certificate: %w", err)
 	}
-	raw, err := net.Listen("tcp", address)
+	raw, err := reuseport.Listen("tcp", address)
 	if err != nil {
 		return nil, false, fmt.Errorf("listen for admin console: %w", err)
 	}
@@ -302,14 +338,18 @@ func relayListener(cfg config.Config) (net.Listener, error) {
 		return nil, fmt.Errorf("server.relay_cert and server.relay_key must be set together")
 	}
 	if cfg.Server.RelayCert == "" {
-		log.Print("warning: dedicated Relay port is plaintext; use a private network or TLS")
-		return net.Listen("tcp", cfg.Server.RelayListen)
+		slog.Warn("dedicated relay port is plaintext", "reason", "plaintext_relay_listener", "advice", "use a private network or TLS")
+		return reuseport.Listen("tcp", cfg.Server.RelayListen)
 	}
 	cert, err := tls.LoadX509KeyPair(cfg.Server.RelayCert, cfg.Server.RelayKey)
 	if err != nil {
 		return nil, err
 	}
-	return tls.Listen("tcp", cfg.Server.RelayListen, &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12})
+	raw, err := reuseport.Listen("tcp", cfg.Server.RelayListen)
+	if err != nil {
+		return nil, err
+	}
+	return tls.NewListener(raw, &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12}), nil
 }
 
 func serveRelay(ctx context.Context, listener net.Listener, broker *network.RelayBroker) {
@@ -337,4 +377,78 @@ func dataDirSummary(dir string) string {
 		return "."
 	}
 	return base
+}
+func buildFRPBootstrap(cfg config.Config) (control.FRPBootstrapConfig, error) {
+	mode := cfg.FRP.EffectiveMode()
+	if mode == "disabled" {
+		return control.FRPBootstrapConfig{Enabled: false}, nil
+	}
+	token := strings.TrimSpace(cfg.FRP.ClientToken)
+	if token == "" && strings.TrimSpace(cfg.FRP.ClientTokenFile) != "" {
+		data, err := os.ReadFile(strings.TrimSpace(cfg.FRP.ClientTokenFile))
+		if err != nil {
+			return control.FRPBootstrapConfig{}, fmt.Errorf("read frp client token file: %w", err)
+		}
+		token = strings.TrimSpace(string(data))
+	}
+	if token == "" {
+		return control.FRPBootstrapConfig{Enabled: false}, nil
+	}
+	var caPEM string
+	if path := strings.TrimSpace(cfg.FRP.ClientCAFile); path != "" {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return control.FRPBootstrapConfig{}, fmt.Errorf("read frp client CA file: %w", err)
+		}
+		caPEM = strings.TrimSpace(string(data))
+	}
+	port := cfg.FRP.ClientPort
+	if port <= 0 {
+		port = 7000
+	}
+	transport := strings.ToLower(strings.TrimSpace(cfg.FRP.ClientTransport))
+	if transport == "" {
+		transport = "tcp"
+	}
+	return control.FRPBootstrapConfig{
+		Enabled:       true,
+		Mode:          mode,
+		Host:          strings.TrimSpace(cfg.FRP.ClientHost),
+		Port:          port,
+		Transport:     transport,
+		TLSServerName: strings.TrimSpace(cfg.FRP.ClientTLSServerName),
+		ServerID:      cfg.FRP.ServerID,
+		Token:         token,
+		CAPEM:         caPEM,
+	}, nil
+}
+
+func waitRelayDrain(ctx context.Context, relay *network.RelayBroker) {
+	if relay == nil {
+		return
+	}
+	sessions := len(relay.Snapshot())
+	if sessions == 0 {
+		slog.Info("server drain complete", "relay_sessions", 0)
+		return
+	}
+	started := time.Now()
+	slog.Info("server draining existing relay sessions", "relay_sessions", sessions, "timeout", gracefulRelayDrainTimeout)
+	ticker := time.NewTicker(250 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			remaining := len(relay.Snapshot())
+			slog.Warn("relay drain timed out", "remaining_sessions", remaining, "elapsed_ms", time.Since(started).Milliseconds())
+			return
+		case <-ticker.C:
+			relay.CleanupExpired()
+			remaining := len(relay.Snapshot())
+			if remaining == 0 {
+				slog.Info("server drain complete", "elapsed_ms", time.Since(started).Milliseconds())
+				return
+			}
+		}
+	}
 }

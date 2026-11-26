@@ -36,9 +36,11 @@ jobs:
         env:
           CGO_ENABLED: '0'
         run: go vet -mod=vendor ./...
+      - name: Check Linux installer syntax
+        run: bash -n install.sh && bash -n deploy/install-server.sh
       - name: Build Linux executables
         env:
           CGO_ENABLED: '0'
         run: |
-          go build -mod=vendor -trimpath -o .tmp-build/tmknetworklan-server ./cmd/server
-          go build -mod=vendor -trimpath -o .tmp-build/tmknetworklan-install-helper ./cmd/install-helper
+          go build -mod=vendor -trimpath -o .tmp-build/tlan-server ./cmd/server
+          go build -mod=vendor -trimpath -o .tmp-build/tlan-install-helper ./cmd/install-helper

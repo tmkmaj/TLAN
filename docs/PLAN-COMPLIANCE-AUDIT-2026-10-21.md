@@ -5,7 +5,7 @@
 
 ## 0. 审计边界与结论摘要
 
-- 工作区：`D:\RadminLanPrivate`。
+- 工作区：`<REPO_ROOT>`。
 - 审计方式：只读代码检查、文档交叉核对、当前工作区编译/非 live 测试、只读哈希与发布物比对。
 - 本轮没有使用 `D:/SSH.txt`，没有 SSH 登录、部署、重启服务或修改服务器。
 - 除本报告外，没有修改源码、配置、构建脚本或 `dist`。
@@ -125,7 +125,7 @@
 **代码路径存在：**
 
 - `cmd/client/tray_windows.go` 创建 `walk.NotifyIcon`、菜单、关闭到托盘和显式退出。
-- `cmd/client/startup_windows.go` 只写 HKCU 的 `TmkNetworkLAN` 值，关闭时只删除该值。
+- `cmd/client/startup_windows.go` 只写 HKCU 的 `TLAN` 值，关闭时只删除该值。
 - `cmd/client/desktop_windows.go` 有 `--startup` 隐藏启动和 `CloseToTray`/`LaunchAtLogin` 设置。
 
 **本机测试：**
@@ -212,7 +212,7 @@
 
 - `docs/PUBLIC-MANAGED-FRP-VERIFICATION-2026-10-21.md:130` 明确写道：源码修复已加入，但**尚未部署到当前公网服务器二进制**。
 - 该报告同时记录了一个真实启动故障：撤销测试 lease 后，缩小 `allowed_domains` 会让控制面在加载历史 lease 时启动失败。
-- 当前 `dist/linux/tmknetworklan-server` SHA-256 为 `0CC56851A648088D61D9447852AD28D6B96F6E6D599D713FF6F7FF2168B2C922`，而 `.tmp-runtime/public-frp-e2e/tmknetworklan-server-fixed` 为 `ABF2DBAD56F0228070E448CF2E9420A7AC820E109AB72333FD7FA84AD3C21423`。后者是修复构建，不是当前发布包。
+- 当前 `dist/linux/TLAN-server` SHA-256 为 `0CC56851A648088D61D9447852AD28D6B96F6E6D599D713FF6F7FF2168B2C922`，而 `.tmp-runtime/public-frp-e2e/TLAN-server-fixed` 为 `ABF2DBAD56F0228070E448CF2E9420A7AC820E109AB72333FD7FA84AD3C21423`。后者是修复构建，不是当前发布包。
 - `docs/SERVER-DEPLOYMENT-VERIFICATION-2026-10-21.md` 的 5.7.7 也明确要求重新构建发布物。
 
 影响：当前公网验证证明“旧版本可用”，不能证明“当前源码已部署”。在缩小域名/端口白名单后，旧服务器存在启动失败风险。
@@ -225,7 +225,7 @@
 - `deploy/Caddyfile` SHA-256 为 `83ED0816BCF6BEC64FAA887FF8895EF3EDA381D587B9F338463B4C056D84655F`；`dist/linux/Caddyfile` 为 `120059FEA802AA4CC28129D6E67839B636210B7D0FBE013C4AEA5564C8ED9576`。
 - `deploy/frps/frps.toml.example` 已改为 `transport.tls.force = false`；`dist/frps-package/opt/tlan-frp/frps.toml.example` 仍是 `true`。
 - `deploy/install-server.sh:211` 和 `:217` 的防火墙端口仍只有 `80/tcp 8443/tcp 3478/udp`，没有 8444。
-- `.tmp-build/server-installer-payload/Caddyfile` 仍是旧文件；`dist/TmkNetworkLAN-server-linux-amd64.run` 和 `dist/TmkNetworkLAN-server-debian-amd64.zip` 构建于该旧载荷。
+- `.tmp-build/server-installer-payload/Caddyfile` 仍是旧文件；`dist/TLAN-server-linux-amd64.run` 和 `dist/TLAN-server-debian-amd64.zip` 构建于该旧载荷。
 - `dist/SHA256SUMS.txt` 与旧包自洽，但不能证明它们对应当前源码。
 
 影响：新用户按当前发布包安装不会自动获得 WSS 8444 路由；FRPS 示例会与服务器实际 WSS 设置冲突；安装器不会自动放行 8444。这是发布阻断项，不是“外部验收”。
@@ -235,7 +235,7 @@
 状态：**代码、模板、安装脚本和本地发布包已修复；未部署，真实公网组合未验证。**
 
 - 主 FRPS 模板新增 `kcpBindPort = 7002`、`quicBindPort = 7003`、
-  `tcpmuxHTTPConnectPort = 18081`、`subDomainHost = "frp.8-163-21-82.nip.io"`。
+  `tcpmuxHTTPConnectPort = 18081`、`subDomainHost = "frp.example.com"`。
 - WSS 回环实例新增 `vhostHTTPPort = 18082`、`vhostHTTPSPort = 18444`、
   `tcpmuxHTTPConnectPort = 18083` 和同一 subdomain 根；仍只监听 `127.0.0.1:7001`
   且 `transport.tls.force = false`。
@@ -558,7 +558,7 @@ go test -mod=vendor -tags frp_audit_regression ./internal/frp -run TestAuditRegr
 - 主 FRPS 已增加 UDP 7002/7003（KCP/QUIC）、TCP 18081（TCPMUX）和 `subDomainHost`。
 - WSS FRPS 已增加 TCP 18082/18444（HTTP/HTTPS vhost）、TCP 18083（TCPMUX）和 `subDomainHost`。
 - 主 FRPS 仍 TLS-only；WSS FRPS 仍只监听 `127.0.0.1:7001`。
-- 最新服务端二进制已部署到 `8.163.21.82`，SHA-256 为 `0eab75c8924b0a650cae23744785d000a4ced78404551fc7163b76b37e62a0bd`。
+- 最新服务端二进制已部署到 `<SERVER_IP>`，SHA-256 为 `0eab75c8924b0a650cae23744785d000a4ced78404551fc7163b76b37e62a0bd`。
 - 2026-10-21 已建立首个 Git 提交基线；发布产物和临时验证目录保持忽略。
 - 2026-10-22 已完成 R2 Windows 网络变更通知、R4 完整诊断服务端上传和 FRP 持久化日志轮转；真实 `--adapter-smoke-test` 发现并修复 CLIXML 输出污染、非 GUID 防火墙身份和适配器不存在退出码三个生产缺陷，修复后 Wintun 创建/地址/路由/防火墙/清理全部通过。
 - 2026-10-22 仍只有单物理上游，真实双 Windows、独立 NAT、XTCP 打洞和 24–72 小时长稳仍未验证。

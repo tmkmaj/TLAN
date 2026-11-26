@@ -25,6 +25,7 @@ import (
 	"github.com/private-radminlan/lanmesh/internal/clientapi"
 	"github.com/private-radminlan/lanmesh/internal/clientui"
 	frpctl "github.com/private-radminlan/lanmesh/internal/frp"
+	"github.com/private-radminlan/lanmesh/internal/mesh"
 )
 
 const diagnosticSchemaVersion = 1
@@ -44,6 +45,13 @@ type diagnosticExport struct {
 	GeneratedAt   time.Time                   `json:"generated_at"`
 	Checks        []clientapi.DiagnosticCheck `json:"checks"`
 	FRP           frpDiagnosticExport         `json:"frp"`
+	MeshQuality   *meshQualityDiagnostic      `json:"mesh_quality,omitempty"`
+}
+
+type meshQualityDiagnostic struct {
+	SchemaVersion int                  `json:"schema_version"`
+	Summary       mesh.QualitySummary  `json:"summary"`
+	Samples       []mesh.QualitySample `json:"samples"`
 }
 
 type frpDiagnosticExport struct {
@@ -170,9 +178,9 @@ var (
 )
 
 func redactFRPDiagnosticText(value string, secrets ...string) string {
-	value = clientui.Redact(value, secrets...)
-	value = frpDiagnosticPrivateKey.ReplaceAllString(value, "[已隐藏私钥]")
-	return frpDiagnosticSecretField.ReplaceAllString(value, "${1}[已隐藏]")
+	value = clientui.RedactLang(currentLang(), value, secrets...)
+	value = frpDiagnosticPrivateKey.ReplaceAllString(value, tr("[已隐藏私钥]", "[redacted private key]"))
+	return frpDiagnosticSecretField.ReplaceAllString(value, "${1}"+tr("[已隐藏]", "[redacted]"))
 }
 
 func (a *desktop) frpDiagnosticSources() []frpDiagnosticSource {
@@ -340,7 +348,7 @@ func collectFRPManagedLeaseDiagnostics(ctx context.Context, provider *frpLeasePr
 			RequestedRuleCount: len(entry.requested.Rules), GrantedRuleCount: len(entry.lease.Rules),
 		}
 		if api == nil {
-			item.ObservationError = "FRP 控制面客户端不可用，未执行服务端租约观察"
+			item.ObservationError = tr("FRP 控制面客户端不可用，未执行服务端租约观察", "FRP control API client unavailable; server lease check skipped")
 		} else {
 			statusCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 			status, err := provider.client(statusCtx).FRPLeaseStatus(entry.lease.ID)
@@ -506,7 +514,7 @@ func inspectFRPTLS(ctx context.Context, cfg frpctl.Config, now time.Time) frpTLS
 		CAFile: cfg.Profile.Server.TrustedCAPath,
 	}
 	if cfg.Profile.Server.TrustedCAPath == "" {
-		check.Error = "未配置可信 CA 文件"
+		check.Error = tr("未配置可信 CA 文件", "Trusted CA file not configured")
 		return check
 	}
 	certs, privateKey, err := readFRPCertificates(cfg.Profile.Server.TrustedCAPath)
@@ -523,14 +531,14 @@ func inspectFRPTLS(ctx context.Context, cfg frpctl.Config, now time.Time) frpTLS
 		if now.Before(cert.NotBefore) {
 			status = "fail"
 			check.CAValid = false
-			check.Error = "可信 CA 证书尚未生效"
+			check.Error = tr("可信 CA 证书尚未生效", "Trusted CA certificate is not valid yet")
 		} else if !now.Before(cert.NotAfter) {
 			status = "fail"
 			check.CAValid = false
-			check.Error = "可信 CA 证书已过期"
+			check.Error = tr("可信 CA 证书已过期", "Trusted CA certificate has expired")
 		} else if cert.NotAfter.Sub(now) < 30*24*time.Hour && status != "fail" {
 			status = "warn"
-			check.Error = "可信 CA 证书将在 30 天内过期"
+			check.Error = tr("可信 CA 证书将在 30 天内过期", "Trusted CA certificate expires within 30 days")
 		}
 	}
 	if privateKey {
@@ -538,18 +546,18 @@ func inspectFRPTLS(ctx context.Context, cfg frpctl.Config, now time.Time) frpTLS
 			status = "warn"
 		}
 		if check.Error == "" {
-			check.Error = "可信 CA 文件中包含私钥材料；导出不会包含私钥内容"
+			check.Error = tr("可信 CA 文件中包含私钥材料；导出不会包含私钥内容", "Trusted CA file contains private key material; exports omit private keys")
 		}
 	}
 	check.Status = status
 	transport := strings.ToLower(cfg.Profile.Server.Transport)
 	if transport == "kcp" || transport == "quic" {
-		check.SkippedReason = "KCP/QUIC 的 TLS 握手由固定 frpc 在 UDP 传输内完成，本次只检查 CA 文件"
+		check.SkippedReason = tr("KCP/QUIC 的 TLS 握手由固定 frpc 在 UDP 传输内完成，本次只检查 CA 文件", "KCP/QUIC TLS handshake is handled by frpc over UDP; checked CA file only")
 		return check
 	}
 	if cfg.Profile.Server.Host == "" || cfg.Profile.Server.Port < 1 || cfg.Profile.Server.TLSServerName == "" {
 		check.Status = "fail"
-		check.Error = "FRPS 地址或 TLS serverName 不完整"
+		check.Error = tr("FRPS 地址或 TLS serverName 不完整", "FRPS host or TLS serverName is incomplete")
 		return check
 	}
 	check.HandshakeAttempted = true
@@ -813,6 +821,18 @@ func (e diagnosticExport) Text() string {
 	b.WriteString("检查项:\r\n")
 	for _, check := range e.Checks {
 		fmt.Fprintf(&b, "[%s] %s: %s\r\n", check.Status, check.Name, check.Detail)
+	}
+	if e.MeshQuality != nil {
+		fmt.Fprintf(&b, "\r\n== 网络质量（最近 5 分钟）==\r\n")
+		fmt.Fprintf(&b, "样本: %d, 平均 RTT: %d ms, 最大 RTT: %d ms, 丢包增量: %d, 直连样本: %d, 中继样本: %d\r\n",
+			e.MeshQuality.Summary.Samples, e.MeshQuality.Summary.AverageRTTMillis, e.MeshQuality.Summary.MaxRTTMillis,
+			e.MeshQuality.Summary.DroppedDelta, e.MeshQuality.Summary.DirectSamples, e.MeshQuality.Summary.RelaySamples)
+		for _, sample := range e.MeshQuality.Samples {
+			fmt.Fprintf(&b, "%s path=%s rtt_ms=%d reachable=%d/%d sent=%d received=%d dropped=%d relay_queue=%d/%d relay_drops=%d relay_backpressure=%d\r\n",
+				sample.At.UTC().Format(time.RFC3339), sample.Path, sample.RTTMillis, sample.ReachablePeers, sample.TotalPeers,
+				sample.Sent, sample.Received, sample.Dropped, sample.RelayQueueDepth, sample.RelayQueueCapacity,
+				sample.RelayDrops, sample.RelayBackpressure)
+		}
 	}
 	for _, profile := range e.FRP.Profiles {
 		fmt.Fprintf(&b, "\r\n== FRP 配置: %s (%s) ==\r\n", profile.ProfileName, profile.ProfileID)

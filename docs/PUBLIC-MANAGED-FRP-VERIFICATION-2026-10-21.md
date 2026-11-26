@@ -1,8 +1,8 @@
 # 公网 managed FRP UDP / HTTP vhost 验证报告
 
 日期：2026-10-21（Asia/Shanghai）  
-目标服务器：`8.163.21.82`（CentOS 7）  
-Windows 客户端：当前工作区 `D:\RadminLanPrivate`  
+目标服务器：`<SERVER_IP>`（CentOS 7）  
+Windows 客户端：当前工作区 `<REPO_ROOT>`  
 验证方式：SSH 仅通过 `D:/SSH.txt` 作为凭据数据读取；本报告不包含密码、join code、FRP token、lease capability 或私钥。
 
 ## 1. 验证范围
@@ -20,9 +20,9 @@ Windows 客户端：当前工作区 `D:\RadminLanPrivate`
 - 服务器配置备份、恢复和 SHA-256 核验；
 - 测试 secret 清理。
 
-测试域名：`8-163-21-82.nip.io`，DNS 实测解析到 `8.163.21.82`。  
+测试域名：`example.com`，DNS 实测解析到 `<SERVER_IP>`。  
 测试 UDP 端口：`30002`。测试前确认 `30000-30999` 无监听，lease 状态中也没有 `30002`。  
-HTTP vhost 入口：`http://8-163-21-82.nip.io:18080`。
+HTTP vhost 入口：`http://example.com:18080`。
 
 ## 2. 最终结果
 
@@ -31,8 +31,8 @@ HTTP vhost 入口：`http://8-163-21-82.nip.io:18080`。
 | 临时成员 enroll | PASS | 使用 join code 入网，生成临时设备身份 |
 | managed lease 创建 | PASS | 控制面返回 lease，未输出 capability |
 | FRPS Login/NewProxy 观察 | PASS | lease status 中 `LoginSeen=true`、`ProxySeen=true` |
-| UDP 公网回显 | PASS | Windows 向 `8.163.21.82:30002` 发送 payload，收到完全一致的 echo |
-| HTTP custom domain | PASS | 经 `8-163-21-82.nip.io:18080` 返回 HTTP 200 |
+| UDP 公网回显 | PASS | Windows 向 `<SERVER_IP>:30002` 发送 payload，收到完全一致的 echo |
+| HTTP custom domain | PASS | 经 `example.com:18080` 返回 HTTP 200 |
 | Host rewrite | PASS | backend 收到 `Host: backend.tlan-verify.invalid` |
 | 请求 Header | PASS | backend 收到 `X-TLAN-Request: public-e2e` 和 `X-Client: windows-public-e2e` |
 | 响应 Header | PASS | 客户端收到 `X-TLAN-Response: verified` |
@@ -42,7 +42,7 @@ HTTP vhost 入口：`http://8-163-21-82.nip.io:18080`。
 | lease 撤销 | PASS | lease 记录进入 revoked 状态；测试记录随后定向清理 |
 | 临时成员删除 | PASS | 成员列表不再包含测试设备，原 token 失效 |
 | 配置恢复 | PASS | 配置 SHA-256 恢复为 `c36a10a67218e4d210f9901d1a78701767509c19c6c31e97c39d96378b419363` |
-| 服务状态 | PASS | `tmknetworklan.service`、`tlan-frps.service` 均为 `active` |
+| 服务状态 | PASS | `TLAN.service`、`tlan-frps.service` 均为 `active` |
 | secret 清理 | PASS | 本地和远端临时 join code / token 文件已删除，远端临时目录不存在 |
 
 最终服务器核验输出：
@@ -78,8 +78,8 @@ PUBLIC_MANAGED_FRP_E2E_PASS
 
 ## 3. 执行摘要
 
-1. 对 `/var/lib/lanmesh/tnlan-config.yml` 做 `0600` 备份，记录原 SHA-256。
-2. 临时加入 `allowed_domains: 8-163-21-82.nip.io`，重启控制面并等待 `/health` 成功。
+1. 对 `/var/lib/lanmesh/tlan-config.yml` 做 `0600` 备份，记录原 SHA-256。
+2. 临时加入 `allowed_domains: example.com`，重启控制面并等待 `/health` 成功。
 3. 从服务器临时目录读取 join code 和 FRPS outer token，只下载到本地受保护临时文件；未打印值。
 4. Windows harness 使用固定 `frpc v0.71.1` 和真实 managed lease，启动本地 UDP/HTTP backend。
 5. 从 Windows 经公网 `30002` 和 `18080` 发起真实数据请求并校验内容。
@@ -90,11 +90,11 @@ PUBLIC_MANAGED_FRP_E2E_PASS
 可重复脚本和说明：
 
 ```text
-D:\RadminLanPrivate\.tmp-runtime\public-frp-e2e\README.md
-D:\RadminLanPrivate\.tmp-runtime\public-frp-e2e\run_public_frp_e2e.ps1
-D:\RadminLanPrivate\.tmp-runtime\public-frp-e2e\main.go
-D:\RadminLanPrivate\.tmp-runtime\public-frp-e2e\prepare_remote.py
-D:\RadminLanPrivate\.tmp-runtime\public-frp-e2e\verify_remote_and_restore.py
+<REPO_ROOT>\.tmp-runtime\public-frp-e2e\README.md
+<REPO_ROOT>\.tmp-runtime\public-frp-e2e\run_public_frp_e2e.ps1
+<REPO_ROOT>\.tmp-runtime\public-frp-e2e\main.go
+<REPO_ROOT>\.tmp-runtime\public-frp-e2e\prepare_remote.py
+<REPO_ROOT>\.tmp-runtime\public-frp-e2e\verify_remote_and_restore.py
 ```
 
 一键编排脚本已实际执行并通过：`HARNESS_EXIT=0`、`VERIFY_EXIT=0`、`LOCAL_SECRETS_PRESENT=False`。
@@ -102,7 +102,7 @@ D:\RadminLanPrivate\.tmp-runtime\public-frp-e2e\verify_remote_and_restore.py
 sanitized 结果文件：
 
 ```text
-D:\RadminLanPrivate\.tmp-runtime\public-frp-e2e\run\result-20261021-140301.json
+<REPO_ROOT>\.tmp-runtime\public-frp-e2e\run\result-20261021-140301.json
 ```
 
 ## 4. 验证中发现并修复的缺陷
@@ -111,7 +111,7 @@ D:\RadminLanPrivate\.tmp-runtime\public-frp-e2e\run\result-20261021-140301.json
 
 - 测试 HTTP lease 已撤销，但撤销记录仍保存在 `/var/lib/lanmesh/frp-leases.json`；
 - 配置恢复为空 `allowed_domains` 后，控制面启动时重新用当前域名白名单校验历史 lease；
-- 该校验失败导致 `tmknetworklan.service` 进入反复启动失败；
+- 该校验失败导致 `TLAN.service` 进入反复启动失败；
 - 配置文件本身已经正确恢复，摘要匹配备份。
 
 处置：

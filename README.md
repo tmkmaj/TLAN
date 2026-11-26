@@ -1,310 +1,156 @@
-# TmkNetworkLAN 私人局域网
+# TLAN
 
-面向你自己的 Linux amd64 服务器（CentOS 7.9 / Debian / Ubuntu）和熟人使用的 Windows 10/11 amd64 客户端。Windows EXE 直接打开白蓝色原生窗口，界面采用 `frpc-desktop` 风格的左侧导航、页面标题、白色内容卡片和紧凑状态列表；首次加入后，启动状态和网络成员整合在同一个工作区。程序图标是手绘的淡亮蓝色刷痕 T，EXE、窗口、弹窗和应用内品牌图使用同一原图。
+**[English Documentation](README_EN.md)**
 
-当前发布客户端已内置 `https://8.163.21.82:8443`；STUN 地址为 `8.163.21.82:3478`。控制、入网和中继直接使用 IP，普通用户只需普通入网令牌；在入网令牌框输入管理令牌 `Tmkmaj233` 后，只有该客户端会解锁内网管理面板。旧域名版客户端保存的成员身份会迁移到这一固定 IP 地址，设备身份和虚拟 IP 保留。
+**TLAN** 是一款面向好友联机、远程协作与内网服务共享的自托管私有虚拟局域网（Virtual LAN）软件。  
+包含 **Linux 服务端（控制面 + 中继 + STUN + 管理面板 + FRP 托管）** 与 **Windows 桌面客户端（WireGuard 虚拟网卡 + 自动 P2P / 中继切换 + FRP 端口映射）**。
 
-## 发布文件
+## 核心特性
 
-- `dist/TmkNetworkLAN-server-linux-amd64.run`：CentOS 7.9 / Debian / Ubuntu 单文件安装包，内置服务端和 Caddy；[安装说明](docs/INSTALL-LINUX.md)。
-- `dist/TmkNetworkLAN-client-windows-amd64.zip`：Windows GUI、图标、官方 Wintun DLL 和许可证。
-- `dist/TmkNetworkLAN-server-debian-amd64.zip`：Debian/Linux 独立二进制（首次启动生成 YAML 配置）、Caddy 和 systemd 配置。
-- `dist/TmkNetworkLAN-frps-debian-amd64.tar.gz`：独立 FRPS v0.71.1、systemd unit、安装脚本、TLS/token 示例和 Apache-2.0 许可证。
-- 可执行文件：`dist/windows/TmkNetworkLAN.exe` 和 `dist/linux/tmknetworklan-server`。
+- **私有虚拟局域网**：基于 WireGuard + Wintun 构建二/三层加密隧道，自动分配虚拟局域网 IP，支持设备互访与多人联机。
+- **P2P 优先 + 自动中继兜底**：内置 UDP STUN 打洞与服务测速；直连不可达时自动切换至服务端 TLS TCP 中继，保障稳定联通。
+- **自定义用户名**：首次加入时支持自定义玩家/设备显示名称，并在已加入网络后支持随时改名并实时同步到控制面与所有成员。
+- **中英双语桌面客户端**：内置 **跟随系统 / 简体中文 / English** 一键切换，支持浅色、深色及跟随系统主题、系统托盘常驻、连接诊断包导出。
+- **内置端口映射（FRP）**：在客户端即可选择本地监听进程并一键发布 TCP/UDP 端口映射，配合服务端 FRPS 支持权限与端口范围管控。
+- **开箱即用的一键部署与管理**：提供 Linux 一键安装脚本 `install.sh`，自动补齐运行环境与依赖、引导配置管理员密钥、配置 `systemctl` 守护进程与防火墙，并内置 Web 管理控制台（`/admin`）及 Prometheus 指标（`/metrics`）。
 
-Windows 包需要完整解压，保留 EXE 同目录的 `wintun.dll`；双击会显示 UAC 提示，因为配置虚拟网卡和路由需要管理员权限。无需打开终端或浏览器。Linux 发布包不需要安装 Go、WireGuard 或桌面环境。
+---
 
-## 给熟人的使用方法
+## 快速开始：Linux 一键安装服务端
 
-1. 完整解压客户端包，双击 `TmkNetworkLAN.exe`。
-2. 首次打开显示入网令牌输入框、“加入网络”按钮和“配置内网穿透”入口。令牌默认隐藏，输入新字符时会短暂显示最后一位；点击输入框右侧的闭眼图标可切换为完整显示，再次点击恢复隐藏。普通用户输入 `TmkNetwork`；管理员输入 `Tmkmaj233` 后会获得管理权限。加入成功后会加密保存本机成员凭据，管理令牌另由当前 Windows 用户的 DPAPI 保存，下次打开跳过此页。电脑名称自动使用本机名称。
-3. 加入后停留在“虚拟网卡组网”页。关闭状态保持居中的描边电源按钮；点击后开启虚拟网卡，电源显示蓝色圆环并移动到页面上方。
-4. 启动后，同一页下方显示本机名称、分配的虚拟 IP，以及所有已加入设备的虚拟 IP、“在线 / 离线 / 连接中”、直连或中继路径和延迟。本机与在线设备优先排列，离线历史成员保留。
-5. 点击上方电源按钮关闭转发，成员区收起并回到居中的启动状态；再次点击重新开启，沿用原有虚拟 IP。
+支持 **Debian / Ubuntu / CentOS / RHEL / Rocky Linux / AlmaLinux / Fedora**（需 `root` 权限、`systemd` 与 `x86_64` 或 `arm64` 架构）。
 
-关闭电源会关闭加密引擎并释放本程序创建的虚拟网卡、路由和防火墙规则，成员记录和 IP 保留。关闭整个客户端也会停止 Mesh 转发和受管内网穿透进程；下次打开会恢复成员身份，等待你手动开启电源。
-
-延迟是经过实际 WireGuard 链路的往返探测值，直连和中继均可测量，不是到服务器的 Ping。尚未连通时显示“连接中”和 `—`，不会伪造延迟。服务端在线状态约每 5 秒同步；客户端异常退出时，服务器在最后心跳约 30 秒后标记离线。
-
-左侧导航底部“···”菜单可更换入网令牌、退出当前网络或查看连接诊断；更换令牌和退出前需先关闭电源。连接诊断生成本地 JSON/文本报告，并把完整 FRP 诊断摘要同步到私人服务器。错误提示显示中文原因、处理建议，并提供隐藏已知凭据后的技术详情。临时断网不会清除已保存的成员身份，也不会把已加入的用户送回首次加入页。
-
-左侧“ⓘ”按钮打开版本信息窗口；电源按钮和“内网穿透”按钮分别管理独立功能。只有管理令牌验证成功后，左侧才会出现“管理面板”入口。
-
-![客户端管理面板](docs/screenshots/admin-client-panel-2026-11-10.png)
-
-管理面板展示服务器/网络摘要、成员在线/拉黑状态、Relay 会话和 Managed FRP 租约，并支持重命名、断开、踢出、拉黑和解封。当前客户端的成员凭据不会因管理令牌而被替换；退出网络或切换为普通令牌时，保存的管理令牌会被清除。
-
-界面动效包括：令牌输入框获得焦点时显示淡蓝色光晕；启动后成员区域从页面下方平滑滑入，关闭时向下收起；左侧导航切换时，蓝色选中背景以滑动方式过渡。
-
-## 内网穿透（P2/P3 受控发布）
-
-![内网穿透页面](docs/screenshots/frp-p2.png)
-
-首次加入页提供“配置内网穿透”入口；必须先输入并验证入网令牌，否则不能进入端口映射页面。普通令牌只能进入普通成员功能，管理令牌会额外解锁管理面板；成员凭据仍用于受管 FRP 租约和成员级操作。页面支持多个独立服务器配置，每个配置拥有自己的 token、CA、规则、访问器、运行目录和 `frpc` 进程。切换配置不会复用另一个服务器的凭据；各配置可以独立启动和停止。
-
-当前数据面支持：
-
-- TCP、UDP、HTTP、HTTPS、STCP、SUDP 代理规则，以及 STCP/SUDP visitor
-- 本机回环、显式物理 LAN IPv4、TLAN 成员（`mesh_peer`）和本机 Mesh 地址（`mesh_self`）
-- HTTP/HTTPS 自定义域名；visitor 只绑定 `127.0.0.1`
-- 托管设备发布租约、端口/域名配额、冲突检查、续租和按设备撤销
-- FRPS `Login`、`NewProxy`、`Ping`、`NewUserConn` 插件 fail-closed 校验
-- 托管客户端每 5 秒续租；撤销或成员删除后，受管 frpc 与 TargetGateway 在 10 秒内停止
-- TargetGateway TCP/UDP 会话隔离、generation/lease 失效检查、半关闭和诊断计数
-- Mesh 目标按成员身份、虚拟 IPv4、WireGuard 公钥、service ID、管理员登记的服务授权和 generation 绑定，并通过虚拟接口发送
-- 依赖失效时进入“等待组网恢复”状态，Mesh 恢复后自动重试；Mesh 规则要求独立配置，不能与独立 FRP 规则混在同一配置
-- FRP 管理 API 的实际状态和地址；HTTP/HTTPS 显示实际注册地址，TCP/UDP 显示实际公网端口
-- 服务器传输支持 TCP、WebSocket、WSS、KCP、QUIC；代理支持 TCPMUX、XTCP；HTTP 支持 locations、Basic Auth、subdomain、Header rewrite
-- 目标成员发布申请与同意/拒绝/撤销流程，批准前不能签发 Mesh lease
-- 批量 TCP/UDP 端口规则和受限 TLAN JSON 配置导入/导出
-- 外部 FRPS 兼容档位可单独配置 `transport.tcpMux` 和 `transport.tls.disableCustomTLSFirstByte`，默认均开启且必须与服务端一致
-
-安全与进程约束：
-
-- TLS 强制启用，必须有可信 CA 和正确 `serverName`，没有跳过证书校验选项
-- 服务器 token、规则/访问器私有密钥均由当前 Windows 用户 DPAPI 保护；FRP 秘密读取拒绝明文降级
-- 运行时 token、管理密码和 capability 通过受保护文件/受限环境传递；日志做脱敏并持久化轮转，运行目录使用当前用户 DACL
-- 受管 `frpc.exe` 使用独立 Job Object、挂起创建、受限句柄列表和最小环境变量，并以 Medium 完整性、Administrators deny-only 的受限令牌运行
-- FRPS TCP 控制连接经过只监听回环的认证出口代理；每次拨号重新查询系统路由，并用 Windows 接口约束拒绝 TLAN 路径。启动 Mesh 和运行中网络变化都会双向复检；Windows 接口/地址/路由事件触发去抖检查，ticker 作为兜底，证据不足时 fail-closed
-- 不按进程名结束 FRP，不会误杀用户自行运行的 `frpc.exe`
-- 关闭软件时停止全部受管配置并清理运行目录
-
-内置核心固定为 FRP `v0.71.1`：Windows 包中的 `frpc.exe` SHA-256 为 `509f4fa082bf9b85f9ad27b45d37a89a8accb011f3b724cff352dfac90a94feb`，Linux `frps` 为 `2fb8da8392cf2b332bfcc540f075e928a82d1a106df0b8fcfcf13497149f8c48`。Mesh 开关和 FRP 开关互不依赖；关闭组网不会停止独立 FRP 配置，FRPC 故障也不会重建 Wintun。
-
-仍需外部环境证明的边界：
-
-- 本机真实 FRPS/FRPC 联调已覆盖 TCP/UDP、HTTP/HTTPS 高级字段、STCP/SUDP、TCPMUX、WebSocket、KCP、QUIC、visitor、托管高级授权、撤销 SLA 和 TargetGateway；WSS 已通过公网 Caddy 8444 managed 回显验证，并在双 FRPS 架构下完成 WSS TCP/HTTP/HTTPS/TCPMUX 组合验证；KCP、QUIC、主 FRPS TCPMUX 也已通过真实公网 managed 回归。XTCP 双端打洞仍需真实网络验收。
-- 真实公网 FRPS 已完成 TCP、UDP 和 HTTP vhost 验证，包括 managed lease、Host/Header 往返、停止后端口/路由关闭和清理；详见 `docs/PUBLIC-MANAGED-FRP-VERIFICATION-2026-10-21.md`。尚未完成两台独立 Windows、真实 Debian 主机、物理 LAN 抓包、接口切换和 24–72 小时长稳验收。
-- 托管模式要求 FRPS 实际启用 `httpPlugins` 的四个操作；客户端会在启动后读取控制面 lease status，确认 FRPS 已观察到 Login 和 proxy。该检查依赖控制面与 FRPS 的部署一致性，仍应按 `docs/FRPS-DEPLOY.md` 核对日志。
-- P3 使用 TLAN 控制面签发的精确目标授权，跨成员发布需要目标成员在“目标授权”窗口逐次同意；拒绝、撤销或服务授权失效都会关闭相关转发。
-- 当前 GUI manifest 要求管理员权限；受管 `frpc.exe` 已改为使用当前用户的 Medium 完整性受限令牌启动，管理员组 deny-only，预检失败时 fail-closed，不回退管理员令牌。
-- QUIC/KCP/WebSocket/TCPMUX/XTCP 和高级 HTTP 已接入；任意插件、VirtualNet、原始 TOML、自定义核心、SYSTEM 服务、生产签名自动更新仍未开放。
-- 已支持托盘、关闭到托盘、当前用户登录自启动和低权限 frpc；没有声称完整搬入 `frpc-desktop` 的全部功能。
-
-FRPS 独立部署步骤见 [FRPS 独立部署说明](docs/FRPS-DEPLOY.md)。安装包不会修改现有 `tnlan-config.yml`、成员数据库、Caddy 配置或 TLAN 服务。
-
-## Linux 一键安装
-
-将 `dist/TmkNetworkLAN-server-linux-amd64.run` 上传至服务器，在文件所在目录执行：
+### 方式一：在源码目录执行（推荐）
 
 ```bash
-sudo bash ./TmkNetworkLAN-server-linux-amd64.run
+git clone <你的仓库地址> TLAN
+cd TLAN
+sudo bash install.sh
 ```
 
-优先适配 CentOS 7.9，使用兼容 systemd 219 的服务文件及静态 amd64 二进制；同时支持 Debian/Ubuntu。默认 HTTPS 地址为 `https://8.163.21.82:8443`。阿里云安全组需放行 TCP 80、TCP 8443、TCP 8444、UDP 3478；如果部署独立 FRPS，还需按 FRPS 文档放行 TCP 7000、UDP 7002-7003、TCP 18080-18083、TCP 18443-18444 和 TCP/UDP 30000-30999。TCP 80 用于公网 IP 证书签发及续期。已有配置与成员数据会保留，程序更新前自动备份。已有独占本项目的 `caddy.service` 时可加 `--replace-caddy`，只检查可加 `--check`。详细条件和验证范围见 [安装说明](docs/INSTALL-LINUX.md)。
+脚本会自动完成以下工作：
+1. 检查操作系统、架构与 `systemd` 运行环境（遇到不支持的系统、非 `root` 或非 `systemd` 容器会清晰报错退出）。
+2. 自动安装缺失的基础工具（`curl`、`tar`、`gzip`、`openssl`、`ca-certificates`、`libcap` 等）以及 Go（>= 1.23.1，如本机缺失或版本过低）。
+3. 交互式引导输入安装参数：
+   - **管理员密钥 (`Admin Token`)**：用于登录 Web 管理后台与客户端管理员模式（必填；直接回车可自动生成强随机密钥）。
+   - **成员入网密钥 (`Join Code`)**：普通成员加入虚拟局域网时填写的密码（可直接回车随机生成）。
+   - **公网 IP 或域名**、**虚拟网络名称**（默认 `TLAN`）与 **虚拟网段**（默认 `10.240.0.0/24`）。
+4. 编译安装 `/opt/tlan/tlan-server`，下载并配置 Caddy HTTPS 网关，生成权限为 `0600` 的 `/var/lib/tlan/tlan-config.yml`。
+5. 自动创建最小权限系统账号、配置并启动 `tlan.service` 与 `tlan-https.service`（`systemctl`），自动放行 `ufw` / `firewalld` 端口并校验 `/health`。
 
-构建安装包：`./build-server-installer.ps1`；已缓存 Caddy 时可以加 `-Offline`。
+### 方式二：非交互 / 自动化参数安装
 
-## Linux 服务端：手工配置与运行
-
-把 Linux 包上传并解压到服务器目录。程序只读取启动时当前目录下的 `tnlan-config.yml`，不再依赖环境变量。
-
-```sh
-chmod +x tmknetworklan-server
-./tmknetworklan-server
+```bash
+sudo bash install.sh \
+  --admin-token "请替换为你的强管理员密钥" \
+  --join-code "请替换为成员入网密钥" \
+  --host "你的公网IP或域名" \
+  --network-name "TLAN" \
+  --cidr "10.240.0.0/24" \
+  --non-interactive
 ```
 
-第一次运行只生成 `tnlan-config.yml`，打印文件位置后正常退出，不创建监听端口或数据目录。检查并修改配置后再次运行：
+更多参数（`--no-caddy`、`--binary`、`--https-port`、`--stun-port`、`--skip-firewall`、`--reconfigure`、`--check`、`--uninstall`）：
 
-```sh
-./tmknetworklan-server
+```bash
+bash install.sh --help
 ```
 
-生成后的结构如下。默认 `network.join_code` 为 `TmkNetwork`，`security.admin_token` 为 `Tmkmaj233`；后者仅供你维护服务器，前者才分享给熟人。升级已有部署时不会静默覆盖原令牌，需要手工修改配置。
+### 需要放行的防火墙 / 云安全组端口
 
-```yaml
-network:
-  name: 我的私人网络
-  cidr: 10.240.0.0/24
-  join_code: TmkNetwork
-server:
-  listen: 127.0.0.1:8080
-  stun_listen: :3478
-  tls_cert: ""
-  tls_key: ""
-  relay_listen: ""
-  relay_cert: ""
-  relay_key: ""
-  admin_listen: "127.0.0.1:8081"
-  admin_tls_cert: ""
-  admin_tls_key: ""
-  admin_allow_insecure_http: false
-storage:
-  data_dir: ./data
-security:
-  admin_token: Tmkmaj233
+| 协议 / 端口 | 用途 | 备注 |
+| --- | --- | --- |
+| `TCP 8443` | 控制面与中继 HTTPS 入口（Caddy） | 客户端默认连接端口 |
+| `TCP 8444` | Web 管理控制台 HTTPS 入口（Caddy） | 访问 `https://<服务器地址>:8444/admin` |
+| `TCP 80` | 域名模式 Let's Encrypt 证书申请/续期 | 使用域名 + Caddy 时需要 |
+| `UDP 3478` | STUN UDP 探测与 NAT 穿透 | 用于测速与 P2P 直连打洞 |
+
+> **提示**：如果你使用**纯公网 IP**（无域名）并启用 Caddy HTTPS，Caddy 会使用内置 CA 签发证书。请从服务器导出根证书并导入 Windows 客户端的「受信任的根证书颁发机构」：
+> `/var/lib/tlan-caddy/.local/share/caddy/pki/authorities/local/root.crt`
+
+### 服务端常用运维命令
+
+```bash
+# 查看运行状态
+sudo systemctl status tlan tlan-https
+
+# 查看实时日志
+sudo journalctl -u tlan -f
+
+# 查看或修改配置文件（包含管理员密钥与入网密钥）
+sudo cat /var/lib/tlan/tlan-config.yml
+
+# 修改配置后重启生效
+sudo systemctl restart tlan
 ```
 
-配置文件创建权限为 `0600`。加载时会严格检查字段名和取值范围：拼错字段、管理员令牌不是 8–256 字节、入网令牌不是 8–256 字节、非私人 IPv4 网段、TLS 证书与私钥不配对，都会阻止启动并指出具体字段；管理监听器默认只绑定回环地址。`storage.data_dir` 可使用相对当前工作目录的路径。
+---
 
-首次创建私人网络后，后续重启会保留网络、成员和虚拟 IP。修改 `network.join_code` 会更换新成员加入时使用的令牌，已签发的成员凭据仍有效；将其设为空字符串可禁止新成员加入。若当前目录已有旧版 `state.json`，首次生成配置会自动把 `data_dir` 设为 `.`，避免升级后产生空网络或重新分配 IP。
+## 构建与使用 Windows 客户端
 
-## IP、HTTPS 与端口
+### 1. 构建环境准备
 
-服务器公网 IP 为 `8.163.21.82`。发布包的 Caddyfile 使用 IP 站点和 Let's Encrypt 短期 IP 证书，已用 Caddy **2.11.7** 验证配置。部署和升级步骤见 [IP 部署说明](docs/IP-DEPLOYMENT.md)。
+- Windows 10/11 (`amd64`)
+- Go >= 1.23.1
+- `go-winres`（用于嵌入图标、UAC Manifest 与版本信息）：
+  ```powershell
+  go install github.com/tc-hib/go-winres@latest
+  ```
 
-```caddyfile
-{
-    default_sni 8.163.21.82
-}
+### 2. 编译打包客户端
 
-https://8.163.21.82:8443 {
-    tls {
-        issuer acme {
-            dir https://acme-v02.api.letsencrypt.org/directory
-            profile shortlived
-            disable_tlsalpn_challenge
-        }
-    }
-    reverse_proxy 127.0.0.1:8080
-}
-```
-
-Caddy 提供包含 IP SAN 的受信任 HTTPS 证书，并代理控制 API 与 HTTP/1.1 Upgrade 中继。IP 客户端不发送域名 SNI，`default_sni` 让位于云服务器 NAT 后的 Caddy 仍选择正确的公网 IP 证书。业务入口仍为 TCP 8443，TCP 80 用于 HTTP-01 验证和自动续期，不能在首次签发后关闭。请确保云防火墙和服务器防火墙允许所用端口：
-
-| 用途 | 端口 |
-| --- | --- |
-| HTTPS 控制和中继 | TCP 8443 |
-| WSS FRP 入口 | TCP 8444 |
-| Caddy IP 证书验证和续期 | TCP 80 |
-| STUN 获取公网 UDP 映射 | UDP 3478 |
-| FRPS 控制（独立部署，TLS-only） | TCP 7000 |
-| FRPS KCP / QUIC（独立部署） | UDP 7002 / 7003 |
-| 主 FRPS HTTP / HTTPS vhost | TCP 18080 / 18443 |
-| 主 FRPS TCPMUX | TCP 18081 |
-| WSS FRPS HTTP / HTTPS vhost | TCP 18082 / 18444 |
-| WSS FRPS TCPMUX | TCP 18083 |
-| FRPS 业务端口（独立部署示例） | TCP/UDP 30000-30999 |
-| WSS FRPS 回环回源 | TCP 7001，仅 127.0.0.1，不公网放行 |
-
-客户端校验证书链、有效期和目标 IP，不提供跳过 TLS 校验的开关。普通域名证书不能用于这个 IP 地址；Caddy 自动申请和续期包含 `8.163.21.82` 的 IP 证书，不需要给客户端分发私有根证书。HTTPS 入网口令和成员凭据继续加密传输。
-
-使用 Caddy 时，YAML 保持 `server.listen: 127.0.0.1:8080`，`server.tls_cert` 和 `server.tls_key` 留空。如果自行管理受信任的 IP 证书，也可同时设置这两个字段，并把 `server.listen` 改为 `:8443`，由 Go 直接提供 HTTPS，此时证书更新后需重启后端，且不能再让 Caddy 占用同一端口。服务端本身不创建虚拟网卡，普通高端口运行无需 root 或 `CAP_NET_ADMIN`。
-
-## 内网管理控制台
-
-管理页由独立的 admin listener 提供，默认只绑定回环地址，不与公网 Caddy 的 `8443` 控制入口共享路由。通过 SSH 隧道访问最稳妥：
-
-```sh
-ssh -L 8081:127.0.0.1:8081 user@server
-```
-
-然后在浏览器打开 `http://127.0.0.1:8081/admin`。默认配置块如下；已有 `tnlan-config.yml` 不会被程序静默覆盖，请手工确认两个令牌和 admin 配置：
-
-```yaml
-network:
-  join_code: "TmkNetwork"
-security:
-  admin_token: "Tmkmaj233"
-server:
-  admin_listen: "127.0.0.1:8081"
-  admin_tls_cert: ""
-  admin_tls_key: ""
-  admin_allow_insecure_http: false
-```
-
-普通成员使用 `TmkNetwork` 入网，`Tmkmaj233` 原样作为管理令牌。管理页右上角的“设置”入口显示当前控制台版本，并提供亮色/暗色风格切换；主题偏好只保存在当前浏览器，不会写入管理令牌或服务端配置。管理页展示服务器与私人网络摘要、成员在线/心跳/Relay 状态、活跃 Relay 会话，并支持搜索、重命名、断开、踢出、拉黑和解封。管理 listener 只接受 `/admin`、`/admin/login`、`/admin/logout`、`/admin/api/session` 和 `/admin/api/*`，不提供普通控制 API；原始 `X-Admin-Token`/Bearer 只保留在原公网控制 API。管理 API 使用 `{"ok":...}` 外壳并返回 `request_id`；失败响应不包含底层错误或令牌。listener 校验 Host 与配置地址，状态变更请求校验同源 Origin，不信任 `X-Forwarded-*`。
-
-如果要从局域网设备直接访问，可把 `admin_listen` 改为服务器的内网地址，例如 `10.10.0.20:8081`，并只在内网防火墙中放行该端口。非回环且未配置 TLS 时，必须显式设置 `admin_allow_insecure_http: true`，否则服务拒绝启动；启用后启动日志会明确警告管理页为明文 HTTP。不要把该端口映射到公网。明文内网示例：
-
-```yaml
-server:
-  admin_listen: "10.10.0.20:8081"
-  admin_allow_insecure_http: true
-```
-
-需要 TLS 时设置成对的管理证书：
-
-```yaml
-server:
-  admin_listen: "10.10.0.20:8081"
-  admin_tls_cert: "/etc/tmknetworklan/admin.crt"
-  admin_tls_key: "/etc/tmknetworklan/admin.key"
-  admin_allow_insecure_http: false
-```
-
-管理页使用服务端会话 Cookie（`tlan_admin`，HttpOnly、SameSite=Strict、Path=/admin，TLS 时 Secure）和 `X-CSRF-Token`；登录失败按 TCP 对端 IP 限速 5 次/15 分钟，服务重启后旧会话失效。管理令牌不会写入页面、Cookie、URL 或日志。`Tmkmaj233` 是固定短口令，生产环境仍必须依赖内网、SSH 隧道、TLS 和防火墙降低暴露面。
-
-**拉黑边界**：拉黑作用于已知的 Device ID、公钥和控制面记录，并撤销全部成员凭据；被封禁设备不能继续 enroll、heartbeat 或出现在其他成员的候选列表中。但客户端删除本地身份并重新生成身份后，仍可能用 `TmkNetwork` 重新入网。需要重装级限制时，应另做服务器邀请/批准名单。
-## systemd
-
-将新二进制放在 `/opt/tmknetworklan/tmknetworklan-server`。发布包的 `tmknetworklan.service` 使用原来的 `lanmesh` 服务账户和 `/var/lib/lanmesh` 状态目录，并以该目录作为工作目录；配置文件位于 `/var/lib/lanmesh/tnlan-config.yml`。已有旧服务升级时先停止旧 unit，再启动新 unit，避免两个进程同时监听端口。
-
-```sh
-sudo systemctl daemon-reload
-sudo systemctl start tmknetworklan
-# 第一次只会生成 /var/lib/lanmesh/tnlan-config.yml 并退出
-sudo nano /var/lib/lanmesh/tnlan-config.yml
-sudo systemctl start tmknetworklan
-sudo systemctl enable tmknetworklan
-sudo journalctl -u tmknetworklan -f
-```
-
-## 入网与成员凭据
-
-客户端只内置公开服务地址，不内置管理员令牌或共享入网口令。管理员在入网令牌框手动输入 `Tmkmaj233`，普通用户输入 `TmkNetwork`；匿名入网接口校验令牌并限制尝试频率，加入后签发仅限本机、本网络的成员凭据。凭据响应使用设备已有 X25519 密钥、HKDF 和 ChaCha20-Poly1305 封装，只有持有对应设备私钥的客户端能够读取。
-
-服务器保存入网口令的 PBKDF2-SHA256 验证值和成员凭据的哈希，不保存客户端私钥。普通成员不能创建网络、操作其他设备的心跳或电源、删除其他成员，也不能以其他设备身份连接 HTTPS 中继。管理员 API 仍使用单独的管理令牌，不会用成员凭据替代；端口映射的 capabilities、租约、续租和撤销接口要求有效成员令牌，管理令牌不能替代成员租约。
-
-Windows 私钥、保存的成员凭据和客户端管理令牌由当前用户的 DPAPI 保护。已有 LANMesh 安装继续使用 `%APPDATA%/LANMesh/`，以保留设备身份、IP 和成员令牌；全新安装使用 `%APPDATA%/TmkNetworkLAN/`。普通入网口令不保存；管理令牌仅在管理员客户端本地保存，退出网络或切换普通令牌时清除。管理员可在内网管理控制台撤销凭据、断开连接或拉黑已知设备身份。拉黑只对已知 Device ID/公钥生效；客户端删除本地身份并重新生成身份后，仍可能使用共享入网令牌重新加入。要阻止重装重入，需要额外的服务器邀请或批准名单。
-
-## 数据通道与边界
-
-WireGuard 加密 IPv4 包；UDP 直连探测、STUN 与 WireGuard 共用同一个 UDP socket；直连不可用时通过 HTTP/HTTPS Upgrade 中继转发密文。中继有会话、队列、连接数量和超时限制。服务端是成员及公钥分发的信任中心。
-
-Windows 使用 Wintun 三层网卡，IPv4 包通过额外信封保持原始广播/组播目的地址。支持单播、限制广播、子网广播与 IPv4 组播；广播每秒最多 100 包，每包最多复制给 64 个成员。单网络成员上限 128；一个客户端一次连接一个网络。当前不是任意 Ethernet 二层桥，不提供 IPv6，也不使用 Radmin 私有协议。
-
-默认 MTU 1280；虚拟网段只能来自 `10.0.0.0/8` 或 `100.64.0.0/10`，并拒绝与已有活动接口重叠。不会修改默认网关或 DNS。为虚拟接口配置广播/组播路由和限定接口的防火墙规则，关闭时释放。
-
-未测试 Dark Hours，未实现完整的游戏专用诊断与配置模块。普通组网不能保证修复 Steam/EOS 服务或游戏自身故障。其他功能差距见 FEATURE-AUDIT.md。
-
-## 应用流量转发已独立
-
-“应用流量转发 / Egress”已从 TmkNetworkLAN 主客户端移出，源代码、Windows GUI、`egress-helper.exe`、Linux `egress-gateway` 和部署文件位于独立项目：
-
-`D:\TmkTrafficSandbox`
-
-主客户端不再显示该页面，也不再打包或启动该 helper。独立项目保留显式 SOCKS5 代理模式，透明 WFP 捕获仍未实现。
-
-## 从源码构建
-
-需要 Go 1.23.1 或以上版本，依赖已 vendored：
+在项目根目录执行：
 
 ```powershell
+# 生成通用版本（由用户在客户端中填写服务器地址）
 .\build-windows-client.ps1
-.\build-debian-server.ps1
+
+# 或在编译时预置默认服务器与 STUN 地址
+.\build-windows-client.ps1 -ServerURL "https://your-server.example.com:8443" -STUNAddress "your-server.example.com:3478"
 ```
 
-更换以后发给朋友的客户端地址时，由你重新构建：
+构建产物位于：
+- 可执行目录：`dist/windows/TLAN.exe`（附带 `wintun.dll`、`frpc.exe`、`tlan-icon.png`）
+- 压缩发布包：`dist/TLAN-client-windows-amd64.zip`
 
-```powershell
-.\build-windows-client.ps1 -ServerURL 'https://8.163.21.82:8443' -STUNAddress '8.163.21.82:3478'
+### 3. 客户端加入与使用
+
+1. 以管理员权限运行 `TLAN.exe`（用于创建 Wintun 虚拟网卡）。
+2. 在登录页填写：
+   - **用户名**（可选，留空将使用设备名，加入后也可在主界面或设置中随时修改）
+   - **服务器地址**（例如 `your-server.example.com:8443` 或 `https://1.2.3.4:8443`）
+   - **入网密钥**（填 `join_code` 作为普通成员加入，或填 `admin_token` 开启管理模式）
+3. 点击右上角 `中 / EN` 可随时切换中英文界面，点击主题按钮可切换浅色 / 深色外观。
+4. 点击主界面大按钮即可连接虚拟局域网，点击虚拟 IP 可一键复制发给好友联机。
+
+---
+
+## 目录结构
+
+```text
+├── cmd/
+│   ├── client/          # Windows 桌面客户端（Walk GUI、WireGuard、STUN、FRP 管理）
+│   ├── server/          # Linux 服务端入口（tlan-server）
+│   └── install-helper/  # Linux 安装辅助检查工具
+├── core/                # 核心数据模型与验证逻辑
+├── internal/
+│   ├── clientapi/       # 控制面与管理面 HTTP 客户端
+│   ├── clientidentity/  # 本机密钥、身份与客户端设置持久化
+│   ├── clientui/        # 双语错误解释与敏感信息脱敏
+│   ├── config/          # tlan-config.yml 生成、校验与热加载
+│   ├── control/         # 控制面 API、Web 管理后台与 Prometheus /metrics
+│   ├── frp/ & frpauth/  # FRP 托管与设备级租约控制
+│   ├── mesh/            # WireGuard 隧道、P2P/中继选路与保活
+│   ├── network/         # STUN 探测与 TLS 中继转发
+│   ├── platform/        # Windows Wintun / Linux TAP 适配与防火墙工具
+│   └── storage/         # 成员、网段与状态存储
+├── deploy/              # Caddyfile、systemd 单元、FRPS 部署模板
+├── docs/                # Linux 部署与 FRPS 参考文档
+└── install.sh           # Linux 一键安装脚本
 ```
 
-Windows 构建使用 GUI 子系统、TmkNetworkLAN 图标和 Common Controls v6 manifest，避免 `TTM_ADDTOOL failed`。构建脚本会校验 Wintun 和固定 FRP 核心的 SHA-256，任一不匹配都会拒绝打包。Wintun 与 FRP 来源、哈希及许可证见 THIRD-PARTY-NOTICES.md。
+## 开源与安全说明
 
-完整工具链、固定来源/摘要、构建参数、测试分层和 FRPC 能力边界见 [R0 构建与测试基线](docs/R0-BUILD-AND-TEST-BASELINE.md)；审查修复见 [R1/R2 实现与验证报告](docs/R1-R2-IMPLEMENTATION-REPORT-2026-10-21.md)，高级能力见 [高级功能实现与验证报告](docs/ADVANCED-FEATURES-IMPLEMENTATION-2026-10-21.md)。两平台基线可先运行：
-
-```powershell
-.\scripts\verify-build-baseline.ps1
-```
-
-```sh
-go test -mod=vendor ./...
-go vet -mod=vendor ./...
-```
-
-测试包含真实 wireguard-go 实例经本机 UDP / HTTPS 中继传输、成员凭据权限隔离、凭据加密、防伪造、端到端延迟及启停保持地址。OS 网卡使用内存替身，不代表完成两台实机的公网验收。
-
-FRP 本机真实联调会启动临时 FRPS/FRPC、生成临时 CA 和服务器证书，验证 TCP/UDP、HTTP/HTTPS vhost、STCP/SUDP 访问器、错误 CA、错误 token、受管子进程终止和运行目录清理：
-
-```powershell
-$env:TLAN_FRP_INTEGRATION='1'
-$env:TLAN_FRPS_BINARY=(Resolve-Path '.tmp-runtime\frps-v0.71.1.exe').Path
-go test -mod=vendor ./internal/frp -run TestLiveFRPTCPUDP -v
-```
-
-该测试仅代表本机回环联调，不代表公网防火墙、Debian 主机或 24-72 小时长稳验收已经完成。
-
-
-开发者可运行 `TmkNetworkLAN.exe --ui-smoke-test 报告绝对路径` 验证原生控件初始化，不创建网卡；`--adapter-smoke-test` 则显式创建并清理测试 Wintun 网卡。`--server`、`--stun` 和 `--identity` 参数用于开发调试，普通用户不需要使用。
+- 本仓库不包含任何硬编码公网 IP、域名或真实生产密钥；服务端首次生成配置或运行 `install.sh` 时会自动生成独立随机密钥。
+- 请勿将包含 `security.admin_token` 或 `network.join_code` 的 `tlan-config.yml` 提交到版本控制。
+- 第三方依赖许可说明请参阅 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)。

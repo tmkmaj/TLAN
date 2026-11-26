@@ -1,0 +1,23 @@
+[Unit]
+Description=TLAN Private LAN Server with Direct TLS
+Documentation=https://github.com/your-org/tlan
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=tlanhttps
+Group=tlanhttps
+WorkingDirectory=/var/lib/tlan
+ExecStart=/opt/tlan/tlan-server -config /var/lib/tlan/tlan-config.yml
+Restart=on-failure
+RestartSec=3
+LimitNOFILE=65536
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+
+[Install]
+WantedBy=multi-user.target

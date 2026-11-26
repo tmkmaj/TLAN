@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
@@ -15,6 +15,7 @@ import (
 	"github.com/private-radminlan/lanmesh/internal/diagreport"
 	"github.com/private-radminlan/lanmesh/internal/frpauth"
 	"github.com/private-radminlan/lanmesh/internal/network"
+	"github.com/private-radminlan/lanmesh/internal/observability"
 	"github.com/private-radminlan/lanmesh/internal/storage"
 )
 
@@ -39,6 +40,7 @@ type Server struct {
 	DataDirSummary   string
 	Relay            *network.RelayBroker
 	FRP              *frpauth.Store
+	FRPBootstrap     func() (FRPBootstrapConfig, error)
 	relayMu          sync.Mutex
 	relaySlotsOnce   sync.Once
 	relaySlots       chan struct{}
@@ -59,6 +61,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/frp/leases", s.frpLeases)
 	mux.HandleFunc("/api/v1/frp/leases/", s.frpLease)
 	mux.HandleFunc("/api/v1/frp/capabilities", s.frpCapabilities)
+	mux.HandleFunc("/api/v1/frp/port-range", s.frpPortRange)
+	mux.HandleFunc("/api/v1/frp/bootstrap", s.frpBootstrap)
 	mux.HandleFunc("/api/v1/frp/services", s.frpServices)
 	mux.HandleFunc("/api/v1/frp/services/requests", s.frpServiceRequests)
 	mux.HandleFunc("/api/v1/frp/services/pending", s.frpPendingServices)
@@ -137,13 +141,12 @@ func (s *Server) status(w http.ResponseWriter, _ *http.Request) {
 		relay = "enabled"
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"service":    "tmknetworklan-control",
-		"version":    "0.2.0",
+		"service":    "tlan-control",
+		"version":    "1.0.0",
 		"stage":      "encrypted-ipv4-mesh",
 		"networks":   len(s.Store.ListNetworks()),
 		"data_plane": "wireguard-go + Wintun/Linux TUN; IPv4 encapsulation",
 		"relay":      relay,
-		"dark_hours": "diagnostics-only",
 	})
 }
 
@@ -378,6 +381,27 @@ func (s *Server) networkDevice(w http.ResponseWriter, r *http.Request, networkID
 		return
 	}
 	switch action {
+	case "name":
+		if r.Method != http.MethodPost {
+			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		var req struct {
+			Name string `json:"name"`
+		}
+		if !decodeJSON(w, r, &req) {
+			return
+		}
+		member, err := s.Store.RenameDevice(networkID, deviceID, req.Name)
+		if err != nil {
+			status := http.StatusBadRequest
+			if errors.Is(err, storage.ErrNotFound) {
+				status = http.StatusNotFound
+			}
+			writeError(w, status, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, member)
 	case "forwarding":
 		if r.Method != http.MethodPost {
 			writeError(w, 405, "method not allowed")
@@ -544,8 +568,5 @@ func writeError(w http.ResponseWriter, status int, message string) {
 	writeJSON(w, status, map[string]string{"error": message})
 }
 func logging(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		log.Printf("%s %s", r.Method, r.URL.Path)
-		next.ServeHTTP(w, r)
-	})
+	return observability.HTTPMiddleware(slog.Default(), next)
 }

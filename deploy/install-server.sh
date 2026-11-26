@@ -13,14 +13,14 @@ for arg in "$@"; do
         --skip-firewall) SKIP_FIREWALL=1 ;;
         --help|-h)
             cat <<'HELP'
-TmkNetworkLAN Linux amd64 installer (CentOS 7.9 / Debian / Ubuntu)
-Usage: sudo bash TmkNetworkLAN-server-linux-amd64.run [OPTIONS]
+TLAN Linux amd64 installer (CentOS 7.9 / Debian / Ubuntu)
+Usage: sudo bash TLAN-server-linux-amd64.run [OPTIONS]
   --check           Validate prerequisites and configuration without installing
   --replace-caddy   Stop/disable an existing caddy.service (config/data retained)
   --skip-firewall   Leave host firewall rules to the administrator
-Endpoint: https://8.163.21.82:8443 ; STUN: 8.163.21.82:3478
+Endpoint: https://<your-server-host>:8443 ; STUN: <your-server-host>:3478
 Cloud security group must allow TCP 80, TCP 8443, TCP 8444 and UDP 3478.
-TCP 80 is required for automatic public IP certificate issuance and renewal.
+TCP 80 is required for automatic certificate issuance and renewal.
 Exit: 0 ready/check passed; 1 failed; 2 installed, certificate pending;
       3 installed, firewall needs attention.
 HELP
@@ -48,16 +48,16 @@ SYSTEMD_VERSION=$(systemctl --version | awk 'NR==1 { print $2 }')
 case "$(uname -r)" in 0.*|1.*|2.*|3.0.*|3.1.*) die 'Linux kernel 3.2 or newer is required.' ;; esac
 [[ -s /etc/pki/tls/certs/ca-bundle.crt || -s /etc/ssl/certs/ca-certificates.crt ]] || die 'Install/update ca-certificates before continuing.'
 if (( ! CHECK )); then
-    exec 9>/run/lock/tmknetworklan-install.lock
+    exec 9>/run/lock/tlan-install.lock
     flock -n 9 || die 'Another installation is running.'
 fi
-WORK=$(mktemp -d /var/tmp/tmknetworklan-install.XXXXXXXX)
+WORK=$(mktemp -d /var/tmp/tlan-install.XXXXXXXX)
 export XDG_DATA_HOME="$WORK/caddy-data" XDG_CONFIG_HOME="$WORK/caddy-config"
 BACKUP='' TRANSACTION=0 COMMITTED=0
-UNITS=(tmknetworklan.service tmknetworklan-https.service)
-FILES=(/opt/tmknetworklan/tmknetworklan-server /opt/tmknetworklan/caddy /opt/tmknetworklan/Caddyfile
-       /etc/systemd/system/tmknetworklan.service /etc/systemd/system/tmknetworklan-https.service
-       /var/lib/lanmesh/tnlan-config.yml)
+UNITS=(tlan.service tlan-https.service)
+FILES=(/opt/tlan/tlan-server /opt/tlan/caddy /opt/tlan/Caddyfile /opt/tlan/tlan-graceful-restart.sh
+       /etc/systemd/system/tlan.service /etc/systemd/system/tlan-https.service
+       /var/lib/tlan/tlan-config.yml)
 declare -a WAS_ACTIVE WAS_ENABLED
 rollback() {
     log "Installation failed; restoring managed files and service states from $BACKUP"
@@ -89,19 +89,19 @@ finish() {
     set +e
     if (( TRANSACTION && ! COMMITTED )); then rollback; fi
     # WORK is exclusively mktemp-created, never supplied by the caller.
-    if [[ $WORK == /var/tmp/tmknetworklan-install.* && -d $WORK ]]; then rm -rf -- "$WORK"; fi
+    if [[ $WORK == /var/tmp/tlan-install.* && -d $WORK ]]; then rm -rf -- "$WORK"; fi
     exit "$rc"
 }
 trap finish EXIT
 trap 'exit 1' INT TERM
 log "Checking bundled payload on $OS_ID $OS_VERSION (systemd $SYSTEMD_VERSION)"
-PAYLOAD_LINE=$(awk '/^__TMK_PAYLOAD_BELOW__$/ {print NR + 1; exit}' "$0")
+PAYLOAD_LINE=$(awk '/^__TLAN_PAYLOAD_BELOW__$/ {print NR + 1; exit}' "$0")
 [[ -n $PAYLOAD_LINE ]] || die 'Payload is missing. Use the built .run file.'
 tail -n +"$PAYLOAD_LINE" "$0" > "$WORK/payload.tar.gz"
 printf '%s  %s\n' '@PAYLOAD_SHA256@' "$WORK/payload.tar.gz" | sha256sum -c - >/dev/null || die 'Payload checksum mismatch.'
 tar -xzf "$WORK/payload.tar.gz" -C "$WORK" --no-same-owner
-chmod 755 "$WORK/install-helper" "$WORK/tmknetworklan-server" "$WORK/caddy"
-"$WORK/install-helper" verify-elf "$WORK/tmknetworklan-server" "$WORK/caddy" "$WORK/install-helper"
+chmod 755 "$WORK/install-helper" "$WORK/tlan-server" "$WORK/caddy"
+"$WORK/install-helper" verify-elf "$WORK/tlan-server" "$WORK/caddy" "$WORK/install-helper"
 "$WORK/caddy" validate --config "$WORK/Caddyfile" --adapter caddyfile
 # Refuse symlinks for all managed paths, including their ancestors.
 safe_path() {
@@ -111,18 +111,18 @@ safe_path() {
         p=${p%/*}; [[ -n $p ]] || p=/
     done
 }
-for path in "${FILES[@]}" /var/lib/tmknetworklan-caddy /var/backups/tmknetworklan; do safe_path "$path"; done
+for path in "${FILES[@]}" /var/lib/tlan-caddy /var/backups/tlan; do safe_path "$path"; done
 for path in "${FILES[@]}"; do [[ ! -e $path || -f $path ]] || die "Managed target is not a regular file: $path"; done
-DATA_DIR=$("$WORK/install-helper" prepare /var/lib/lanmesh/tnlan-config.yml "$WORK/prepared.yml")
+DATA_DIR=$("$WORK/install-helper" prepare /var/lib/tlan/tlan-config.yml "$WORK/prepared.yml")
 safe_path "$DATA_DIR/state.json"
 # Additional listeners and disabled/custom STUN settings are preserved.
-for name in lanmesh tmkhttps; do
+for name in tlan tlanhttps; do
     if id "$name" >/dev/null 2>&1; then
         [[ $(id -u "$name") != 0 ]] || die "Unsafe existing account: $name has UID 0."
     fi
 done
 if systemctl is-active --quiet caddy.service; then
-    (( REPLACE_CADDY )) || die 'caddy.service is running. Use --replace-caddy only if it exclusively serves TmkNetworkLAN; otherwise deploy manually.'
+    (( REPLACE_CADDY )) || die 'caddy.service is running. Use --replace-caddy only if it exclusively serves TLAN; otherwise deploy manually.'
 fi
 for unit in "${UNITS[@]}"; do
     enabled=$(systemctl is-enabled "$unit" 2>/dev/null || true)
@@ -133,21 +133,21 @@ for unit in "${UNITS[@]}"; do
 done
 if (( CHECK )); then
     log 'Preflight passed. Existing service ports may remain occupied during this read-only check.'
-    printf 'Install target: /opt/tmknetworklan\nState: %s\nRequired inbound: TCP 80, TCP 8443, TCP 8444, UDP 3478\n' "$DATA_DIR"
+    printf 'Install target: /opt/tlan\nState: %s\nRequired inbound: TCP 80, TCP 8443, TCP 8444, UDP 3478\n' "$DATA_DIR"
     exit 0
 fi
 log 'Preparing accounts and backing up existing deployment'
-for name in lanmesh tmkhttps; do
+for name in tlan tlanhttps; do
     getent group "$name" >/dev/null || groupadd --system "$name"
     if ! id "$name" >/dev/null 2>&1; then
         useradd --system --gid "$name" --home-dir /nonexistent --shell /sbin/nologin "$name"
     fi
 done
-install -d -m 755 /opt/tmknetworklan
-chown root:root /opt/tmknetworklan
-install -d -m 750 /var/lib/lanmesh /var/lib/tmknetworklan-caddy
-install -d -m 700 /var/backups/tmknetworklan
-BACKUP=$(mktemp -d /var/backups/tmknetworklan/install-XXXXXXXX)
+install -d -m 755 /opt/tlan
+chown root:root /opt/tlan
+install -d -m 750 /var/lib/tlan /var/lib/tlan-caddy
+install -d -m 700 /var/backups/tlan
+BACKUP=$(mktemp -d /var/backups/tlan/install-XXXXXXXX)
 for i in "${!FILES[@]}"; do
     if [[ -e ${FILES[$i]} ]]; then cp -a -- "${FILES[$i]}" "$BACKUP/file-$i"; fi
     printf '%s\n' "${FILES[$i]}" >> "$BACKUP/paths.txt"
@@ -165,37 +165,38 @@ done
 "$WORK/install-helper" ports "$WORK/prepared.yml"
 if [[ -e $DATA_DIR/state.json ]]; then cp -a -- "$DATA_DIR/state.json" "$BACKUP/state.json"; fi
 log 'Installing services (CentOS 7 compatible systemd units)'
-for name in tmknetworklan-server caddy; do
-    install -m 755 "$WORK/$name" "/opt/tmknetworklan/$name.new"
-    mv -f "/opt/tmknetworklan/$name.new" "/opt/tmknetworklan/$name"
+for name in tlan-server caddy; do
+    install -m 755 "$WORK/$name" "/opt/tlan/$name.new"
+    mv -f "/opt/tlan/$name.new" "/opt/tlan/$name"
 done
-install -m 644 "$WORK/Caddyfile" /opt/tmknetworklan/Caddyfile
-install -m 644 "$WORK/tmknetworklan.service" /etc/systemd/system/tmknetworklan.service
-install -m 644 "$WORK/tmknetworklan-https.service" /etc/systemd/system/tmknetworklan-https.service
-install -o lanmesh -g lanmesh -m 600 "$WORK/prepared.yml" /var/lib/lanmesh/tnlan-config.yml
+install -m 644 "$WORK/Caddyfile" /opt/tlan/Caddyfile
+install -m 755 "$WORK/tlan-graceful-restart.sh" /opt/tlan/tlan-graceful-restart.sh
+install -m 644 "$WORK/tlan.service" /etc/systemd/system/tlan.service
+install -m 644 "$WORK/tlan-https.service" /etc/systemd/system/tlan-https.service
+install -o tlan -g tlan -m 600 "$WORK/prepared.yml" /var/lib/tlan/tlan-config.yml
 # Only the application's private paths are owned by its service account.
 install -d -m 750 "$DATA_DIR"
-chown lanmesh:lanmesh /var/lib/lanmesh "$DATA_DIR"
-if [[ -f $DATA_DIR/state.json ]]; then chown lanmesh:lanmesh "$DATA_DIR/state.json"; fi
-chown tmkhttps:tmkhttps /var/lib/tmknetworklan-caddy
+chown tlan:tlan /var/lib/tlan "$DATA_DIR"
+if [[ -f $DATA_DIR/state.json ]]; then chown tlan:tlan "$DATA_DIR/state.json"; fi
+chown tlanhttps:tlanhttps /var/lib/tlan-caddy
 if command -v restorecon >/dev/null; then
-    restorecon -R /opt/tmknetworklan /var/lib/lanmesh /var/lib/tmknetworklan-caddy /etc/systemd/system/tmknetworklan.service /etc/systemd/system/tmknetworklan-https.service
+    restorecon -R /opt/tlan /var/lib/tlan /var/lib/tlan-caddy /etc/systemd/system/tlan.service /etc/systemd/system/tlan-https.service
 fi
-"$WORK/install-helper" set-bind-capability /opt/tmknetworklan/caddy
-runuser -u lanmesh -- test -r /var/lib/lanmesh/tnlan-config.yml
-runuser -u lanmesh -- test -w "$DATA_DIR"
-install -d -m 755 /opt/tmknetworklan/docs /opt/tmknetworklan/licenses
-install -m 644 "$WORK/INSTALL-LINUX.md" /opt/tmknetworklan/docs/INSTALL-LINUX.md
-install -m 644 "$WORK/IP-DEPLOYMENT.md" /opt/tmknetworklan/docs/IP-DEPLOYMENT.md
-install -m 644 "$WORK/licenses/"* /opt/tmknetworklan/licenses/
+"$WORK/install-helper" set-bind-capability /opt/tlan/caddy
+runuser -u tlan -- test -r /var/lib/tlan/tlan-config.yml
+runuser -u tlan -- test -w "$DATA_DIR"
+install -d -m 755 /opt/tlan/docs /opt/tlan/licenses
+install -m 644 "$WORK/INSTALL-LINUX.md" /opt/tlan/docs/INSTALL-LINUX.md
+install -m 644 "$WORK/IP-DEPLOYMENT.md" /opt/tlan/docs/IP-DEPLOYMENT.md
+install -m 644 "$WORK/licenses/"* /opt/tlan/licenses/
 systemctl daemon-reload
-systemctl enable tmknetworklan.service tmknetworklan-https.service
+systemctl enable tlan.service tlan-https.service
 if (( REPLACE_CADDY )); then systemctl disable caddy.service; fi
-systemctl start tmknetworklan.service
+systemctl start tlan.service
 "$WORK/install-helper" probe http 20
-systemctl start tmknetworklan-https.service
+systemctl start tlan-https.service
 sleep 2
-systemctl is-active --quiet tmknetworklan-https.service || die 'HTTPS gateway failed to start; inspect journalctl -u tmknetworklan-https.'
+systemctl is-active --quiet tlan-https.service || die 'HTTPS gateway failed to start; inspect journalctl -u tlan-https.'
 # The deployment is now installed. Certificate/firewall failures must not undo
 # a working backend or reset newly registered member state.
 COMMITTED=1
@@ -218,7 +219,7 @@ elif command -v ufw >/dev/null && ufw status | grep -q '^Status: active'; then
 else
     printf 'No active firewalld/UFW detected; custom iptables/nftables rules are unchanged.\n'
 fi
-printf '\nInstalled: https://8.163.21.82:8443\nConfig (contains secrets): /var/lib/lanmesh/tnlan-config.yml\nBackup: %s\n' "$BACKUP"
+printf '\nInstalled: https://<your-server-host>:8443\nConfig (contains secrets): /var/lib/tlan/tlan-config.yml\nBackup: %s\n' "$BACKUP"
 printf 'Share only network.join_code with clients. Never share security.admin_token.\n'
 log 'Waiting up to 45 seconds for a trusted IP certificate'
 HTTPS_OK=1
@@ -230,10 +231,10 @@ fi
 if (( ! HTTPS_OK )); then
     printf 'INSTALLED; HTTPS is not ready yet. Caddy will retry certificate issuance automatically.\n' >&2
     printf 'Check cloud TCP 80/8443, outbound HTTPS/DNS, system clock and CA roots.\n' >&2
-    printf 'Logs: journalctl -u tmknetworklan-https -n 100 --no-pager\n' >&2
+    printf 'Logs: journalctl -u tlan-https -n 100 --no-pager\n' >&2
     exit 2
 fi
 printf '\nREADY: backend and certificate-verified IP HTTPS health checks passed.\n'
 printf 'External reachability still depends on cloud security groups and network rules.\n'
 exit 0
-__TMK_PAYLOAD_BELOW__
+__TLAN_PAYLOAD_BELOW__

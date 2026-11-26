@@ -42,7 +42,7 @@ type LinuxTAP struct {
 func OpenLinuxTAP(name string, mtu int) (*LinuxTAP, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
-		name = "tmklan0"
+		name = "tlan0"
 	}
 	if len(name) >= linuxIFNAMSIZ {
 		return nil, fmt.Errorf("TAP interface name must be fewer than %d bytes", linuxIFNAMSIZ)

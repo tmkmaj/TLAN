@@ -4,7 +4,7 @@ package main
 
 import "testing"
 
-func TestResolveCloseBehaviorDefaultsToExit(t *testing.T) {
+func TestResolveCloseBehaviorDefaultsToMinimize(t *testing.T) {
 	cases := []struct {
 		name          string
 		closeToTray   bool
@@ -12,10 +12,11 @@ func TestResolveCloseBehaviorDefaultsToExit(t *testing.T) {
 		trayAvailable bool
 		want          closeBehavior
 	}{
-		{name: "default close", closeToTray: false, trayAvailable: true, want: closeBehaviorExit},
+		{name: "default close minimizes to taskbar", closeToTray: false, trayAvailable: true, want: closeBehaviorMinimize},
 		{name: "explicit tray setting", closeToTray: true, trayAvailable: true, want: closeBehaviorTray},
-		{name: "explicit exit wins", closeToTray: true, explicitExit: true, trayAvailable: true, want: closeBehaviorExit},
-		{name: "tray unavailable is safe", closeToTray: true, trayAvailable: false, want: closeBehaviorExit},
+		{name: "explicit exit wins over tray", closeToTray: true, explicitExit: true, trayAvailable: true, want: closeBehaviorExit},
+		{name: "explicit exit wins over minimize", closeToTray: false, explicitExit: true, trayAvailable: true, want: closeBehaviorExit},
+		{name: "tray unavailable falls back to minimize", closeToTray: true, trayAvailable: false, want: closeBehaviorMinimize},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
