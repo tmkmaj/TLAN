@@ -192,7 +192,9 @@ fi
 if [[ -f "$WORK/IP-DEPLOYMENT.md" ]]; then
     install -m 644 "$WORK/IP-DEPLOYMENT.md" /opt/tlan/docs/IP-DEPLOYMENT.md
 fi
-install -m 644 "$WORK/licenses/"* /opt/tlan/licenses/
+if [[ -d "$WORK/licenses" ]]; then
+    install -m 644 "$WORK/licenses/"* /opt/tlan/licenses/
+fi
 systemctl daemon-reload
 systemctl enable tlan.service tlan-https.service
 if (( REPLACE_CADDY )); then systemctl disable caddy.service; fi
