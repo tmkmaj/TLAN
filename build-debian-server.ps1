@@ -1,14 +1,21 @@
+param(
+    [string]$Version = ''
+)
+
 $ErrorActionPreference = 'Stop'
+
+$versionTag = if ($Version) { if ($Version.StartsWith('v')) { $Version } else { "v$Version" } } else { '' }
+$versionSuffix = if ($versionTag) { "-$versionTag" } else { '' }
 
 $root = $PSScriptRoot
 $outputDir = Join-Path $root 'dist\linux'
 $binPath = Join-Path $outputDir 'tlan-server'
-$zipPath = Join-Path $root 'dist\TLAN-server-linux-amd64.zip'
+$zipPath = Join-Path $root "dist\TLAN-server$versionSuffix-linux-amd64.zip"
 $frpsAssetsDir = Join-Path $root 'assets\frp\linux-amd64'
 $frpsBinPath = Join-Path $frpsAssetsDir 'frps'
 $expectedFrpsSHA256 = '2FB8DA8392CF2B332BFCC540F075E928A82D1A106DF0B8FCFCF13497149F8C48'
 $frpsPkgDir = Join-Path $root '.tmp-build\frps-pkg'
-$frpsTarPath = Join-Path $root 'dist\TLAN-frps-linux-amd64.tar.gz'
+$frpsTarPath = Join-Path $root "dist\TLAN-frps$versionSuffix-linux-amd64.tar.gz"
 
 if (-not (Test-Path $frpsBinPath)) {
     throw "Missing linux/amd64 frps binary: $frpsBinPath"

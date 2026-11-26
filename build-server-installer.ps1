@@ -1,13 +1,18 @@
-param([string]$CaddyArchive = '')
+param(
+    [string]$CaddyArchive = '',
+    [string]$Version = ''
+)
 $ErrorActionPreference = 'Stop'
+$versionTag = if ($Version) { if ($Version.StartsWith('v')) { $Version } else { "v$Version" } } else { '' }
+$versionSuffix = if ($versionTag) { "-$versionTag" } else { '' }
 $root = $PSScriptRoot
 $caddyVersion = '2.11.7'
 $caddyUrl = "https://github.com/caddyserver/caddy/releases/download/v$caddyVersion/caddy_${caddyVersion}_linux_amd64.tar.gz"
-$caddySha512 = 'b152a5c32fb94a8b01e84d60c7fa6ad9b86c970bb52354f2f2b31b2fe6e39321899832f53a4dd83f7979f68b96763826d18a96136b9d3b8333a91ed3fd4f3a84'
+$caddySha512 = 'a7a433a1b133efc3c8d10eb0b99d52a24b5ef5c322dc77f5282182b1c0402139ab83f3a99f0c52409df77d20123fb0b523edad8a66d8f5e49136197bf61ef0e7'
 $tmp = Join-Path $root '.tmp-build'
 $cache = Join-Path $tmp 'cache'
 $payload = Join-Path $tmp 'server-installer-payload'
-$out = Join-Path $root 'dist\TLAN-server-linux-amd64.run'
+$out = Join-Path $root "dist\TLAN-server$versionSuffix-linux-amd64.run"
 New-Item -ItemType Directory -Force $cache, (Split-Path $out) | Out-Null
 Remove-Item -Recurse -Force $payload -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force $payload | Out-Null

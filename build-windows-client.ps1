@@ -1,14 +1,18 @@
 param(
     [string]$ServerURL = '',
-    [string]$STUNAddress = ''
+    [string]$STUNAddress = '',
+    [string]$Version = ''
 )
 
 $ErrorActionPreference = 'Stop'
 
+$versionTag = if ($Version) { if ($Version.StartsWith('v')) { $Version } else { "v$Version" } } else { '' }
+$versionSuffix = if ($versionTag) { "-$versionTag" } else { '' }
+
 $root = $PSScriptRoot
 $outputDir = Join-Path $root 'dist\windows'
 $exePath = Join-Path $outputDir 'TLAN.exe'
-$zipPath = Join-Path $root 'dist\TLAN-client-windows-amd64.zip'
+$zipPath = Join-Path $root "dist\TLAN-client$versionSuffix-windows-amd64.zip"
 $clientDir = Join-Path $root 'cmd\client'
 $iconPath = Join-Path $root 'assets\branding\tlan-icon.png'
 $manifestPath = Join-Path $clientDir 'TLAN.exe.manifest'
