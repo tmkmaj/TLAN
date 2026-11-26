@@ -177,6 +177,14 @@ func (e *Engine) gatherCandidates() {
 	e.gatherCandidatesFromSnapshot(e.candidateSnapshot())
 }
 
+// routableCandidateAddr reports whether a peer could ever reach ip as a
+// candidate. The control plane rejects a whole candidate set that contains a
+// loopback or link-local address, so such addresses must never be published.
+func routableCandidateAddr(ip netip.Addr) bool {
+	return ip.IsValid() && !ip.IsUnspecified() && !ip.IsLoopback() && !ip.IsMulticast() &&
+		!ip.IsLinkLocalUnicast() && !ip.IsLinkLocalMulticast()
+}
+
 func (e *Engine) gatherCandidatesFromSnapshot(interfaces []candidateInterfaceSnapshot) {
 	ports := e.bind.ports()
 	if len(ports) == 0 {
@@ -221,6 +229,9 @@ adapters:
 		if err == nil && len(mappedPorts) > 0 {
 			stunAvailable = true
 			for _, mapped := range mappedPorts {
+				if !routableCandidateAddr(mapped.Addr()) {
+					continue
+				}
 				addCandidate(core.Candidate{Kind: core.CandidateServerReflexive, Transport: core.TransportUDP, Address: mapped.String(), Priority: 200})
 				for offset := uint16(1); offset <= meshPredictedPorts; offset++ {
 					if uint32(mapped.Port())+uint32(offset) > 65535 {

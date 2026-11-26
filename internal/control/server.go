@@ -455,7 +455,15 @@ func (s *Server) networkDevice(w http.ResponseWriter, r *http.Request, networkID
 			if !decodeJSON(w, r, &req) {
 				return
 			}
-			record, err := s.Store.SetCandidates(nid, did, req.Candidates)
+			candidates := req.Candidates[:0]
+			for _, candidate := range req.Candidates {
+				if err := candidate.Validate(); err != nil {
+					slog.Warn("discarding invalid candidate", "network", nid.String(), "device", did.String(), "address", candidate.Address, "error", err)
+					continue
+				}
+				candidates = append(candidates, candidate)
+			}
+			record, err := s.Store.SetCandidates(nid, did, candidates)
 			if err != nil {
 				status := http.StatusBadRequest
 				if errors.Is(err, storage.ErrNotFound) {
