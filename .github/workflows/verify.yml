@@ -16,9 +16,9 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - name: Verify Windows baseline
+      - name: Verify Windows baseline and run Windows-only tests
         shell: pwsh
-        run: ./scripts/verify-build-baseline.ps1
+        run: ./scripts/verify-build-baseline.ps1 -IncludeWindowsTest
 
   linux:
     runs-on: ubuntu-latest
