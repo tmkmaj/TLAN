@@ -88,6 +88,11 @@ finally {
     Remove-Item Env:GOARCH -ErrorAction SilentlyContinue
     Remove-Item Env:CGO_ENABLED -ErrorAction SilentlyContinue
     Pop-Location
+    # The generated resource object carries the requireAdministrator manifest,
+    # and Go links it into every binary of this package, test binaries included.
+    # Removing it keeps "go test ./cmd/client" runnable without elevation after
+    # a client build; the next build regenerates it from scratch anyway.
+    Remove-Item -Force -ErrorAction SilentlyContinue $sysoPath
 }
 
 Copy-Item -Force $wintunPath (Join-Path $outputDir 'wintun.dll')
