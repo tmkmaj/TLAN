@@ -63,7 +63,7 @@ WSS 使用独立的回环 FRPS 实例，主 FRPS 始终保持 TLS-only：
 | TCP 18444 | WSS FRPS | HTTPS vhost | 是 |
 | TCP 18083 | WSS FRPS | TCPMUX HTTP CONNECT | 是 |
 | TCP 8444 | Caddy | 公网 WSS 入口 | 是，由主服务安装器放行 |
-| TCP/UDP 30000-30999 | 两个 FRPS 实例 | 示例业务端口范围，与 `allowPorts` 一致 | 是 |
+| TCP/UDP 60000-61000 | 两个 FRPS 实例 | 示例业务端口范围，与 `allowPorts` 一致 | 是 |
 
 `frp.example.com` 用于 subdomain 访问；例如规则子域为 `demo` 时，
 HTTP 访问形式为 `http://demo.frp.example.com:18080`。使用泛域名或 `nip.io` 解析通配子域时，无需额外逐条配置 DNS 记录。
@@ -76,7 +76,7 @@ HTTP 访问形式为 `http://demo.frp.example.com:18080`。使用泛域名或 `n
 
 - TCP 7000、18080-18083、18443-18444
 - UDP 7002-7003
-- TCP/UDP 30000-30999
+- TCP/UDP 60000-61000
 - 若同时部署 TLAN 主服务，另有 TCP 80、8443、8444 和 UDP 3478
 
 TCP 和 UDP 同号端口是独立协议；云安全组和主机防火墙需要分别按实际规则放行。
@@ -100,8 +100,8 @@ frp:
   plugin_listen: "127.0.0.1:9093"
   lease_state_file: "/var/lib/tlan/frp-leases.json"
   allowed_ports:
-    - start: 30000
-      end: 30999
+    - start: 60000
+      end: 61000
   allowed_domains:
     - "frp.example.com"
 ```

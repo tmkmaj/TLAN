@@ -83,7 +83,7 @@ fi
 config_value() {
   local file="$1" key="$2" key_re
   key_re=${key//./\\.}
-  sed -n -E "s/^[[:space:]]*${key_re}[[:space:]]*=[[:space:]]*\"?([^\"#[:space:]]+)\"?[[:space:]]*(#.*)?$/\1/p" "$file" | tail -n 1
+  sed -n -E "s/^[[:space:]]*${key_re}[[:space:]]*=[[:space:]]*['\"]?([^'\"#[:space:]]+)['\"]?[[:space:]]*(#.*)?$/\1/p" "$file" | tail -n 1
 }
 
 CAPABILITIES_OK="true"

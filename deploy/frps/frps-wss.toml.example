@@ -2,6 +2,7 @@
 # Copy or customize /etc/tlan-frp/frps-wss.toml and /etc/tlan-frp/token.
 
 bindAddr = '127.0.0.1'
+proxyBindAddr = '0.0.0.0'
 bindPort = 7001
 vhostHTTPPort = 18082
 vhostHTTPSPort = 18444

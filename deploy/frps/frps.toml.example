@@ -2,6 +2,7 @@
 # Copy or customize /etc/tlan-frp/frps.toml and /etc/tlan-frp/token.
 
 bindAddr = '0.0.0.0'
+proxyBindAddr = '0.0.0.0'
 bindPort = 7000
 kcpBindPort = 7002
 quicBindPort = 7003
