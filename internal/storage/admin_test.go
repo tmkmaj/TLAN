@@ -176,3 +176,43 @@ func TestEnrollPrivateUpdatesCustomDisplayName(t *testing.T) {
 		t.Fatalf("listed devices after reenroll rename = %+v, err=%v", devices, err)
 	}
 }
+
+func TestEnrollPrivateRejectsControlCharactersInDisplayName(t *testing.T) {
+	store, network, _ := adminStorageFixture(t)
+	_, _, _, err := store.EnrollPrivate(core.RegisterDeviceRequest{
+		DeviceID:           "device-control-name",
+		DisplayName:        "TLAN\x1b[31mPC\r\nL2",
+		WireGuardPublicKey: adminTestKey(11),
+	}, "test-join-code")
+	if err == nil {
+		t.Fatal("enrollment with control characters in display name succeeded")
+	}
+	devices, listErr := store.ListDevices(network.ID)
+	if listErr != nil {
+		t.Fatal(listErr)
+	}
+	for _, device := range devices {
+		if device.ID == "device-control-name" {
+			t.Fatalf("rejected enrollment still created device %+v", device)
+		}
+	}
+}
+
+func TestEnrollPrivateRejectsControlCharactersOnReenroll(t *testing.T) {
+	store, network, member := adminStorageFixture(t)
+	_, _, _, err := store.EnrollPrivate(core.RegisterDeviceRequest{
+		DeviceID:           core.DeviceID(member.ID),
+		DisplayName:        "Bad\x1bName",
+		WireGuardPublicKey: member.PublicKey,
+	}, "test-join-code")
+	if err == nil {
+		t.Fatal("reenrollment with control characters in display name succeeded")
+	}
+	devices, listErr := store.ListDevices(network.ID)
+	if listErr != nil {
+		t.Fatal(listErr)
+	}
+	if len(devices) != 1 || devices[0].Name != member.Name {
+		t.Fatalf("devices after rejected rename = %+v, want name %q", devices, member.Name)
+	}
+}
