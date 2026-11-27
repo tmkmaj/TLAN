@@ -1,6 +1,8 @@
 package frpauth
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -90,6 +92,45 @@ func TestIssuePersistsOnlyCapabilityHashAndSurvivesRestart(t *testing.T) {
 		ProxyName: "tlan_tcp", ProxyType: "tcp", RemotePort: 30001,
 	}); err != nil {
 		t.Fatalf("new proxy after restart: %v", err)
+	}
+}
+
+func TestPersistKeepsLastReadableBackupWhenPrimaryIsDamaged(t *testing.T) {
+	store, _ := testStore(t)
+	if _, err := store.Issue("net-test", "dev-a", "frps-managed-1", testRules()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Issue("net-test", "dev-b", "frps-managed-1", []Rule{
+		{ID: "rule-b", ProxyName: "tlan_b", Type: "tcp", RemotePort: 30002, BindPort: 8080},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	goodBackup, err := os.ReadFile(store.path + ".bak")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(goodBackup) == 0 {
+		t.Fatal("expected a backup after the second persist")
+	}
+	if err := os.WriteFile(store.path, []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RevokeDevice("net-test", "dev-a"); err != nil {
+		t.Fatal(err)
+	}
+	backup, err := os.ReadFile(store.path + ".bak")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(backup, goodBackup) {
+		t.Fatalf("backup was overwritten with an undecodable snapshot: %q", backup)
+	}
+	var state persistedState
+	if err := json.Unmarshal(backup, &state); err != nil {
+		t.Fatalf("backup is not decodable: %v", err)
+	}
+	if len(state.Leases) != 1 {
+		t.Fatalf("backup leases = %d, want the pre-revoke snapshot with 1 lease", len(state.Leases))
 	}
 }
 

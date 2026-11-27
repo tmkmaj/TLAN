@@ -199,6 +199,10 @@ func (s *Store) decodeStateFile(path string) (persistedState, int, error) {
 	if err != nil {
 		return persistedState{}, 0, err
 	}
+	return s.decodeStateBytes(data)
+}
+
+func (s *Store) decodeStateBytes(data []byte) (persistedState, int, error) {
 	if len(data) > maxPersistedLoadBytes {
 		return persistedState{}, len(data), fmt.Errorf("%w: FRP lease state exceeds size limit", ErrInvalid)
 	}
@@ -499,6 +503,12 @@ func (s *Store) writeBackupLocked() error {
 		return fmt.Errorf("read current FRP lease state for backup: %w", err)
 	}
 	if len(existing) == 0 || len(existing) > maxPersistedLoadBytes {
+		return nil
+	}
+	// Keep the last readable backup if the primary was damaged outside this
+	// process. Copying it here would overwrite the only recoverable snapshot
+	// with bytes that load() cannot decode either.
+	if _, _, err := s.decodeStateBytes(existing); err != nil {
 		return nil
 	}
 	return writeAtomicStateFile(s.path+".bak", existing)
