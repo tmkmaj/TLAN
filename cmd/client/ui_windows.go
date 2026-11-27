@@ -1277,6 +1277,7 @@ func (a *desktop) setConnectedVisible(show bool) {
 		return
 	}
 	a.connectedArea.SetVisible(show)
+	a.minTrackValid.Store(false)
 	a.requestCleanRelayout()
 }
 
@@ -1356,11 +1357,13 @@ func (a *desktop) showNotice(f clientui.Feedback) {
 	a.noticeMessage.SetText(f.Message)
 	a.notice.SetVisible(true)
 	a.status.SetText(f.Title)
+	a.minTrackValid.Store(false)
 	a.requestCleanRelayout()
 }
 func (a *desktop) dismissNotice() {
 	a.notice.SetVisible(false)
 	a.feedback = clientui.Feedback{}
+	a.minTrackValid.Store(false)
 	a.requestCleanRelayout()
 }
 func (a *desktop) showErrorDetails() {
