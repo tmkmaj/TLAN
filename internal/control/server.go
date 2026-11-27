@@ -559,6 +559,9 @@ func (s *Server) devices(w http.ResponseWriter, r *http.Request, id string) {
 			writeError(w, status, err.Error())
 			return
 		}
+		if s.Relay != nil {
+			s.Relay.DisconnectDevice(core.DeviceID(deviceID))
+		}
 		w.WriteHeader(http.StatusNoContent)
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")

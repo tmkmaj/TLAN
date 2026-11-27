@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -126,5 +127,52 @@ func TestRelayTicketRequiresRegisteredDevices(t *testing.T) {
 	resp.Body.Close()
 	if !ticket.Valid(time.Now()) {
 		t.Fatal("relay ticket is not valid")
+	}
+}
+
+func TestDeleteDeviceDisconnectsRelaySession(t *testing.T) {
+	store, err := storage.Open(filepath.Join(t.TempDir(), "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	summary, err := store.EnsurePrivateNetwork("Delete", "test-join-code", "10.242.0.0/24")
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := "CQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+	_, _, token, err := store.EnrollPrivate(core.RegisterDeviceRequest{DeviceID: "dev-a", WireGuardPublicKey: key}, "test-join-code")
+	if err != nil {
+		t.Fatal(err)
+	}
+	broker := network.NewRelayBroker(1024)
+	defer broker.Close()
+	ticket, err := broker.CreateSession(core.DeviceID("dev-a"), core.DeviceID("dev-b"), time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn, err := broker.Attach(ticket.TicketFor(core.DeviceID("dev-a")), core.DeviceID("dev-a"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	service := &Server{Store: store, Relay: broker}
+	h := httptest.NewServer(service.Handler())
+	defer h.Close()
+	req, _ := http.NewRequest(http.MethodDelete, h.URL+"/api/v1/networks/"+summary.ID+"/devices?id=dev-a", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("delete status = %d, want 204", resp.StatusCode)
+	}
+	if snapshot := broker.Snapshot(); len(snapshot) != 0 {
+		t.Fatalf("relay sessions after device deletion = %+v, want none", snapshot)
+	}
+	if err := conn.Send([]byte("after-delete")); !errors.Is(err, network.ErrRelayClosed) {
+		t.Fatalf("send after device deletion error = %v, want ErrRelayClosed", err)
 	}
 }
