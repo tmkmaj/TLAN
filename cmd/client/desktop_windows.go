@@ -143,6 +143,7 @@ type desktop struct {
 	minTrackX, minTrackY                                                                                               int32
 	minTrackDPI                                                                                                        int
 	dragSnapActive                                                                                                     bool
+	dragSnapFailed                                                                                                     bool
 	dragSnapDC                                                                                                         win.HDC
 	dragSnapBMP                                                                                                        win.HBITMAP
 	dragSnapOldBMP                                                                                                     win.HGDIOBJ

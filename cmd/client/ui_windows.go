@@ -859,20 +859,30 @@ func isValidWindow(h win.HWND) bool {
 	return ok != 0
 }
 
+// canEnterDragSnapshot reports whether this size-move gesture may still try to
+// build the offscreen snapshot. A failed attempt latches until the next
+// WM_ENTERSIZEMOVE so a failing PrintWindow does not rerun per mouse event.
+func (a *desktop) canEnterDragSnapshot() bool {
+	return !a.dragSnapActive && !a.dragSnapFailed
+}
+
 func (a *desktop) enterDragSnapshot(h win.HWND) {
-	if a.dragSnapActive || h == 0 || win.IsZoomed(h) || win.IsIconic(h) {
+	if !a.canEnterDragSnapshot() || h == 0 || win.IsZoomed(h) || win.IsIconic(h) {
 		return
 	}
 	var cr win.RECT
 	if !win.GetClientRect(h, &cr) {
+		a.dragSnapFailed = true
 		return
 	}
 	w, hgt := cr.Right-cr.Left, cr.Bottom-cr.Top
 	if w <= 0 || hgt <= 0 {
+		a.dragSnapFailed = true
 		return
 	}
 	hdc := win.GetDC(h)
 	if hdc == 0 {
+		a.dragSnapFailed = true
 		return
 	}
 	memDC := win.CreateCompatibleDC(hdc)
@@ -885,6 +895,7 @@ func (a *desktop) enterDragSnapshot(h win.HWND) {
 		if memDC != 0 {
 			win.DeleteDC(memDC)
 		}
+		a.dragSnapFailed = true
 		return
 	}
 	old := win.SelectObject(memDC, win.HGDIOBJ(bmp))
@@ -894,6 +905,7 @@ func (a *desktop) enterDragSnapshot(h win.HWND) {
 		win.SelectObject(memDC, old)
 		win.DeleteObject(win.HGDIOBJ(bmp))
 		win.DeleteDC(memDC)
+		a.dragSnapFailed = true
 		return
 	}
 
@@ -914,6 +926,7 @@ func (a *desktop) enterDragSnapshot(h win.HWND) {
 		win.SelectObject(memDC, old)
 		win.DeleteObject(win.HGDIOBJ(bmp))
 		win.DeleteDC(memDC)
+		a.dragSnapFailed = true
 		return
 	}
 
@@ -1048,6 +1061,7 @@ func (a *desktop) installSizeMoveHook() {
 			case win.WM_ENTERSIZEMOVE:
 				a.inSizeMove.Store(true)
 				a.resizedDuringMove.Store(false)
+				a.dragSnapFailed = false
 			case win.WM_EXITSIZEMOVE:
 				a.exitDragSnapshot(h)
 				a.inSizeMove.Store(false)
@@ -1058,7 +1072,7 @@ func (a *desktop) installSizeMoveHook() {
 			case win.WM_SIZING:
 				a.exitDragSnapshot(h)
 			case win.WM_MOVING:
-				if a.inSizeMove.Load() && !a.dragSnapActive {
+				if a.inSizeMove.Load() && a.canEnterDragSnapshot() {
 					a.enterDragSnapshot(h)
 				}
 				return win.DefWindowProc(h, msg, wParam, lParam)
