@@ -173,7 +173,7 @@ type frpCertificateDiagnostic struct {
 }
 
 var (
-	frpDiagnosticSecretField = regexp.MustCompile(`(?i)((?:token|password|secret|capability|credential|authorization|private(?:[ _-]?key))\s*[=:]\s*)([^\s&,;\"\\]+)`)
+	frpDiagnosticSecretField = regexp.MustCompile(`(?i)((?:token|password|secret(?:[ _-]?key)?|capability|credential|authorization|private(?:[ _-]?key))\s*[=:]\s*)([^\s&,;\"\\]+)`)
 	frpDiagnosticPrivateKey  = regexp.MustCompile(`(?s)-----BEGIN [^-]*PRIVATE KEY-----.*?-----END [^-]*PRIVATE KEY-----`)
 )
 

@@ -21,17 +21,18 @@ func TestSanitizeRedactsSecretsAndPreservesStructure(t *testing.T) {
       "password=password-secret",
       "\"token\":\"quoted-secret\"",
       "psk=psk-secret apiKey=apikey-secret tls_key=tls-secret",
+      "secretKey = text-secret-key-secret",
       "http://proxyuser:proxy-secret@127.0.0.1:8080/connect",
       "-----BEGIN PRIVATE KEY-----\nprivate-key-secret\n-----END PRIVATE KEY-----"
     ],
-    "managed_leases": [{"lease_id_masked": "leas…1234", "capability": "lease-secret", "apiKey": "camel-api-secret", "pre_shared_key": "snake-psk-secret"}]
+    "managed_leases": [{"lease_id_masked": "leas…1234", "capability": "lease-secret", "apiKey": "camel-api-secret", "pre_shared_key": "snake-psk-secret", "secretKey": "camel-secret-key-secret", "secret_key": "snake-secret-key-secret"}]
   }]
 }`)
 	sanitized, err := Sanitize(raw)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, secret := range []string{"token-secret", "capability-secret", "bearer-secret", "password-secret", "quoted-secret", "psk-secret", "apikey-secret", "tls-secret", "proxy-secret", "camel-api-secret", "snake-psk-secret", "private-key-secret", "lease-secret"} {
+	for _, secret := range []string{"token-secret", "capability-secret", "bearer-secret", "password-secret", "quoted-secret", "psk-secret", "apikey-secret", "tls-secret", "proxy-secret", "camel-api-secret", "snake-psk-secret", "private-key-secret", "lease-secret", "text-secret-key-secret", "camel-secret-key-secret", "snake-secret-key-secret"} {
 		if bytes.Contains(sanitized, []byte(secret)) {
 			t.Fatalf("sanitized report still contains %q: %s", secret, sanitized)
 		}

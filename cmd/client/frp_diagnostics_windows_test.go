@@ -59,6 +59,7 @@ func TestBuildFRPDiagnosticExportIncludesRequiredSectionsAndRedactsSecrets(t *te
 		}},
 		Logs: []string{
 			"login token=token-super-secret",
+			"secretKey=secret-key-regex-secret",
 			"capability=capability-super-secret",
 			"Authorization: Bearer bearer-super-secret",
 			"member=member-token-super-secret",
@@ -128,7 +129,7 @@ func TestBuildFRPDiagnosticExportIncludesRequiredSectionsAndRedactsSecrets(t *te
 	if err := json.Unmarshal(jsonData, &decoded); err != nil {
 		t.Fatalf("diagnostics.json is invalid: %v", err)
 	}
-	for _, secret := range []string{"token-super-secret", "capability-super-secret", "bearer-super-secret", "member-token-super-secret", "private-key-super-secret", "private-key-space-secret", "lease-1234567890"} {
+	for _, secret := range []string{"token-super-secret", "secret-key-regex-secret", "capability-super-secret", "bearer-super-secret", "member-token-super-secret", "private-key-super-secret", "private-key-space-secret", "lease-1234567890"} {
 		if strings.Contains(string(jsonData), secret) || strings.Contains(string(textData), secret) {
 			t.Fatalf("diagnostic export leaked %q", secret)
 		}
@@ -137,7 +138,7 @@ func TestBuildFRPDiagnosticExportIncludesRequiredSectionsAndRedactsSecrets(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, secret := range []string{"token-super-secret", "capability-super-secret", "bearer-super-secret", "member-token-super-secret", "private-key-super-secret", "private-key-space-secret", "lease-1234567890"} {
+	for _, secret := range []string{"token-super-secret", "secret-key-regex-secret", "capability-super-secret", "bearer-super-secret", "member-token-super-secret", "private-key-super-secret", "private-key-space-secret", "lease-1234567890"} {
 		if strings.Contains(string(uploadReport), secret) {
 			t.Fatalf("FRP upload report leaked %q", secret)
 		}

@@ -29,7 +29,7 @@ const (
 var (
 	diagnosticPrivateKey  = regexp.MustCompile(`(?s)-----BEGIN [^-]*PRIVATE KEY-----.*?-----END [^-]*PRIVATE KEY-----`)
 	diagnosticURLUserInfo = regexp.MustCompile(`(?i)([a-z][a-z0-9+.-]*://)([^/\s:@]+:[^/\s@]+@)`)
-	diagnosticSecretText  = regexp.MustCompile(`(?i)((?:token|password|passwd|secret|capability|credential|psk|api_?key|tls_?key|pre_?shared_?key|private_?key)\s*["\']?\s*[=:]\s*["\']?)([^\s&,;\"\'\\]+)`)
+	diagnosticSecretText  = regexp.MustCompile(`(?i)((?:token|password|passwd|secret[ _-]?key|secret|capability|credential|psk|api_?key|tls_?key|pre_?shared_?key|private_?key)\s*["\']?\s*[=:]\s*["\']?)([^\s&,;\"\'\\]+)`)
 	diagnosticAuth        = regexp.MustCompile(`(?i)(authorization\s*:\s*(?:(?:bearer|basic)\s+)?["\']?)[^\s,;\"\'\\]+`)
 )
 
@@ -203,7 +203,7 @@ func sensitiveKey(key string) bool {
 		return false
 	}
 	for _, suffix := range []string{
-		"token", "password", "passwd", "secret", "capability", "credential", "authorization",
+		"token", "password", "passwd", "secret", "secretkey", "capability", "credential", "authorization",
 		"psk", "apikey", "tlskey", "presharedkey", "privatekey",
 	} {
 		if compact == suffix || strings.HasSuffix(compact, suffix) {
